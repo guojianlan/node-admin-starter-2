@@ -435,14 +435,14 @@ export function RulePage() {
       title: "规则名称",
       dataIndex: "name",
       key: "name",
-      width: 220,
+      width: 165,
       ellipsis: true,
     },
     {
       title: "显示名称",
       dataIndex: "displayName",
       key: "displayName",
-      width: 180,
+      width: 115,
       align: "center",
       ellipsis: true,
       render: (_, record) => record.displayName || (record.i18nKey ? record.name : "-"),
@@ -451,7 +451,7 @@ export function RulePage() {
       title: "菜单图标",
       dataIndex: "icon",
       key: "icon",
-      width: 110,
+      width: 78,
       align: "center",
       render: (value) => (
         <span className="rule-icon-cell">{value ? renderMenuIcon(String(value)) : "-"}</span>
@@ -461,7 +461,7 @@ export function RulePage() {
       title: "菜单类型",
       dataIndex: "type",
       key: "type",
-      width: 120,
+      width: 92,
       align: "center",
       render: (value: RuleType) => {
         const meta = ruleTypeMeta[value] ?? ruleTypeMeta.action;
@@ -472,7 +472,7 @@ export function RulePage() {
       title: "排序序号",
       dataIndex: "order",
       key: "order",
-      width: 110,
+      width: 80,
       align: "center",
       render: (value) => <Tag className="rule-pill rule-pill-order">{String(value)}</Tag>,
     },
@@ -480,7 +480,7 @@ export function RulePage() {
       title: "权限标识",
       dataIndex: "key",
       key: "key",
-      width: 220,
+      width: 170,
       align: "center",
       ellipsis: true,
       render: (value) => <Tag className="rule-pill rule-pill-key">{String(value)}</Tag>,
@@ -489,7 +489,7 @@ export function RulePage() {
       title: "可见状态",
       dataIndex: "hidden",
       key: "hidden",
-      width: 130,
+      width: 90,
       align: "center",
       render: (_, record) =>
         record.type === "action" ? (
@@ -509,7 +509,7 @@ export function RulePage() {
       title: "启用状态",
       dataIndex: "status",
       key: "status",
-      width: 130,
+      width: 90,
       align: "center",
       render: (_, record) => (
         <Switch
@@ -526,7 +526,7 @@ export function RulePage() {
       title: "创建时间",
       dataIndex: "createdAt",
       key: "createdAt",
-      width: 150,
+      width: 75,
       align: "center",
       render: (value) => relativeDate(String(value)),
     },
@@ -534,7 +534,7 @@ export function RulePage() {
       title: "更新时间",
       dataIndex: "updatedAt",
       key: "updatedAt",
-      width: 150,
+      width: 75,
       align: "center",
       render: (value) => relativeDate(String(value)),
     },
@@ -549,14 +549,15 @@ export function RulePage() {
       {
         title: "操作栏",
         key: "operate",
-        width: 118,
+        width: 104,
         align: "center",
         fixed: "right",
         render: (_, record) => (
-          <Space size={6} onClick={(event) => event.stopPropagation()}>
+          <Space size={4} onClick={(event) => event.stopPropagation()}>
             <AuthButton auth="system.rule.create">
               <Tooltip title="添加子项">
                 <Button
+                  aria-label="新增子权限"
                   className="rule-operate-add"
                   type="primary"
                   size="small"
@@ -568,6 +569,7 @@ export function RulePage() {
             <AuthButton auth="system.rule.update">
               <Tooltip title="编辑">
                 <Button
+                  aria-label="编辑"
                   type="primary"
                   size="small"
                   icon={<EditOutlined />}
@@ -583,7 +585,7 @@ export function RulePage() {
                 onConfirm={() => void deleteRecord(record)}
               >
                 <Tooltip title="删除">
-                  <Button danger type="primary" size="small" icon={<DeleteOutlined />} />
+                  <Button aria-label="删除" danger type="primary" size="small" icon={<DeleteOutlined />} />
                 </Tooltip>
               </Popconfirm>
             </AuthButton>
@@ -654,7 +656,7 @@ export function RulePage() {
         size={density}
         pagination={false}
         locale={{ emptyText: <EmptyState /> }}
-        scroll={{ x: 1450 }}
+        scroll={{ x: 1144 }}
         expandable={{
           expandedRowKeys,
           onExpandedRowsChange: (keys) => setManualExpandedRowKeys([...keys]),
@@ -693,7 +695,7 @@ export function RulePage() {
         open={drawerOpen}
         closable={false}
         destroyOnHidden
-        styles={{ wrapper: { width: 490 } }}
+        size={490}
         onClose={() => {
           setDrawerOpen(false);
           setEditingRecord(null);

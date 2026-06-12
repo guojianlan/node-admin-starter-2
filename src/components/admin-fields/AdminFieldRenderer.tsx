@@ -7,7 +7,7 @@ type AdminFieldRendererProps = {
   valueType?: FieldValueType;
   options?: FieldOption[];
   fieldProps?: Record<string, unknown>;
-};
+} & Record<string, unknown>;
 
 function toTreeData(options: FieldOption[]): Array<Record<string, unknown>> {
   return options.map((option) => ({
@@ -21,32 +21,35 @@ export function AdminFieldRenderer({
   valueType = "text",
   options = [],
   fieldProps = {},
+  ...controlProps
 }: AdminFieldRendererProps) {
+  const mergedFieldProps = { ...fieldProps, ...controlProps };
+
   switch (valueType) {
     case "password":
-      return <Input.Password {...fieldProps} />;
+      return <Input.Password {...mergedFieldProps} />;
     case "textarea":
-      return <Input.TextArea rows={4} {...fieldProps} />;
+      return <Input.TextArea rows={4} {...mergedFieldProps} />;
     case "digit":
-      return <InputNumber style={{ width: "100%" }} {...fieldProps} />;
+      return <InputNumber style={{ width: "100%" }} {...mergedFieldProps} />;
     case "select":
-      return <Select allowClear options={options} {...fieldProps} />;
+      return <Select allowClear options={options} {...mergedFieldProps} />;
     case "treeSelect":
-      return <TreeSelect allowClear treeDefaultExpandAll treeData={toTreeData(options)} {...fieldProps} />;
+      return <TreeSelect allowClear treeDefaultExpandAll treeData={toTreeData(options)} {...mergedFieldProps} />;
     case "radio":
-      return <Radio.Group options={options} {...fieldProps} />;
+      return <Radio.Group options={options} {...mergedFieldProps} />;
     case "radioButton":
-      return <Radio.Group optionType="button" buttonStyle="solid" options={options} {...fieldProps} />;
+      return <Radio.Group optionType="button" buttonStyle="solid" options={options} {...mergedFieldProps} />;
     case "switch":
-      return <Switch checkedChildren="启用" unCheckedChildren="停用" {...fieldProps} />;
+      return <Switch checkedChildren="启用" unCheckedChildren="停用" {...mergedFieldProps} />;
     case "date":
-      return <DatePicker style={{ width: "100%" }} {...fieldProps} />;
+      return <DatePicker style={{ width: "100%" }} {...mergedFieldProps} />;
     case "dateRange":
-      return <DatePicker.RangePicker style={{ width: "100%" }} {...fieldProps} />;
+      return <DatePicker.RangePicker style={{ width: "100%" }} {...mergedFieldProps} />;
     case "image":
-      return <Input placeholder="请输入图片 URL" {...fieldProps} />;
+      return <Input placeholder="请输入图片 URL" {...mergedFieldProps} />;
     case "text":
     default:
-      return <Input allowClear {...fieldProps} />;
+      return <Input allowClear {...mergedFieldProps} />;
   }
 }

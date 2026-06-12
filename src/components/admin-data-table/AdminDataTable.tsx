@@ -161,6 +161,7 @@ export function AdminDataTable<T extends object>({
             <AuthButton auth={`${accessName}.update`}>
               <Tooltip title="编辑">
                 <Button
+                  aria-label="编辑"
                   type="primary"
                   size="small"
                   icon={<EditOutlined />}
@@ -177,6 +178,7 @@ export function AdminDataTable<T extends object>({
             <AuthButton auth={`${accessName}.delete`}>
               <Tooltip title="删除">
                 <Button
+                  aria-label="删除"
                   danger
                   type="primary"
                   size="small"

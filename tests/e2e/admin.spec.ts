@@ -67,7 +67,7 @@ test("user form validation and created user appears in list", async ({ page, req
 
   const suffix = Date.now().toString().slice(-6);
   const token = await page.evaluate(() => window.localStorage.getItem("admin-base-token"));
-  await request.post("/api/system/user", {
+  const createResponse = await request.post("/api/system/user", {
     headers: { authorization: `Bearer ${token}` },
     data: {
       username: `tester${suffix}`,
@@ -79,8 +79,50 @@ test("user form validation and created user appears in list", async ({ page, req
       roleIds: [],
     },
   });
+  expect(createResponse.ok()).toBeTruthy();
   await page.goto(`/system/user?keyword=tester${suffix}`);
-  await expect(page.getByText(`测试用户${suffix}`)).toBeVisible();
+  await expect(page.getByText(`tester${suffix}`)).toBeVisible();
+});
+
+test("system management edit forms preload existing data", async ({ page }) => {
+  await login(page);
+
+  await page.goto("/system/user");
+  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await page.getByRole("button", { name: "编辑" }).first().click();
+  await expect(page.getByTestId("admin-entity-form")).toBeVisible();
+  await expect(page.locator(".ant-modal input#username")).toHaveValue("admin");
+  await expect(page.locator(".ant-modal input#nickname")).toHaveValue("超级管理员");
+  await page.keyboard.press("Escape");
+
+  await page.goto("/system/role");
+  await expect(page.getByRole("heading", { name: "角色管理" })).toBeVisible();
+  await page.getByRole("button", { name: "编辑" }).first().click();
+  await expect(page.getByTestId("admin-entity-form")).toBeVisible();
+  await expect(page.locator(".ant-modal input#name")).not.toHaveValue("");
+  await expect(page.locator(".ant-modal input#code")).not.toHaveValue("");
+  await page.keyboard.press("Escape");
+
+  await page.goto("/system/dict");
+  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await page.getByRole("button", { name: "编辑" }).first().click();
+  await expect(page.getByTestId("admin-entity-form")).toBeVisible();
+  await expect(page.locator(".ant-modal input#name")).toHaveValue("状态");
+  await expect(page.locator(".ant-modal input#code")).toHaveValue("status");
+  await page.keyboard.press("Escape");
+
+  await page.goto("/system/config");
+  await expect(page.getByRole("heading", { name: "系统配置" })).toBeVisible();
+  await page.locator(".system-menu-row").first().getByRole("button", { name: "编辑" }).click();
+  await expect(page.getByTestId("admin-entity-form")).toBeVisible();
+  await expect(page.locator(".ant-modal input#name")).toHaveValue("基础配置");
+  await expect(page.locator(".ant-modal input#code")).toHaveValue("basic");
+  await page.keyboard.press("Escape");
+
+  await page.locator(".system-config-item").first().getByRole("button", { name: "编辑" }).click();
+  await expect(page.getByTestId("admin-entity-form")).toBeVisible();
+  await expect(page.locator(".ant-modal input#key")).toHaveValue("site_name");
+  await expect(page.locator(".ant-modal input#title")).toHaveValue("站点名称");
 });
 
 test("unauthorized user only sees permitted shell and no system menu", async ({ page, request }) => {

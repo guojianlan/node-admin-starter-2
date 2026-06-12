@@ -305,6 +305,7 @@ export function ConfigPage() {
                     <span>{group.name}</span>
                     <Space size={2}>
                       <Button
+                        aria-label="编辑"
                         type="text"
                         size="small"
                         icon={<EditOutlined />}
@@ -321,6 +322,7 @@ export function ConfigPage() {
                         }}
                       >
                         <Button
+                          aria-label="删除"
                           danger
                           type="text"
                           size="small"
@@ -367,9 +369,15 @@ export function ConfigPage() {
                             <div className="system-config-label">
                               <Space>
                                 <Typography.Text strong>{item.title}</Typography.Text>
-                                <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditItem(item)} />
+                                <Button
+                                  aria-label="编辑"
+                                  type="text"
+                                  size="small"
+                                  icon={<EditOutlined />}
+                                  onClick={() => openEditItem(item)}
+                                />
                                 <Popconfirm title="确认删除配置项？" onConfirm={() => void deleteItem(item.id)}>
-                                  <Button danger type="text" size="small" icon={<DeleteOutlined />} />
+                                  <Button aria-label="删除" danger type="text" size="small" icon={<DeleteOutlined />} />
                                 </Popconfirm>
                               </Space>
                               <div>
