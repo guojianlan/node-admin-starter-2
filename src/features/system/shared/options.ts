@@ -12,9 +12,10 @@ export const sexOptions: FieldOption[] = [
 ];
 
 export const ruleTypeOptions: FieldOption[] = [
-  { label: "目录", value: "menu" },
-  { label: "页面", value: "route" },
-  { label: "按钮", value: "action" },
+  { label: "菜单项", value: "menu" },
+  { label: "路由页面", value: "route" },
+  { label: "嵌套路由", value: "nested" },
+  { label: "权限项", value: "action" },
 ];
 
 export const configTypeOptions: FieldOption[] = [
@@ -22,6 +23,8 @@ export const configTypeOptions: FieldOption[] = [
   { label: "多行文本", value: "textarea" },
   { label: "数字", value: "digit" },
   { label: "开关", value: "switch" },
+  { label: "下拉选择", value: "select" },
+  { label: "多选框", value: "checkbox" },
   { label: "图片", value: "image" },
 ];
 

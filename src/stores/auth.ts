@@ -17,7 +17,7 @@ export type AdminUser = {
 export type MenuNode = {
   id: number;
   parentId: number;
-  type: "menu" | "route";
+  type: "menu" | "route" | "nested";
   key: string;
   name: string;
   path?: string | null;
@@ -116,7 +116,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   async initSession() {
     const token = getAuthToken();
     if (!token) {
-      set({ token: null, initialized: false });
+      set({ token: null, user: null, access: [], menus: [], initialized: false, loading: false });
       return;
     }
 
@@ -132,6 +132,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         initialized: true,
       });
       await get().initMenus();
+    } catch (error) {
+      clearAuthToken();
+      set({
+        token: null,
+        user: null,
+        access: [],
+        menus: [],
+        initialized: false,
+      });
+      throw error;
     } finally {
       set({ loading: false });
     }

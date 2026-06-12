@@ -38,6 +38,16 @@ type AdminDataTableProps<T extends object> = {
   enableUpdate?: boolean;
   enableDelete?: boolean;
   enableActions?: boolean;
+  showSearchButton?: boolean;
+  showKeywordSearch?: boolean;
+  showToolbarSettings?: boolean;
+  pagination?: false;
+  tableProps?: Omit<
+    TableProps<T>,
+    "columns" | "dataSource" | "loading" | "onChange" | "pagination" | "rowKey"
+  >;
+  canUpdate?: (record: T) => boolean;
+  canDelete?: (record: T) => boolean;
   actionBarRender?: (reload: () => void) => React.ReactNode;
   operateRender?: (record: T, reload: () => void) => React.ReactNode;
   beforeSubmit?: (values: Record<string, unknown>, mode: "create" | "update") => Record<string, unknown>;
@@ -60,6 +70,13 @@ export function AdminDataTable<T extends object>({
   enableUpdate = true,
   enableDelete = true,
   enableActions = true,
+  showSearchButton = true,
+  showKeywordSearch = true,
+  showToolbarSettings = true,
+  pagination,
+  tableProps,
+  canUpdate,
+  canDelete,
   actionBarRender,
   operateRender,
   beforeSubmit,
@@ -140,7 +157,7 @@ export function AdminDataTable<T extends object>({
       render: (_, record) => (
         <Space size={4}>
           {operateRender?.(record, reload)}
-          {enableUpdate ? (
+          {enableUpdate && (canUpdate ? canUpdate(record) : true) ? (
             <AuthButton auth={`${accessName}.update`}>
               <Tooltip title="编辑">
                 <Button
@@ -156,7 +173,7 @@ export function AdminDataTable<T extends object>({
               </Tooltip>
             </AuthButton>
           ) : null}
-          {enableDelete ? (
+          {enableDelete && (canDelete ? canDelete(record) : true) ? (
             <AuthButton auth={`${accessName}.delete`}>
               <Tooltip title="删除">
                 <Button
@@ -185,6 +202,8 @@ export function AdminDataTable<T extends object>({
     api,
     activeColumnKeys,
     columns,
+    canDelete,
+    canUpdate,
     enableActions,
     enableDelete,
     enableUpdate,
@@ -309,74 +328,85 @@ export function AdminDataTable<T extends object>({
               </Button>
             </AuthButton>
           ) : null}
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            onClick={() => setSearchOpen((value) => !value)}
-          >
-            搜索
-          </Button>
-          <Input.Search
-            className="admin-table-keyword"
-            allowClear
-            value={keywordText}
-            placeholder="请输入关键字"
-            onChange={(event) => {
-              const value = event.target.value;
-              setDraftKeyword(value);
-              if (!value && state.keyword) {
-                handleKeywordSearch("");
-              }
-            }}
-            onSearch={handleKeywordSearch}
-          />
+          {showSearchButton ? (
+            <Button
+              type="primary"
+              icon={<SearchOutlined />}
+              onClick={() => setSearchOpen((value) => !value)}
+            >
+              搜索
+            </Button>
+          ) : null}
+          {showKeywordSearch ? (
+            <Input.Search
+              className="admin-table-keyword"
+              allowClear
+              value={keywordText}
+              placeholder="请输入关键字"
+              onChange={(event) => {
+                const value = event.target.value;
+                setDraftKeyword(value);
+                if (!value && state.keyword) {
+                  handleKeywordSearch("");
+                }
+              }}
+              onSearch={handleKeywordSearch}
+            />
+          ) : null}
           {actionBarRender?.(reload)}
         </div>
-        <div className="admin-toolbar-right">
-          <Tooltip title="刷新">
-            <Button type="text" icon={<ReloadOutlined />} onClick={reload} />
-          </Tooltip>
-          <Dropdown menu={densityMenu} trigger={["click"]}>
-            <Button type="text" icon={<ColumnHeightOutlined />} />
-          </Dropdown>
-          <Tooltip title={bordered ? "隐藏边框" : "显示边框"}>
-            <Button
-              type="text"
-              icon={bordered ? <BorderOutlined /> : <BorderlessTableOutlined />}
-              onClick={() => setBordered((value) => !value)}
-            />
-          </Tooltip>
-          <Popover
-            content={columnSettingContent}
-            title="列设置"
-            trigger="click"
-            placement="bottomRight"
-          >
-            <Tooltip title="列设置">
-              <Button type="text" icon={<SettingOutlined />} />
+        {showToolbarSettings ? (
+          <div className="admin-toolbar-right">
+            <Tooltip title="刷新">
+              <Button type="text" icon={<ReloadOutlined />} onClick={reload} />
             </Tooltip>
-          </Popover>
-        </div>
+            <Dropdown menu={densityMenu} trigger={["click"]}>
+              <Button type="text" icon={<ColumnHeightOutlined />} />
+            </Dropdown>
+            <Tooltip title={bordered ? "隐藏边框" : "显示边框"}>
+              <Button
+                type="text"
+                icon={bordered ? <BorderOutlined /> : <BorderlessTableOutlined />}
+                onClick={() => setBordered((value) => !value)}
+              />
+            </Tooltip>
+            <Popover
+              content={columnSettingContent}
+              title="列设置"
+              trigger="click"
+              placement="bottomRight"
+            >
+              <Tooltip title="列设置">
+                <Button type="text" icon={<SettingOutlined />} />
+              </Tooltip>
+            </Popover>
+          </div>
+        ) : null}
       </div>
       <div className="admin-table-wrapper">
         <Table<T>
+          {...tableProps}
           rowKey={rowKey}
           columns={tableColumns}
           dataSource={data}
           loading={loading}
-          bordered={bordered}
-          size={density}
+          bordered={tableProps?.bordered ?? bordered}
+          size={tableProps?.size ?? density}
           locale={{ emptyText: <EmptyState /> }}
-          scroll={{ x: "max-content" }}
-          pagination={{
-            current: state.page,
-            pageSize: state.pageSize,
-            total,
-            size: "small",
-            showQuickJumper: true,
-            showSizeChanger: true,
-            showTotal: (count) => `共 ${count} 条`,
-          }}
+          scroll={tableProps?.scroll ?? { x: "max-content" }}
+          pagination={
+            pagination === false
+              ? false
+              : {
+                  current: state.page,
+                  pageSize: state.pageSize,
+                  total,
+                  size: "small",
+                  showQuickJumper: true,
+                  showSizeChanger: true,
+                  showTotal: (count) => `共 ${count} 条`,
+                }
+          }
           onChange={handleTableChange}
         />
       </div>

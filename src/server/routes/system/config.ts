@@ -106,7 +106,7 @@ configRoutes.get("/config/items", authRequired(), ability("system.config.query")
       i.key,
       i.title,
       i.describe,
-      i."values" AS values,
+      i."values" AS "values",
       i.type,
       i.options_json AS optionsJson,
       i.props_json AS propsJson,

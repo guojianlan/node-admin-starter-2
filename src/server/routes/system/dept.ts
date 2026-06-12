@@ -68,6 +68,46 @@ deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), (c) =
   return c.json(success(buildTree(rows)));
 });
 
+deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), (c) => {
+  const deptId = Number(c.req.param("id"));
+  if (!Number.isFinite(deptId)) throw new Error("部门不存在");
+
+  const page = buildListQuery(c.req.url, {
+    table: "sys_user u",
+    select: `
+      u.id,
+      u.username,
+      u.nickname,
+      u.email,
+      u.mobile,
+      u.status,
+      u.created_at AS createdAt
+    `,
+    fieldMap: {
+      id: "u.id",
+      username: "u.username",
+      nickname: "u.nickname",
+      email: "u.email",
+      mobile: "u.mobile",
+      status: "u.status",
+      createdAt: "u.created_at",
+    },
+    searchable: {
+      username: "like",
+      nickname: "like",
+      email: "like",
+      mobile: "like",
+      status: "=",
+    },
+    quickSearchFields: ["username", "nickname", "email", "mobile"],
+    sortableFields: ["id", "username", "status", "createdAt"],
+    defaultSort: { field: "id", order: "asc" },
+    baseWhere: [`u.dept_id = ${deptId}`, "u.deleted_at IS NULL"],
+  });
+
+  return c.json(success(page));
+});
+
 deptRoutes.post("/dept", authRequired(), ability("system.dept.create"), async (c) => {
   const payload = deptSchema.parse(await c.req.json());
   const now = nowIso();

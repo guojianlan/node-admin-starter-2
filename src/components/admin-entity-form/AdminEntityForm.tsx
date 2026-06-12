@@ -36,7 +36,14 @@ export function AdminEntityForm<T extends object>({
 
   useEffect(() => {
     if (!open) return;
-    form.setFieldsValue(initialValues ?? {});
+    form.resetFields();
+    const applyValues = () => form.setFieldsValue(initialValues ?? {});
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(applyValues);
+      return;
+    }
+    const timer = window.setTimeout(applyValues, 0);
+    return () => window.clearTimeout(timer);
   }, [form, initialValues, open]);
 
   return (

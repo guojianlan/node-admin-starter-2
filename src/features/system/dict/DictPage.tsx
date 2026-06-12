@@ -1,11 +1,12 @@
 "use client";
 
-import { Tabs, Tag } from "antd";
-import { useEffect, useState } from "react";
+import { ReloadOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import { Badge, Button, Tag, Tooltip } from "antd";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
-import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
-import { request } from "@/lib/request";
-import type { PageResult } from "@/lib/response";
+import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import { useNavigationAdapter } from "@/platform/navigation";
+import { useDictStore } from "@/stores/dict";
+import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 import { statusOptions } from "../shared/options";
 
@@ -19,104 +20,68 @@ type DictRecord = {
   createdAt: string;
 };
 
-type DictItemRecord = {
-  id: number;
-  dictId: number;
-  label: string;
-  value: string;
-  color?: string | null;
-  status: number;
-  sort: number;
-  createdAt: string;
-};
-
 export function DictPage() {
-  const [dictOptions, setDictOptions] = useState<FieldOption[]>([]);
+  const navigation = useNavigationAdapter();
+  const reloadDicts = useDictStore((state) => state.reloadDicts);
 
-  function reloadDictOptions() {
-    void request<PageResult<DictRecord>>("/api/system/dict/list?pageSize=200", { silent: true }).then(
-      (page) => setDictOptions(page.data.map((item) => ({ label: item.name, value: item.id }))),
-    );
-  }
-
-  useEffect(() => {
-    reloadDictOptions();
-  }, []);
-
-  const dictColumns: AdminDataTableColumn<DictRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+  const columns: AdminDataTableColumn<DictRecord>[] = [
+    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 80, sorter: true, align: "center" },
     { title: "字典名称", dataIndex: "name", required: true },
     { title: "字典编码", dataIndex: "code", required: true },
-    { title: "备注", dataIndex: "remark", valueType: "textarea", fullWidth: true },
-    { title: "排序", dataIndex: "sort", valueType: "digit", hideInSearch: true },
     {
       title: "状态",
       dataIndex: "status",
       valueType: "select",
       options: statusOptions,
-      render: (value) => <Tag color={value === 1 ? "green" : "red"}>{value === 1 ? "启用" : "停用"}</Tag>,
+      align: "center",
+      render: (value) =>
+        value === 1 ? <Badge status="success" text="启用" /> : <Badge status="error" text="停用" />,
     },
-    { title: "创建时间", dataIndex: "createdAt", hideInForm: true, hideInSearch: true },
+    {
+      title: "排序",
+      dataIndex: "sort",
+      valueType: "digit",
+      hideInSearch: true,
+      align: "center",
+      render: (value) => <Tag color="purple">{String(value)}</Tag>,
+    },
+    { title: "描述", dataIndex: "remark", valueType: "textarea", fullWidth: true, hideInSearch: true, ellipsis: true },
+    { title: "创建时间", dataIndex: "createdAt", hideInForm: true, hideInSearch: true, width: 180 },
   ];
 
-  const itemColumns: AdminDataTableColumn<DictItemRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
-    {
-      title: "字典类型",
-      dataIndex: "dictId",
-      valueType: "select",
-      options: dictOptions,
-      required: true,
-    },
-    { title: "标签", dataIndex: "label", required: true },
-    { title: "值", dataIndex: "value", required: true },
-    { title: "颜色", dataIndex: "color", hideInSearch: true },
-    { title: "排序", dataIndex: "sort", valueType: "digit", hideInSearch: true },
-    {
-      title: "状态",
-      dataIndex: "status",
-      valueType: "select",
-      options: statusOptions,
-      render: (value) => <Tag color={value === 1 ? "green" : "red"}>{value === 1 ? "启用" : "停用"}</Tag>,
-    },
-    { title: "创建时间", dataIndex: "createdAt", hideInForm: true, hideInSearch: true },
-  ];
+  async function refreshCache() {
+    await reloadDicts();
+    feedback.success("字典缓存已刷新");
+  }
 
   return (
-    <PageScaffold title="字典管理" description="维护通用字典类型和字典项">
-      <Tabs
-        destroyOnHidden
-        items={[
-          {
-            key: "dict",
-            label: "字典类型",
-            children: (
-              <AdminDataTable
-                api="/api/system/dict/list"
-                accessName="system.dict"
-                rowKey="id"
-                columns={dictColumns}
-                createTitle="新增字典"
-                updateTitle="编辑字典"
-                actionBarRender={() => null}
-              />
-            ),
-          },
-          {
-            key: "item",
-            label: "字典项",
-            children: (
-              <AdminDataTable
-                api="/api/system/dict/item"
-                accessName="system.dict"
-                rowKey="id"
-                columns={itemColumns}
-                createTitle="新增字典项"
-                updateTitle="编辑字典项"
-              />
-            ),
-          },
-        ]}
+    <PageScaffold title="字典管理" description="维护通用字典类型，并进入字典项页面管理枚举数据">
+      <AdminDataTable
+        api="/api/system/dict/list"
+        accessName="system.dict"
+        rowKey="id"
+        columns={columns}
+        createTitle="新增字典"
+        updateTitle="编辑字典"
+        actionBarRender={() => (
+          <Button type="primary" icon={<ReloadOutlined />} onClick={() => void refreshCache()}>
+            刷新缓存
+          </Button>
+        )}
+        operateRender={(record) => (
+          <Tooltip title="管理字典项">
+            <Button
+              size="small"
+              aria-label="管理字典项"
+              icon={<UnorderedListOutlined />}
+              onClick={() => {
+                navigation.push(
+                  `/system/dict/item?dictId=${record.id}&dictName=${encodeURIComponent(record.name)}&dictCode=${encodeURIComponent(record.code)}`,
+                );
+              }}
+            />
+          </Tooltip>
+        )}
       />
     </PageScaffold>
   );

@@ -25,7 +25,7 @@ type TokenRow = {
 type RuleRow = {
   id: number;
   parentId: number;
-  type: "menu" | "route" | "action";
+  type: "menu" | "route" | "nested" | "action";
   key: string;
   name: string;
   path: string | null;
@@ -153,7 +153,7 @@ export function getUserMenus(userId: number) {
           hidden,
           link
          FROM sys_rule
-         WHERE type IN ('menu', 'route') AND status = 1
+         WHERE type IN ('menu', 'route', 'nested') AND status = 1
          ORDER BY "order" ASC, id ASC`
       : `SELECT DISTINCT
           sr.id,
@@ -174,7 +174,7 @@ export function getUserMenus(userId: number) {
          WHERE sur.user_id = ?
            AND role.status = 1
            AND role.deleted_at IS NULL
-           AND sr.type IN ('menu', 'route')
+           AND sr.type IN ('menu', 'route', 'nested')
            AND sr.status = 1
          ORDER BY sr."order" ASC, sr.id ASC`;
 

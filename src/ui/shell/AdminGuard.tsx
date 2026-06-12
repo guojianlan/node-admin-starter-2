@@ -26,8 +26,9 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
       return;
     }
-    void initSession();
-    void initDicts();
+    void initSession().then(() => initDicts()).catch(() => {
+      // initSession resets auth state; the next render redirects to login.
+    });
   }, [initDicts, initSession, pathname, router, token]);
 
   const route = useMemo(

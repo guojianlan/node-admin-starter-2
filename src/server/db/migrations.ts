@@ -185,6 +185,14 @@ CREATE TABLE IF NOT EXISTS sys_file (
 );
 `,
   },
+  {
+    id: "0002_rule_form_fields",
+    sql: `
+ALTER TABLE sys_rule ADD COLUMN display_name TEXT;
+ALTER TABLE sys_rule ADD COLUMN component TEXT;
+ALTER TABLE sys_rule ADD COLUMN default_auth INTEGER NOT NULL DEFAULT 0;
+`,
+  },
 ];
 
 export function runMigrations(sqlite: Database.Database) {

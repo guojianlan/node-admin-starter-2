@@ -39,6 +39,7 @@ type RoleRow = {
   sort: number;
   status: number;
   createdAt: string;
+  userCount: number;
   ruleIds: string | null;
 };
 
@@ -55,6 +56,7 @@ roleRoutes.get("/role", authRequired(), ability("system.role.query"), (c) => {
       r.sort,
       r.status,
       r.created_at AS createdAt,
+      (SELECT COUNT(1) FROM sys_user_role WHERE role_id = r.id) AS userCount,
       (SELECT GROUP_CONCAT(rule_id) FROM sys_role_rule WHERE role_id = r.id) AS ruleIds
     `,
     fieldMap: {
@@ -109,7 +111,7 @@ roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), (
     .all() as Array<{
     id: number;
     parentId: number;
-    type: "menu" | "route" | "action";
+    type: "menu" | "route" | "nested" | "action";
     key: string;
     name: string;
     path: string | null;
@@ -120,6 +122,46 @@ roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), (
     link: number;
   }>;
   return c.json(success(buildTree(rows)));
+});
+
+roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), (c) => {
+  const roleId = Number(c.req.param("id"));
+  if (!Number.isFinite(roleId)) throw new Error("角色不存在");
+
+  const page = buildListQuery(c.req.url, {
+    table: "sys_user u INNER JOIN sys_user_role sur ON sur.user_id = u.id",
+    select: `
+      u.id,
+      u.username,
+      u.nickname,
+      u.email,
+      u.mobile,
+      u.status,
+      u.created_at AS createdAt
+    `,
+    fieldMap: {
+      id: "u.id",
+      username: "u.username",
+      nickname: "u.nickname",
+      email: "u.email",
+      mobile: "u.mobile",
+      status: "u.status",
+      createdAt: "u.created_at",
+    },
+    searchable: {
+      username: "like",
+      nickname: "like",
+      email: "like",
+      mobile: "like",
+      status: "=",
+    },
+    quickSearchFields: ["username", "nickname", "email", "mobile"],
+    sortableFields: ["id", "username", "status", "createdAt"],
+    defaultSort: { field: "id", order: "asc" },
+    baseWhere: [`sur.role_id = ${roleId}`, "u.deleted_at IS NULL"],
+  });
+
+  return c.json(success(page));
 });
 
 roleRoutes.post("/role", authRequired(), ability("system.role.create"), async (c) => {

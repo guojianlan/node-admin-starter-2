@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { ConfigPage } from "@/features/system/config/ConfigPage";
+import { DictItemPage } from "@/features/system/dict/DictItemPage";
 import { DeptPage } from "@/features/system/dept/DeptPage";
 import { DictPage } from "@/features/system/dict/DictPage";
 import { FilePage } from "@/features/system/file/FilePage";
@@ -58,6 +59,14 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "字典管理",
     auth: "system.dict.query",
     component: DictPage,
+  },
+  {
+    path: "/system/dict/item",
+    key: "system.dict.item",
+    title: "字典项管理",
+    auth: "system.dict.query",
+    adminHidden: true,
+    component: DictItemPage,
   },
   {
     path: "/system/config",

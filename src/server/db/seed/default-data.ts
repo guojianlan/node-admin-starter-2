@@ -1,7 +1,7 @@
 export type SeedRule = {
   id: number;
   parentId: number;
-  type: "menu" | "route" | "action";
+  type: "menu" | "route" | "nested" | "action";
   key: string;
   name: string;
   path?: string | null;
@@ -237,9 +237,10 @@ export const seedDicts = [
     name: "菜单类型",
     code: "rule_type",
     items: [
-      { label: "目录", value: "menu", color: "blue", sort: 1 },
-      { label: "页面", value: "route", color: "green", sort: 2 },
-      { label: "按钮", value: "action", color: "orange", sort: 3 },
+      { label: "菜单项", value: "menu", color: "blue", sort: 1 },
+      { label: "路由页面", value: "route", color: "green", sort: 2 },
+      { label: "嵌套路由", value: "nested", color: "cyan", sort: 3 },
+      { label: "权限项", value: "action", color: "orange", sort: 4 },
     ],
   },
 ];

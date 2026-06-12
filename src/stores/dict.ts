@@ -13,6 +13,7 @@ type DictState = {
   dicts: Record<string, DictOption[]>;
   initialized: boolean;
   initDicts: () => Promise<void>;
+  reloadDicts: () => Promise<void>;
   getOptions: (code: string) => DictOption[];
 };
 
@@ -22,6 +23,13 @@ export const useDictStore = create<DictState>((set, get) => ({
 
   async initDicts() {
     if (get().initialized) return;
+    const dicts = await request<Record<string, DictOption[]>>("/api/system/dict/list/all", {
+      silent: true,
+    });
+    set({ dicts, initialized: true });
+  },
+
+  async reloadDicts() {
     const dicts = await request<Record<string, DictOption[]>>("/api/system/dict/list/all", {
       silent: true,
     });

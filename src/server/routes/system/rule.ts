@@ -10,30 +10,39 @@ import { buildListQuery } from "@/server/services/list-query";
 
 const ruleSchema = z.object({
   parentId: z.coerce.number().default(0),
-  type: z.enum(["menu", "route", "action"]),
+  type: z.enum(["menu", "route", "nested", "action"]),
   key: z.string().min(1),
   name: z.string().min(1),
+  displayName: z.string().optional().nullable(),
   path: z.string().optional().nullable(),
   icon: z.string().optional().nullable(),
+  i18nKey: z.string().optional().nullable(),
+  component: z.string().optional().nullable(),
   order: z.coerce.number().default(0),
   status: z.coerce.number().default(1),
   hidden: z.coerce.number().default(1),
   link: z.coerce.number().default(0),
+  defaultAuth: z.coerce.number().default(0),
 });
 
 type RuleRow = {
   id: number;
   parentId: number;
-  type: "menu" | "route" | "action";
+  type: "menu" | "route" | "nested" | "action";
   key: string;
   name: string;
+  displayName: string | null;
   path: string | null;
   icon: string | null;
+  i18nKey: string | null;
+  component: string | null;
   order: number;
   status: number;
   hidden: number;
   link: number;
+  defaultAuth: number;
   createdAt: string;
+  updatedAt: string;
 };
 
 export const ruleRoutes = new Hono<{ Variables: HonoVariables }>();
@@ -47,13 +56,18 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
       r.type,
       r.key,
       r.name,
+      r.display_name AS displayName,
       r.path,
       r.icon,
+      r.i18n_key AS i18nKey,
+      r.component,
       r."order",
       r.status,
       r.hidden,
       r.link,
-      r.created_at AS createdAt
+      r.default_auth AS defaultAuth,
+      r.created_at AS createdAt,
+      r.updated_at AS updatedAt
     `,
     fieldMap: {
       id: "r.id",
@@ -61,11 +75,15 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
       type: "r.type",
       key: "r.key",
       name: "r.name",
+      displayName: "r.display_name",
       path: "r.path",
+      i18nKey: "r.i18n_key",
+      component: "r.component",
       status: "r.status",
       hidden: "r.hidden",
       order: "r.\"order\"",
       createdAt: "r.created_at",
+      updatedAt: "r.updated_at",
     },
     searchable: {
       type: "=",
@@ -74,8 +92,8 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
       status: "=",
       hidden: "=",
     },
-    quickSearchFields: ["key", "name", "path"],
-    sortableFields: ["id", "order", "status", "createdAt"],
+    quickSearchFields: ["key", "name", "displayName", "path", "i18nKey", "component"],
+    sortableFields: ["id", "order", "status", "createdAt", "updatedAt"],
     defaultSort: { field: "order", order: "asc" },
   });
   return c.json(success(page));
@@ -90,12 +108,18 @@ ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), (c) =
         type,
         key,
         name,
+        display_name AS displayName,
         path,
         icon,
+        i18n_key AS i18nKey,
+        component,
         "order",
         status,
         hidden,
-        link
+        link,
+        default_auth AS defaultAuth,
+        created_at AS createdAt,
+        updated_at AS updatedAt
        FROM sys_rule
        ORDER BY "order" ASC, id ASC`,
     )
@@ -108,7 +132,7 @@ ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), (c)
     .prepare(
       `SELECT id AS value, name AS label, parent_id AS parentId
        FROM sys_rule
-       WHERE type IN ('menu', 'route')
+       WHERE type IN ('menu', 'route', 'nested')
        ORDER BY "order" ASC, id ASC`,
     )
     .all();
@@ -121,21 +145,25 @@ ruleRoutes.post("/rule", authRequired(), ability("system.rule.create"), async (c
   sqlite
     .prepare(
       `INSERT INTO sys_rule
-        (parent_id, type, key, name, path, icon, "order", status, hidden, link, created_at, updated_at)
+        (parent_id, type, key, name, display_name, path, icon, i18n_key, component, "order", status, hidden, link, default_auth, created_at, updated_at)
        VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       payload.parentId,
       payload.type,
       payload.key,
       payload.name,
+      payload.displayName ?? null,
       payload.path ?? null,
       payload.icon ?? null,
+      payload.i18nKey ?? null,
+      payload.component ?? null,
       payload.order,
       payload.status,
       payload.hidden,
       payload.link,
+      payload.defaultAuth,
       now,
       now,
     );
@@ -170,12 +198,16 @@ ruleRoutes.put("/rule/:id", authRequired(), ability("system.rule.update"), async
            type = COALESCE(?, type),
            key = COALESCE(?, key),
            name = COALESCE(?, name),
+           display_name = ?,
            path = ?,
            icon = ?,
+           i18n_key = ?,
+           component = ?,
            "order" = COALESCE(?, "order"),
            status = COALESCE(?, status),
            hidden = COALESCE(?, hidden),
            link = COALESCE(?, link),
+           default_auth = COALESCE(?, default_auth),
            updated_at = ?
        WHERE id = ?`,
     )
@@ -184,12 +216,16 @@ ruleRoutes.put("/rule/:id", authRequired(), ability("system.rule.update"), async
       payload.type ?? null,
       payload.key ?? null,
       payload.name ?? null,
+      payload.displayName ?? null,
       payload.path ?? null,
       payload.icon ?? null,
+      payload.i18nKey ?? null,
+      payload.component ?? null,
       payload.order ?? null,
       payload.status ?? null,
       payload.hidden ?? null,
       payload.link ?? null,
+      payload.defaultAuth ?? null,
       nowIso(),
       id,
     );
