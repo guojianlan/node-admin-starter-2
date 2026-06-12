@@ -1,0 +1,16 @@
+tmp/
+node_modules/
+.next/
+out/
+dist/
+coverage/
+test-results/
+playwright-report/
+.env
+.env*.local
+data/*.sqlite
+data/*.sqlite-*
+storage/uploads/*
+!storage/uploads/.gitkeep
+*.log
+tsconfig.tsbuildinfo

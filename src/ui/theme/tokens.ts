@@ -1,0 +1,16 @@
+export const adminTokens = {
+  colorPrimary: "#1677ff",
+  colorBgLayout: "#f5f5f5",
+  colorBgContainer: "#ffffff",
+  colorText: "#1f1f1f",
+  colorTextSecondary: "rgba(0, 0, 0, 0.45)",
+  colorBorder: "#f0f0f0",
+  colorSuccess: "#52c41a",
+  colorWarning: "#faad14",
+  colorError: "#ff4d4f",
+  borderRadius: 10,
+  headerHeight: 56,
+  siderWidth: 226,
+  siderCollapsedWidth: 64,
+  pagePadding: 20,
+};
