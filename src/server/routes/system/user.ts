@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
-import { nowIso, sqlite } from "@/server/db";
+import { type DbClient, nowIso, sqlite } from "@/server/db";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildListQuery } from "@/server/services/list-query";
@@ -25,10 +25,14 @@ const userUpdateSchema = userCreateSchema.omit({ password: true }).partial({
   nickname: true,
 });
 
-function syncUserRoles(userId: number, roleIds: number[]) {
-  sqlite.prepare("DELETE FROM sys_user_role WHERE user_id = ?").run(userId);
-  const insert = sqlite.prepare("INSERT OR IGNORE INTO sys_user_role (user_id, role_id) VALUES (?, ?)");
-  roleIds.forEach((roleId) => insert.run(userId, roleId));
+async function syncUserRoles(dbClient: DbClient, userId: number, roleIds: number[]) {
+  await dbClient.prepare("DELETE FROM sys_user_role WHERE user_id = ?").run(userId);
+  const insert = dbClient.prepare(
+    "INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+  );
+  for (const roleId of roleIds) {
+    await insert.run(userId, roleId);
+  }
 }
 
 function parseRoleIds(value: string | null) {
@@ -56,8 +60,8 @@ type UserListRow = {
 
 export const userRoutes = new Hono<{ Variables: HonoVariables }>();
 
-userRoutes.get("/user", authRequired(), ability("system.user.query"), (c) => {
-  const page = buildListQuery<UserListRow>(c.req.url, {
+userRoutes.get("/user", authRequired(), ability("system.user.query"), async (c) => {
+  const page = await buildListQuery<UserListRow>(c.req.url, {
     table: "sys_user u LEFT JOIN sys_dept d ON d.id = u.dept_id",
     select: `
       u.id,
@@ -71,12 +75,13 @@ userRoutes.get("/user", authRequired(), ability("system.user.query"), (c) => {
       u.status,
       u.created_at AS createdAt,
       u.updated_at AS updatedAt,
-      (SELECT GROUP_CONCAT(role_id) FROM sys_user_role WHERE user_id = u.id) AS roleIds
+      (SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = u.id) AS roleIds
     `,
     fieldMap: {
       id: "u.id",
       username: "u.username",
       nickname: "u.nickname",
+      sex: "u.sex",
       email: "u.email",
       mobile: "u.mobile",
       deptId: "u.dept_id",
@@ -87,6 +92,7 @@ userRoutes.get("/user", authRequired(), ability("system.user.query"), (c) => {
     searchable: {
       username: "like",
       nickname: "like",
+      sex: "=",
       mobile: "like",
       email: "like",
       deptId: "=",
@@ -110,8 +116,8 @@ userRoutes.get("/user", authRequired(), ability("system.user.query"), (c) => {
   );
 });
 
-userRoutes.get("/user/role", authRequired(), ability("system.user.query"), (c) => {
-  const rows = sqlite
+userRoutes.get("/user/role", authRequired(), ability("system.user.query"), async (c) => {
+  const rows = await sqlite
     .prepare(
       `SELECT id AS value, name AS label
        FROM sys_role
@@ -122,8 +128,8 @@ userRoutes.get("/user/role", authRequired(), ability("system.user.query"), (c) =
   return c.json(success(rows));
 });
 
-userRoutes.get("/user/dept", authRequired(), ability("system.user.query"), (c) => {
-  const rows = sqlite
+userRoutes.get("/user/dept", authRequired(), ability("system.user.query"), async (c) => {
+  const rows = await sqlite
     .prepare(
       `SELECT id AS value, name AS label, parent_id AS parentId
        FROM sys_dept
@@ -136,18 +142,21 @@ userRoutes.get("/user/dept", authRequired(), ability("system.user.query"), (c) =
 
 userRoutes.post("/user", authRequired(), ability("system.user.create"), async (c) => {
   const payload = userCreateSchema.parse(await c.req.json());
-  const exists = sqlite.prepare("SELECT id FROM sys_user WHERE username = ?").get(payload.username);
+  const exists = await sqlite
+    .prepare("SELECT id FROM sys_user WHERE username = ?")
+    .get(payload.username);
   if (exists) throw new Error("账号已存在");
 
   const now = nowIso();
   const passwordHash = await bcrypt.hash(payload.password, 10);
-  const transaction = sqlite.transaction(() => {
-    const result = sqlite
+  await sqlite.transaction(async (tx) => {
+    const result = await tx
       .prepare(
         `INSERT INTO sys_user
           (username, password_hash, nickname, email, mobile, sex, dept_id, status, created_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`,
       )
       .run(
         payload.username,
@@ -161,27 +170,30 @@ userRoutes.post("/user", authRequired(), ability("system.user.create"), async (c
         now,
         now,
       );
-    syncUserRoles(Number(result.lastInsertRowid), payload.roleIds);
+    await syncUserRoles(tx, Number(result.lastInsertRowid), payload.roleIds);
   });
-
-  transaction();
   return c.json(success(null, "创建成功"));
 });
 
-userRoutes.put("/user/resetPassword", authRequired(), ability("system.user.resetPassword"), async (c) => {
-  const payload = z
-    .object({
-      id: z.coerce.number(),
-      password: z.string().min(6),
-    })
-    .parse(await c.req.json());
+userRoutes.put(
+  "/user/resetPassword",
+  authRequired(),
+  ability("system.user.resetPassword"),
+  async (c) => {
+    const payload = z
+      .object({
+        id: z.coerce.number(),
+        password: z.string().min(6),
+      })
+      .parse(await c.req.json());
 
-  const passwordHash = await bcrypt.hash(payload.password, 10);
-  sqlite
-    .prepare("UPDATE sys_user SET password_hash = ?, updated_at = ? WHERE id = ?")
-    .run(passwordHash, nowIso(), payload.id);
-  return c.json(success(null, "重置成功"));
-});
+    const passwordHash = await bcrypt.hash(payload.password, 10);
+    await sqlite
+      .prepare("UPDATE sys_user SET password_hash = ?, updated_at = ? WHERE id = ?")
+      .run(passwordHash, nowIso(), payload.id);
+    return c.json(success(null, "重置成功"));
+  },
+);
 
 userRoutes.put("/user/:id", authRequired(), ability("system.user.update"), async (c) => {
   const id = Number(c.req.param("id"));
@@ -189,8 +201,8 @@ userRoutes.put("/user/:id", authRequired(), ability("system.user.update"), async
   if (id === 1 && payload.status === 0) throw new Error("不能停用超级管理员");
 
   const now = nowIso();
-  const transaction = sqlite.transaction(() => {
-    sqlite
+  await sqlite.transaction(async (tx) => {
+    await tx
       .prepare(
         `UPDATE sys_user
          SET username = COALESCE(?, username),
@@ -214,16 +226,16 @@ userRoutes.put("/user/:id", authRequired(), ability("system.user.update"), async
         now,
         id,
       );
-    if (payload.roleIds) syncUserRoles(id, payload.roleIds);
+    if (payload.roleIds) await syncUserRoles(tx, id, payload.roleIds);
   });
-
-  transaction();
   return c.json(success(null, "更新成功"));
 });
 
-userRoutes.delete("/user/:id", authRequired(), ability("system.user.delete"), (c) => {
+userRoutes.delete("/user/:id", authRequired(), ability("system.user.delete"), async (c) => {
   const id = Number(c.req.param("id"));
   if (id === 1) throw new Error("不能删除超级管理员");
-  sqlite.prepare("UPDATE sys_user SET deleted_at = ?, updated_at = ? WHERE id = ?").run(nowIso(), nowIso(), id);
+  await sqlite
+    .prepare("UPDATE sys_user SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .run(nowIso(), nowIso(), id);
   return c.json(success(null, "删除成功"));
 });

@@ -19,7 +19,7 @@ type TokenRow = {
   id: number;
   userId: number;
   abilitiesJson: string;
-  expiresAt: string | null;
+  expiresAt: string | Date | null;
 };
 
 type RuleRow = {
@@ -69,30 +69,37 @@ function parseAbilities(value: string) {
   }
 }
 
-function isExpired(expiresAt: string | null) {
+function isExpired(expiresAt: string | Date | null) {
   if (!expiresAt) return false;
   return new Date(expiresAt).getTime() <= Date.now();
 }
 
-function recordLogin(input: {
+async function recordLogin(input: {
   username: string;
   ip?: string | null;
   userAgent?: string | null;
   status: number;
   message: string;
 }) {
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_login_record
         (username, ip, user_agent, status, message, created_at)
        VALUES
         (?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.username, input.ip ?? null, input.userAgent ?? null, input.status, input.message, nowIso());
+    .run(
+      input.username,
+      input.ip ?? null,
+      input.userAgent ?? null,
+      input.status,
+      input.message,
+      nowIso(),
+    );
 }
 
-export function getUserById(userId: number) {
-  return sqlite
+export async function getUserById(userId: number) {
+  return (await sqlite
     .prepare(
       `SELECT
         id,
@@ -106,20 +113,20 @@ export function getUserById(userId: number) {
        FROM sys_user
        WHERE id = ? AND deleted_at IS NULL`,
     )
-    .get(userId) as UserRow | undefined;
+    .get(userId)) as UserRow | undefined;
 }
 
-export function getUserAccess(userId: number) {
+export async function getUserAccess(userId: number) {
   if (userId === 1) {
     return (
-      sqlite
+      (await sqlite
         .prepare("SELECT key FROM sys_rule WHERE type = 'action' AND status = 1 ORDER BY key ASC")
-        .all() as Array<{ key: string }>
+        .all()) as Array<{ key: string }>
     ).map((item) => item.key);
   }
 
   return (
-    sqlite
+    (await sqlite
       .prepare(
         `SELECT DISTINCT sr.key
          FROM sys_rule sr
@@ -133,11 +140,11 @@ export function getUserAccess(userId: number) {
            AND sr.status = 1
          ORDER BY sr.key ASC`,
       )
-      .all(userId) as Array<{ key: string }>
+      .all(userId)) as Array<{ key: string }>
   ).map((item) => item.key);
 }
 
-export function getUserMenus(userId: number) {
+export async function getUserMenus(userId: number) {
   const sql =
     userId === 1
       ? `SELECT
@@ -180,14 +187,14 @@ export function getUserMenus(userId: number) {
 
   const rows =
     userId === 1
-      ? (sqlite.prepare(sql).all() as RuleRow[])
-      : (sqlite.prepare(sql).all(userId) as RuleRow[]);
+      ? ((await sqlite.prepare(sql).all()) as RuleRow[])
+      : ((await sqlite.prepare(sql).all(userId)) as RuleRow[]);
 
   return buildTree(rows);
 }
 
 export async function login(input: LoginInput) {
-  const user = sqlite
+  const user = (await sqlite
     .prepare(
       `SELECT
         id,
@@ -201,34 +208,34 @@ export async function login(input: LoginInput) {
        FROM sys_user
        WHERE username = ? AND deleted_at IS NULL`,
     )
-    .get(input.username) as UserRow | undefined;
+    .get(input.username)) as UserRow | undefined;
 
   if (!user) {
-    recordLogin({ ...input, status: 0, message: "账号不存在" });
+    await recordLogin({ ...input, status: 0, message: "账号不存在" });
     throw new Error("账号或密码错误");
   }
 
   const passwordMatched = await bcrypt.compare(input.password, user.passwordHash);
   if (!passwordMatched) {
-    recordLogin({ ...input, status: 0, message: "密码错误" });
+    await recordLogin({ ...input, status: 0, message: "密码错误" });
     throw new Error("账号或密码错误");
   }
 
   if (user.status !== 1) {
-    recordLogin({ ...input, status: 0, message: "账号已停用" });
+    await recordLogin({ ...input, status: 0, message: "账号已停用" });
     throw new Error("账号已停用");
   }
 
   const token = crypto.randomBytes(32).toString("hex");
   const tokenHash = hashToken(token);
-  const access = getUserAccess(user.id);
+  const access = await getUserAccess(user.id);
   const now = nowIso();
   const ttlDays = Number(process.env.ADMIN_BASE_TOKEN_TTL_DAYS ?? 7);
   const expiresAt = input.remember
     ? null
     : new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString();
 
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_access_token
         (user_id, name, token_hash, abilities_json, last_used_at, expires_at, created_at, updated_at)
@@ -237,11 +244,11 @@ export async function login(input: LoginInput) {
     )
     .run(user.id, tokenHash, JSON.stringify(access), now, expiresAt, now, now);
 
-  sqlite
+  await sqlite
     .prepare("UPDATE sys_user SET login_ip = ?, login_time = ?, updated_at = ? WHERE id = ?")
     .run(input.ip ?? null, now, now, user.id);
 
-  recordLogin({ ...input, status: 1, message: "登录成功" });
+  await recordLogin({ ...input, status: 1, message: "登录成功" });
 
   return {
     token,
@@ -250,9 +257,9 @@ export async function login(input: LoginInput) {
   };
 }
 
-export function resolveToken(token: string) {
+export async function resolveToken(token: string) {
   const tokenHash = hashToken(token);
-  const tokenRow = sqlite
+  const tokenRow = (await sqlite
     .prepare(
       `SELECT
         id,
@@ -262,14 +269,14 @@ export function resolveToken(token: string) {
        FROM sys_access_token
        WHERE token_hash = ?`,
     )
-    .get(tokenHash) as TokenRow | undefined;
+    .get(tokenHash)) as TokenRow | undefined;
 
   if (!tokenRow || isExpired(tokenRow.expiresAt)) return null;
 
-  const user = getUserById(tokenRow.userId);
+  const user = await getUserById(tokenRow.userId);
   if (!user || user.status !== 1) return null;
 
-  sqlite
+  await sqlite
     .prepare("UPDATE sys_access_token SET last_used_at = ?, updated_at = ? WHERE id = ?")
     .run(nowIso(), nowIso(), tokenRow.id);
 
@@ -280,6 +287,6 @@ export function resolveToken(token: string) {
   };
 }
 
-export function logout(tokenHash: string) {
-  sqlite.prepare("DELETE FROM sys_access_token WHERE token_hash = ?").run(tokenHash);
+export async function logout(tokenHash: string) {
+  await sqlite.prepare("DELETE FROM sys_access_token WHERE token_hash = ?").run(tokenHash);
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { buildTree } from "@/lib/tree";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
-import { nowIso, sqlite } from "@/server/db";
+import { type DbClient, nowIso, sqlite } from "@/server/db";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildListQuery } from "@/server/services/list-query";
@@ -17,10 +17,14 @@ const roleSchema = z.object({
   ruleIds: z.array(z.coerce.number()).default([]),
 });
 
-function syncRoleRules(roleId: number, ruleIds: number[]) {
-  sqlite.prepare("DELETE FROM sys_role_rule WHERE role_id = ?").run(roleId);
-  const insert = sqlite.prepare("INSERT OR IGNORE INTO sys_role_rule (role_id, rule_id) VALUES (?, ?)");
-  ruleIds.forEach((ruleId) => insert.run(roleId, ruleId));
+async function syncRoleRules(dbClient: DbClient, roleId: number, ruleIds: number[]) {
+  await dbClient.prepare("DELETE FROM sys_role_rule WHERE role_id = ?").run(roleId);
+  const insert = dbClient.prepare(
+    "INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+  );
+  for (const ruleId of ruleIds) {
+    await insert.run(roleId, ruleId);
+  }
 }
 
 function parseIds(value: string | null) {
@@ -45,8 +49,8 @@ type RoleRow = {
 
 export const roleRoutes = new Hono<{ Variables: HonoVariables }>();
 
-roleRoutes.get("/role", authRequired(), ability("system.role.query"), (c) => {
-  const page = buildListQuery<RoleRow>(c.req.url, {
+roleRoutes.get("/role", authRequired(), ability("system.role.query"), async (c) => {
+  const page = await buildListQuery<RoleRow>(c.req.url, {
     table: "sys_role r",
     select: `
       r.id,
@@ -57,7 +61,7 @@ roleRoutes.get("/role", authRequired(), ability("system.role.query"), (c) => {
       r.status,
       r.created_at AS createdAt,
       (SELECT COUNT(1) FROM sys_user_role WHERE role_id = r.id) AS userCount,
-      (SELECT GROUP_CONCAT(rule_id) FROM sys_role_rule WHERE role_id = r.id) AS ruleIds
+      (SELECT STRING_AGG(rule_id::text, ',') FROM sys_role_rule WHERE role_id = r.id) AS ruleIds
     `,
     fieldMap: {
       id: "r.id",
@@ -89,8 +93,8 @@ roleRoutes.get("/role", authRequired(), ability("system.role.query"), (c) => {
   );
 });
 
-roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), (c) => {
-  const rows = sqlite
+roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), async (c) => {
+  const rows = (await sqlite
     .prepare(
       `SELECT
         id,
@@ -108,7 +112,7 @@ roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), (
        WHERE status = 1
        ORDER BY "order" ASC, id ASC`,
     )
-    .all() as Array<{
+    .all()) as Array<{
     id: number;
     parentId: number;
     type: "menu" | "route" | "nested" | "action";
@@ -124,11 +128,11 @@ roleRoutes.get("/role/ruleList", authRequired(), ability("system.role.query"), (
   return c.json(success(buildTree(rows)));
 });
 
-roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), (c) => {
+roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), async (c) => {
   const roleId = Number(c.req.param("id"));
   if (!Number.isFinite(roleId)) throw new Error("角色不存在");
 
-  const page = buildListQuery(c.req.url, {
+  const page = await buildListQuery(c.req.url, {
     table: "sys_user u INNER JOIN sys_user_role sur ON sur.user_id = u.id",
     select: `
       u.id,
@@ -167,18 +171,26 @@ roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), 
 roleRoutes.post("/role", authRequired(), ability("system.role.create"), async (c) => {
   const payload = roleSchema.parse(await c.req.json());
   const now = nowIso();
-  const transaction = sqlite.transaction(() => {
-    const result = sqlite
+  await sqlite.transaction(async (tx) => {
+    const result = await tx
       .prepare(
         `INSERT INTO sys_role
           (name, code, remark, sort, status, created_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`,
       )
-      .run(payload.name, payload.code, payload.remark ?? null, payload.sort, payload.status, now, now);
-    syncRoleRules(Number(result.lastInsertRowid), payload.ruleIds);
+      .run(
+        payload.name,
+        payload.code,
+        payload.remark ?? null,
+        payload.sort,
+        payload.status,
+        now,
+        now,
+      );
+    await syncRoleRules(tx, Number(result.lastInsertRowid), payload.ruleIds);
   });
-  transaction();
   return c.json(success(null, "创建成功"));
 });
 
@@ -186,7 +198,7 @@ roleRoutes.put("/role/status/:id", authRequired(), ability("system.role.status")
   const id = Number(c.req.param("id"));
   const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
   if (id === 1 && payload.status === 0) throw new Error("不能停用超级管理员角色");
-  sqlite
+  await sqlite
     .prepare("UPDATE sys_role SET status = ?, updated_at = ? WHERE id = ?")
     .run(payload.status, nowIso(), id);
   return c.json(success(null, "更新成功"));
@@ -200,7 +212,7 @@ roleRoutes.post("/role/setRule", authRequired(), ability("system.role.setRule"),
     })
     .parse(await c.req.json());
   if (payload.id === 1) throw new Error("超级管理员默认拥有全部权限");
-  syncRoleRules(payload.id, payload.ruleIds);
+  await syncRoleRules(sqlite, payload.id, payload.ruleIds);
   return c.json(success(null, "分配成功"));
 });
 
@@ -208,8 +220,8 @@ roleRoutes.put("/role/:id", authRequired(), ability("system.role.update"), async
   const id = Number(c.req.param("id"));
   const payload = roleSchema.partial({ ruleIds: true }).parse(await c.req.json());
   const now = nowIso();
-  const transaction = sqlite.transaction(() => {
-    sqlite
+  await sqlite.transaction(async (tx) => {
+    await tx
       .prepare(
         `UPDATE sys_role
          SET name = COALESCE(?, name),
@@ -229,15 +241,16 @@ roleRoutes.put("/role/:id", authRequired(), ability("system.role.update"), async
         now,
         id,
       );
-    if (payload.ruleIds) syncRoleRules(id, payload.ruleIds);
+    if (payload.ruleIds) await syncRoleRules(tx, id, payload.ruleIds);
   });
-  transaction();
   return c.json(success(null, "更新成功"));
 });
 
-roleRoutes.delete("/role/:id", authRequired(), ability("system.role.delete"), (c) => {
+roleRoutes.delete("/role/:id", authRequired(), ability("system.role.delete"), async (c) => {
   const id = Number(c.req.param("id"));
   if (id === 1) throw new Error("不能删除超级管理员角色");
-  sqlite.prepare("UPDATE sys_role SET deleted_at = ?, updated_at = ? WHERE id = ?").run(nowIso(), nowIso(), id);
+  await sqlite
+    .prepare("UPDATE sys_role SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .run(nowIso(), nowIso(), id);
   return c.json(success(null, "删除成功"));
 });

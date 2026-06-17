@@ -20,17 +20,17 @@ describe("service helpers", () => {
     expect(tree[0]?.children?.[0]?.children?.[0]?.name).toBe("leaf");
   });
 
-  it("aggregates super admin permissions and menus", () => {
-    const access = getUserAccess(1);
-    const menus = getUserMenus(1);
+  it("aggregates super admin permissions and menus", async () => {
+    const access = await getUserAccess(1);
+    const menus = await getUserMenus(1);
 
     expect(access).toContain("system.user.query");
     expect(access).toContain("system.role.setRule");
     expect(JSON.stringify(menus)).toContain("/system/role");
   });
 
-  it("parses URL query into list pagination/search/filter/sort", () => {
-    const page = buildListQuery<{ username: string }>(
+  it("parses URL query into list pagination/search/filter/sort", async () => {
+    const page = await buildListQuery<{ username: string }>(
       "http://localhost/api/system/user?page=1&pageSize=10&keyword=admin&status=1&sort=createdAt.desc",
       {
         table: "sys_user u",

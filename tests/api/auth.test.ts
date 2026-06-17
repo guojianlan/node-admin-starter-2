@@ -62,7 +62,7 @@ describe("auth and permission API", () => {
   it("returns 403 when token abilities do not include the API permission", async () => {
     const now = nowIso();
     const passwordHash = await bcrypt.hash("123456", 10);
-    sqlite
+    await sqlite
       .prepare(
         `INSERT INTO sys_user
           (username, password_hash, nickname, sex, dept_id, status, created_at, updated_at)
@@ -98,41 +98,62 @@ describe("auth and permission API", () => {
     expect(data.data[0]?.username).toBe("admin");
   });
 
+  it("filters users by numeric select fields from URL params", async () => {
+    const { token } = await login();
+    const response = await app.request("/api/system/user?page=1&pageSize=20&sex=1", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const body = await readJson(response);
+    const data = body.data as unknown as {
+      data: Array<{ username: string; sex: number }>;
+      total: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(data.total).toBe(1);
+    expect(data.data).toEqual([expect.objectContaining({ username: "demo", sex: 1 })]);
+  });
+
   it("applies role authorization to menus and APIs", async () => {
     const now = nowIso();
     const passwordHash = await bcrypt.hash("123456", 10);
-    const roleResult = sqlite
+    const roleResult = await sqlite
       .prepare(
         `INSERT INTO sys_role
           (name, code, remark, sort, status, created_at, updated_at)
          VALUES
-          ('用户查询员', 'user_viewer', '', 10, 1, ?, ?)`,
+          ('用户查询员', 'user_viewer', '', 10, 1, ?, ?)
+         RETURNING id`,
       )
       .run(now, now);
     const roleId = Number(roleResult.lastInsertRowid);
     const ruleIds = (
-      sqlite
+      (await sqlite
         .prepare(
           `SELECT id FROM sys_rule
            WHERE key IN ('system', 'system.user', 'system.user.query')
            ORDER BY id ASC`,
         )
-        .all() as Array<{ id: number }>
+        .all()) as Array<{ id: number }>
     ).map((item) => item.id);
     const insertRoleRule = sqlite.prepare(
       "INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?)",
     );
-    ruleIds.forEach((ruleId) => insertRoleRule.run(roleId, ruleId));
+    for (const ruleId of ruleIds) {
+      await insertRoleRule.run(roleId, ruleId);
+    }
 
-    const userResult = sqlite
+    const userResult = await sqlite
       .prepare(
         `INSERT INTO sys_user
           (username, password_hash, nickname, sex, dept_id, status, created_at, updated_at)
          VALUES
-          ('viewer', ?, '用户查询员', 0, 1, 1, ?, ?)`,
+          ('viewer', ?, '用户查询员', 0, 1, 1, ?, ?)
+         RETURNING id`,
       )
       .run(passwordHash, now, now);
-    sqlite
+    await sqlite
       .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)")
       .run(Number(userResult.lastInsertRowid), roleId);
 
@@ -187,5 +208,49 @@ describe("auth and permission API", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(deleteResponse.status).toBe(200);
+  });
+
+  it("creates, updates and deletes file groups", async () => {
+    const { token } = await login();
+    const create = await app.request("/api/system/file/group", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        parentId: 0,
+        name: "测试文件夹",
+        sort: 9,
+        describe: "文件夹 CRUD 回归",
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const createdRow = (await sqlite
+      .prepare("SELECT id FROM sys_file_group WHERE name = ?")
+      .get("测试文件夹")) as { id: number } | undefined;
+    expect(createdRow?.id).toBeGreaterThan(0);
+
+    const update = await app.request(`/api/system/file/group/${createdRow?.id}`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        parentId: 0,
+        name: "测试文件夹-更新",
+        sort: 10,
+        describe: "已更新",
+      }),
+    });
+    expect(update.status).toBe(200);
+
+    const tree = await app.request("/api/system/file/group/tree", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const treeBody = await readJson(tree);
+    expect(JSON.stringify(treeBody.data)).toContain("测试文件夹-更新");
+
+    const remove = await app.request(`/api/system/file/group/${createdRow?.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(remove.status).toBe(200);
   });
 });

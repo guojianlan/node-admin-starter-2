@@ -1,6 +1,7 @@
 import type { PageResult } from "@/lib/response";
 import { sqlite } from "@/server/db";
 
+type QueryValue = string | number | boolean | null | Date | Uint8Array;
 type SearchOperator = "=" | "like" | "betweenDate";
 
 export type ListQueryConfig = {
@@ -36,7 +37,7 @@ function appendFieldFilter(input: {
   column: string;
   operator: SearchOperator;
   where: string[];
-  values: unknown[];
+  values: QueryValue[];
 }) {
   const { params, field, column, operator, where, values } = input;
   const fieldValues = params.getAll(field).filter((item) => item !== "");
@@ -73,14 +74,17 @@ function appendFieldFilter(input: {
   values.push(fieldValues[0]);
 }
 
-export function buildListQuery<T>(url: string, config: ListQueryConfig): PageResult<T> {
+export async function buildListQuery<T>(
+  url: string,
+  config: ListQueryConfig,
+): Promise<PageResult<T>> {
   const params = new URL(url).searchParams;
   const page = normalizePage(params.get("page"), 1);
   const pageSize = Math.min(normalizePage(params.get("pageSize"), 20), 200);
   const offset = (page - 1) * pageSize;
 
   const where = [...(config.baseWhere ?? [])];
-  const values: unknown[] = [];
+  const values: QueryValue[] = [];
 
   const keyword = params.get("keyword")?.trim();
   if (keyword && config.quickSearchFields?.length) {
@@ -109,11 +113,11 @@ export function buildListQuery<T>(url: string, config: ListQueryConfig): PageRes
   const sortColumn = config.fieldMap[activeSort.field] ?? config.fieldMap.id ?? "id";
   const orderSql = `ORDER BY ${sortColumn} ${activeSort.order.toUpperCase()}`;
 
-  const totalRow = sqlite
+  const totalRow = (await sqlite
     .prepare(`SELECT COUNT(1) AS total FROM ${config.table} ${whereSql}`)
-    .get(...values) as { total: number };
+    .get(...values)) as { total: number | string } | undefined;
 
-  const data = sqlite
+  const data = (await sqlite
     .prepare(
       `SELECT ${config.select}
        FROM ${config.table}
@@ -121,12 +125,12 @@ export function buildListQuery<T>(url: string, config: ListQueryConfig): PageRes
        ${orderSql}
        LIMIT ? OFFSET ?`,
     )
-    .all(...values, pageSize, offset) as T[];
+    .all(...values, pageSize, offset)) as T[];
 
   return {
     data,
     page,
     pageSize,
-    total: totalRow.total,
+    total: Number(totalRow?.total ?? 0),
   };
 }

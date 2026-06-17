@@ -3,12 +3,7 @@ import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { authRequired } from "@/server/middleware/auth";
-import {
-  getUserAccess,
-  getUserMenus,
-  login,
-  logout,
-} from "@/server/services/auth-service";
+import { getUserAccess, getUserMenus, login, logout } from "@/server/services/auth-service";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -28,22 +23,22 @@ authRoutes.post("/login", async (c) => {
   return c.json(success(result, "登录成功"));
 });
 
-authRoutes.post("/logout", authRequired(), (c) => {
-  logout(c.get("tokenHash"));
+authRoutes.post("/logout", authRequired(), async (c) => {
+  await logout(c.get("tokenHash"));
   return c.json(success(null, "退出成功"));
 });
 
-authRoutes.get("/info", authRequired(), (c) => {
+authRoutes.get("/info", authRequired(), async (c) => {
   const user = c.get("user");
   return c.json(
     success({
       user,
-      access: getUserAccess(user.id),
+      access: await getUserAccess(user.id),
     }),
   );
 });
 
-authRoutes.get("/menu", authRequired(), (c) => {
+authRoutes.get("/menu", authRequired(), async (c) => {
   const user = c.get("user");
-  return c.json(success(getUserMenus(user.id)));
+  return c.json(success(await getUserMenus(user.id)));
 });

@@ -1,5 +1,6 @@
-import { sqlite } from "../src/server/db";
+import { closeDb } from "../src/server/db";
 import { runMigrations } from "../src/server/db/migrations";
 
-runMigrations(sqlite);
+await runMigrations();
+await closeDb();
 console.log("Database migrated");

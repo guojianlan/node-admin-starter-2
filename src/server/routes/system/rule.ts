@@ -47,8 +47,8 @@ type RuleRow = {
 
 export const ruleRoutes = new Hono<{ Variables: HonoVariables }>();
 
-ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
-  const page = buildListQuery<RuleRow>(c.req.url, {
+ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), async (c) => {
+  const page = await buildListQuery<RuleRow>(c.req.url, {
     table: "sys_rule r",
     select: `
       r.id,
@@ -81,7 +81,7 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
       component: "r.component",
       status: "r.status",
       hidden: "r.hidden",
-      order: "r.\"order\"",
+      order: 'r."order"',
       createdAt: "r.created_at",
       updatedAt: "r.updated_at",
     },
@@ -99,8 +99,8 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), (c) => {
   return c.json(success(page));
 });
 
-ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), (c) => {
-  const rows = sqlite
+ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), async (c) => {
+  const rows = (await sqlite
     .prepare(
       `SELECT
         id,
@@ -123,12 +123,12 @@ ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), (c) =
        FROM sys_rule
        ORDER BY "order" ASC, id ASC`,
     )
-    .all() as RuleRow[];
+    .all()) as RuleRow[];
   return c.json(success(buildTree(rows)));
 });
 
-ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), (c) => {
-  const rows = sqlite
+ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), async (c) => {
+  const rows = await sqlite
     .prepare(
       `SELECT id AS value, name AS label, parent_id AS parentId
        FROM sys_rule
@@ -142,7 +142,7 @@ ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), (c)
 ruleRoutes.post("/rule", authRequired(), ability("system.rule.create"), async (c) => {
   const payload = ruleSchema.parse(await c.req.json());
   const now = nowIso();
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_rule
         (parent_id, type, key, name, display_name, path, icon, i18n_key, component, "order", status, hidden, link, default_auth, created_at, updated_at)
@@ -173,7 +173,7 @@ ruleRoutes.post("/rule", authRequired(), ability("system.rule.create"), async (c
 ruleRoutes.put("/rule/hidden/:id", authRequired(), ability("system.rule.hidden"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ hidden: z.coerce.number() }).parse(await c.req.json());
-  sqlite
+  await sqlite
     .prepare("UPDATE sys_rule SET hidden = ?, updated_at = ? WHERE id = ?")
     .run(payload.hidden, nowIso(), id);
   return c.json(success(null, "更新成功"));
@@ -182,7 +182,7 @@ ruleRoutes.put("/rule/hidden/:id", authRequired(), ability("system.rule.hidden")
 ruleRoutes.put("/rule/status/:id", authRequired(), ability("system.rule.status"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
-  sqlite
+  await sqlite
     .prepare("UPDATE sys_rule SET status = ?, updated_at = ? WHERE id = ?")
     .run(payload.status, nowIso(), id);
   return c.json(success(null, "更新成功"));
@@ -191,7 +191,7 @@ ruleRoutes.put("/rule/status/:id", authRequired(), ability("system.rule.status")
 ruleRoutes.put("/rule/:id", authRequired(), ability("system.rule.update"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = ruleSchema.partial().parse(await c.req.json());
-  sqlite
+  await sqlite
     .prepare(
       `UPDATE sys_rule
        SET parent_id = COALESCE(?, parent_id),
@@ -232,9 +232,9 @@ ruleRoutes.put("/rule/:id", authRequired(), ability("system.rule.update"), async
   return c.json(success(null, "更新成功"));
 });
 
-ruleRoutes.delete("/rule/:id", authRequired(), ability("system.rule.delete"), (c) => {
+ruleRoutes.delete("/rule/:id", authRequired(), ability("system.rule.delete"), async (c) => {
   const id = Number(c.req.param("id"));
-  sqlite.prepare("DELETE FROM sys_role_rule WHERE rule_id = ?").run(id);
-  sqlite.prepare("DELETE FROM sys_rule WHERE id = ?").run(id);
+  await sqlite.prepare("DELETE FROM sys_role_rule WHERE rule_id = ?").run(id);
+  await sqlite.prepare("DELETE FROM sys_rule WHERE id = ?").run(id);
   return c.json(success(null, "删除成功"));
 });

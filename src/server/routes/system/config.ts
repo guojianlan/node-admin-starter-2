@@ -29,8 +29,8 @@ const itemSchema = z.object({
 
 export const configRoutes = new Hono<{ Variables: HonoVariables }>();
 
-configRoutes.get("/config/group", authRequired(), ability("system.config.query"), (c) => {
-  const page = buildListQuery(c.req.url, {
+configRoutes.get("/config/group", authRequired(), ability("system.config.query"), async (c) => {
+  const page = await buildListQuery(c.req.url, {
     table: "sys_config_group g",
     select: `
       g.id,
@@ -60,7 +60,7 @@ configRoutes.get("/config/group", authRequired(), ability("system.config.query")
 configRoutes.post("/config/group", authRequired(), ability("system.config.create"), async (c) => {
   const payload = groupSchema.parse(await c.req.json());
   const now = nowIso();
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_config_group
         (name, code, sort, status, created_at, updated_at)
@@ -71,33 +71,50 @@ configRoutes.post("/config/group", authRequired(), ability("system.config.create
   return c.json(success(null, "创建成功"));
 });
 
-configRoutes.put("/config/group/:id", authRequired(), ability("system.config.update"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = groupSchema.partial().parse(await c.req.json());
-  sqlite
-    .prepare(
-      `UPDATE sys_config_group
+configRoutes.put(
+  "/config/group/:id",
+  authRequired(),
+  ability("system.config.update"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const payload = groupSchema.partial().parse(await c.req.json());
+    await sqlite
+      .prepare(
+        `UPDATE sys_config_group
        SET name = COALESCE(?, name),
            code = COALESCE(?, code),
            sort = COALESCE(?, sort),
            status = COALESCE(?, status),
            updated_at = ?
        WHERE id = ?`,
-    )
-    .run(payload.name ?? null, payload.code ?? null, payload.sort ?? null, payload.status ?? null, nowIso(), id);
-  return c.json(success(null, "更新成功"));
-});
+      )
+      .run(
+        payload.name ?? null,
+        payload.code ?? null,
+        payload.sort ?? null,
+        payload.status ?? null,
+        nowIso(),
+        id,
+      );
+    return c.json(success(null, "更新成功"));
+  },
+);
 
-configRoutes.delete("/config/group/:id", authRequired(), ability("system.config.delete"), (c) => {
-  const id = Number(c.req.param("id"));
-  sqlite
-    .prepare("UPDATE sys_config_group SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), id);
-  return c.json(success(null, "删除成功"));
-});
+configRoutes.delete(
+  "/config/group/:id",
+  authRequired(),
+  ability("system.config.delete"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    await sqlite
+      .prepare("UPDATE sys_config_group SET deleted_at = ?, updated_at = ? WHERE id = ?")
+      .run(nowIso(), nowIso(), id);
+    return c.json(success(null, "删除成功"));
+  },
+);
 
-configRoutes.get("/config/items", authRequired(), ability("system.config.query"), (c) => {
-  const page = buildListQuery(c.req.url, {
+configRoutes.get("/config/items", authRequired(), ability("system.config.query"), async (c) => {
+  const page = await buildListQuery(c.req.url, {
     table: "sys_config_items i LEFT JOIN sys_config_group g ON g.id = i.group_id",
     select: `
       i.id,
@@ -142,7 +159,7 @@ configRoutes.get("/config/items", authRequired(), ability("system.config.query")
 configRoutes.post("/config/items", authRequired(), ability("system.config.create"), async (c) => {
   const payload = itemSchema.parse(await c.req.json());
   const now = nowIso();
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_config_items
         (group_id, key, title, describe, "values", type, options_json, props_json, sort, status, created_at, updated_at)
@@ -168,23 +185,34 @@ configRoutes.post("/config/items", authRequired(), ability("system.config.create
 
 configRoutes.put("/config/items/save", authRequired(), ability("system.config.save"), async (c) => {
   const payload = z.record(z.string(), z.unknown()).parse(await c.req.json());
-  const update = sqlite.prepare(`UPDATE sys_config_items SET "values" = ?, updated_at = ? WHERE key = ?`);
-  Object.entries(payload).forEach(([key, value]) => {
-    update.run(typeof value === "string" ? value : JSON.stringify(value), nowIso(), key);
-  });
+  const update = sqlite.prepare(
+    `UPDATE sys_config_items SET "values" = ?, updated_at = ? WHERE key = ?`,
+  );
+  for (const [key, value] of Object.entries(payload)) {
+    await update.run(typeof value === "string" ? value : JSON.stringify(value), nowIso(), key);
+  }
   return c.json(success(null, "保存成功"));
 });
 
-configRoutes.post("/config/items/refreshCache", authRequired(), ability("system.config.save"), (c) => {
-  return c.json(success(null, "刷新成功"));
-});
+configRoutes.post(
+  "/config/items/refreshCache",
+  authRequired(),
+  ability("system.config.save"),
+  (c) => {
+    return c.json(success(null, "刷新成功"));
+  },
+);
 
-configRoutes.put("/config/items/:id", authRequired(), ability("system.config.update"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = itemSchema.partial().parse(await c.req.json());
-  sqlite
-    .prepare(
-      `UPDATE sys_config_items
+configRoutes.put(
+  "/config/items/:id",
+  authRequired(),
+  ability("system.config.update"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const payload = itemSchema.partial().parse(await c.req.json());
+    await sqlite
+      .prepare(
+        `UPDATE sys_config_items
        SET group_id = COALESCE(?, group_id),
            key = COALESCE(?, key),
            title = COALESCE(?, title),
@@ -197,28 +225,34 @@ configRoutes.put("/config/items/:id", authRequired(), ability("system.config.upd
            status = COALESCE(?, status),
            updated_at = ?
        WHERE id = ?`,
-    )
-    .run(
-      payload.groupId ?? null,
-      payload.key ?? null,
-      payload.title ?? null,
-      payload.describe ?? null,
-      payload.values ?? null,
-      payload.type ?? null,
-      payload.optionsJson ?? null,
-      payload.propsJson ?? null,
-      payload.sort ?? null,
-      payload.status ?? null,
-      nowIso(),
-      id,
-    );
-  return c.json(success(null, "更新成功"));
-});
+      )
+      .run(
+        payload.groupId ?? null,
+        payload.key ?? null,
+        payload.title ?? null,
+        payload.describe ?? null,
+        payload.values ?? null,
+        payload.type ?? null,
+        payload.optionsJson ?? null,
+        payload.propsJson ?? null,
+        payload.sort ?? null,
+        payload.status ?? null,
+        nowIso(),
+        id,
+      );
+    return c.json(success(null, "更新成功"));
+  },
+);
 
-configRoutes.delete("/config/items/:id", authRequired(), ability("system.config.delete"), (c) => {
-  const id = Number(c.req.param("id"));
-  sqlite
-    .prepare("UPDATE sys_config_items SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), id);
-  return c.json(success(null, "删除成功"));
-});
+configRoutes.delete(
+  "/config/items/:id",
+  authRequired(),
+  ability("system.config.delete"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    await sqlite
+      .prepare("UPDATE sys_config_items SET deleted_at = ?, updated_at = ? WHERE id = ?")
+      .run(nowIso(), nowIso(), id);
+    return c.json(success(null, "删除成功"));
+  },
+);

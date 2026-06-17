@@ -1,28 +1,130 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import fs from "node:fs";
-import path from "node:path";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import * as schema from "./schema";
 
-function resolveDatabasePath() {
-  const url = process.env.DATABASE_URL;
-  if (!url || url === "data/admin-base.sqlite") {
-    return path.join(process.cwd(), "data", "admin-base.sqlite");
+const defaultDatabaseUrl = "postgres://admin_base:admin_base@localhost:5432/admin_base";
+
+export const sql = postgres(process.env.DATABASE_URL ?? defaultDatabaseUrl, {
+  max: Number(process.env.DATABASE_POOL_SIZE ?? 10),
+  onnotice: () => {},
+  prepare: false,
+});
+
+export const db = drizzle(sql, { schema });
+
+export type QueryParam = string | number | boolean | null | Date | Uint8Array;
+type QueryResultRow = Record<string, unknown>;
+type SqlExecutor = postgres.Sql | postgres.TransactionSql;
+
+const aliasMap: Record<string, string> = {
+  abilitiesjson: "abilitiesJson",
+  createdat: "createdAt",
+  defaultauth: "defaultAuth",
+  deletedat: "deletedAt",
+  deptid: "deptId",
+  deptname: "deptName",
+  displayname: "displayName",
+  expiresat: "expiresAt",
+  groupid: "groupId",
+  groupname: "groupName",
+  i18nkey: "i18nKey",
+  lastusedat: "lastUsedAt",
+  originalname: "originalName",
+  parentid: "parentId",
+  passwordhash: "passwordHash",
+  propsjson: "propsJson",
+  optionsjson: "optionsJson",
+  roleids: "roleIds",
+  ruleids: "ruleIds",
+  tokenhash: "tokenHash",
+  updatedat: "updatedAt",
+  uploaderid: "uploaderId",
+  useragent: "userAgent",
+  usercount: "userCount",
+  userid: "userId",
+};
+
+function normalizeRowAliases(row: QueryResultRow) {
+  for (const [key, value] of Object.entries(row)) {
+    const alias = aliasMap[key];
+    if (alias && !(alias in row)) {
+      row[alias] = value;
+    }
   }
-  if (url.startsWith("file:")) {
-    return new URL(url).pathname;
-  }
-  return path.isAbsolute(url) ? url : path.join(/* turbopackIgnore: true */ process.cwd(), url);
+  return row;
 }
 
-const dbPath = resolveDatabasePath();
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+function toPostgresSql(query: string) {
+  let index = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
 
-export const sqlite = new Database(dbPath);
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
+  return query.replace(/./g, (char, offset) => {
+    const previous = query[offset - 1];
+    if (char === "'" && !inDoubleQuote && previous !== "\\") {
+      inSingleQuote = !inSingleQuote;
+      return char;
+    }
+    if (char === '"' && !inSingleQuote && previous !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      return char;
+    }
+    if (char === "?" && !inSingleQuote && !inDoubleQuote) {
+      index += 1;
+      return `$${index}`;
+    }
+    return char;
+  });
+}
 
-export const db = drizzle(sqlite, { schema });
+async function execute(client: SqlExecutor, query: string, params: QueryParam[] = []) {
+  const rows = await client.unsafe<QueryResultRow[]>(toPostgresSql(query), params);
+  return rows.map(normalizeRowAliases);
+}
+
+export type RunResult = {
+  changes: number;
+  lastInsertRowid: number;
+};
+
+function createDbClient(client: SqlExecutor) {
+  return {
+    prepare(query: string) {
+      return {
+        all: async (...params: QueryParam[]) => (await execute(client, query, params)) as unknown[],
+        get: async (...params: QueryParam[]) => {
+          const rows = await execute(client, query, params);
+          return rows[0] as unknown | undefined;
+        },
+        run: async (...params: QueryParam[]): Promise<RunResult> => {
+          const rows = await execute(client, query, params);
+          const result = rows as typeof rows & { count?: number };
+          const firstRow = rows[0] as { id?: number } | undefined;
+          return {
+            changes: result.count ?? rows.length,
+            lastInsertRowid: Number(firstRow?.id ?? 0),
+          };
+        },
+      };
+    },
+    exec(query: string) {
+      return client.unsafe<QueryResultRow[]>(query);
+    },
+  };
+}
+
+export type DbClient = ReturnType<typeof createDbClient>;
+
+export const sqlite = {
+  ...createDbClient(sql),
+  transaction<T>(callback: (tx: DbClient) => Promise<T>) {
+    return sql.begin((transaction) => callback(createDbClient(transaction)));
+  },
+};
+
+export async function closeDb() {
+  await sql.end({ timeout: 5 });
+}
 
 export function nowIso() {
   return new Date().toISOString();

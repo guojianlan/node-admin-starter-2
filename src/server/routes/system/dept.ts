@@ -20,8 +20,8 @@ const deptSchema = z.object({
 
 export const deptRoutes = new Hono<{ Variables: HonoVariables }>();
 
-deptRoutes.get("/dept", authRequired(), ability("system.dept.query"), (c) => {
-  const page = buildListQuery(c.req.url, {
+deptRoutes.get("/dept", authRequired(), ability("system.dept.query"), async (c) => {
+  const page = await buildListQuery(c.req.url, {
     table: "sys_dept d",
     select: `
       d.id,
@@ -56,23 +56,23 @@ deptRoutes.get("/dept", authRequired(), ability("system.dept.query"), (c) => {
   return c.json(success(page));
 });
 
-deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), (c) => {
-  const rows = sqlite
+deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), async (c) => {
+  const rows = (await sqlite
     .prepare(
       `SELECT id, parent_id AS parentId, name, code, sort, leader, phone, status
        FROM sys_dept
        WHERE deleted_at IS NULL
        ORDER BY sort ASC, id ASC`,
     )
-    .all() as Array<{ id: number; parentId: number }>;
+    .all()) as Array<{ id: number; parentId: number }>;
   return c.json(success(buildTree(rows)));
 });
 
-deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), (c) => {
+deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), async (c) => {
   const deptId = Number(c.req.param("id"));
   if (!Number.isFinite(deptId)) throw new Error("部门不存在");
 
-  const page = buildListQuery(c.req.url, {
+  const page = await buildListQuery(c.req.url, {
     table: "sys_user u",
     select: `
       u.id,
@@ -111,7 +111,7 @@ deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), 
 deptRoutes.post("/dept", authRequired(), ability("system.dept.create"), async (c) => {
   const payload = deptSchema.parse(await c.req.json());
   const now = nowIso();
-  sqlite
+  await sqlite
     .prepare(
       `INSERT INTO sys_dept
         (parent_id, name, code, sort, leader, phone, status, created_at, updated_at)
@@ -135,7 +135,7 @@ deptRoutes.post("/dept", authRequired(), ability("system.dept.create"), async (c
 deptRoutes.put("/dept/:id", authRequired(), ability("system.dept.update"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = deptSchema.partial().parse(await c.req.json());
-  sqlite
+  await sqlite
     .prepare(
       `UPDATE sys_dept
        SET parent_id = COALESCE(?, parent_id),
@@ -162,8 +162,10 @@ deptRoutes.put("/dept/:id", authRequired(), ability("system.dept.update"), async
   return c.json(success(null, "更新成功"));
 });
 
-deptRoutes.delete("/dept/:id", authRequired(), ability("system.dept.delete"), (c) => {
+deptRoutes.delete("/dept/:id", authRequired(), ability("system.dept.delete"), async (c) => {
   const id = Number(c.req.param("id"));
-  sqlite.prepare("UPDATE sys_dept SET deleted_at = ?, updated_at = ? WHERE id = ?").run(nowIso(), nowIso(), id);
+  await sqlite
+    .prepare("UPDATE sys_dept SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .run(nowIso(), nowIso(), id);
   return c.json(success(null, "删除成功"));
 });

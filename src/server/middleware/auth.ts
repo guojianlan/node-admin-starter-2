@@ -17,7 +17,7 @@ export function authRequired(): MiddlewareHandler<{ Variables: HonoVariables }> 
       return c.json(fail("Token not provided", { showType: 4 }), 401);
     }
 
-    const resolved = resolveToken(token);
+    const resolved = await resolveToken(token);
     if (!resolved) {
       return c.json(fail("Invalid token", { showType: 4 }), 401);
     }

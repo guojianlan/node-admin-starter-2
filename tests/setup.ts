@@ -1,2 +1,4 @@
-process.env.DATABASE_URL = "data/test-admin-base.sqlite";
+process.env.DATABASE_URL ??=
+  process.env.TEST_DATABASE_URL ??
+  "postgres://admin_base:admin_base@localhost:5432/admin_base_test";
 process.env.ADMIN_BASE_TOKEN_TTL_DAYS = "7";

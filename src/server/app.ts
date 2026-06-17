@@ -3,12 +3,11 @@ import { cors } from "hono/cors";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { runMigrations } from "@/server/db/migrations";
-import { sqlite } from "@/server/db";
 import { errorMiddleware } from "@/server/middleware/error";
 import { authRoutes } from "@/server/routes/auth";
 import { systemRoutes } from "@/server/routes/system";
 
-runMigrations(sqlite);
+await runMigrations();
 
 export const app = new Hono<{ Variables: HonoVariables }>().basePath("/api");
 

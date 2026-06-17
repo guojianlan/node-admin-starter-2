@@ -1,15 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
+import { closeDb, sql } from "../src/server/db";
+import { seedDatabase } from "../src/server/db/seed/seed";
 
-const dbUrl = process.env.DATABASE_URL || "data/admin-base.sqlite";
-const dbPath = path.isAbsolute(dbUrl) ? dbUrl : path.join(process.cwd(), dbUrl);
+await sql.unsafe("DROP SCHEMA IF EXISTS public CASCADE");
+await sql.unsafe("CREATE SCHEMA public");
+await seedDatabase();
+await closeDb();
 
-for (const file of [dbPath, `${dbPath}-shm`, `${dbPath}-wal`]) {
-  if (fs.existsSync(file)) fs.rmSync(file);
-}
-
-const { sqlite } = await import("../src/server/db");
-const { seedDatabase } = await import("../src/server/db/seed/seed");
-
-await seedDatabase(sqlite);
 console.log("Database reset. Default account: admin / 123456");

@@ -1,13 +1,15 @@
 import { adminRoutes } from "../src/router/route-manifest";
-import { sqlite } from "../src/server/db";
-import { runMigrations } from "../src/server/db/migrations";
+import { closeDb, sqlite } from "../src/server/db";
+import { seedDatabase } from "../src/server/db/seed/seed";
 
-runMigrations(sqlite);
+await seedDatabase();
 
-const dbRoutes = sqlite
+const dbRoutes = (await sqlite
   .prepare("SELECT key, path, link FROM sys_rule WHERE type = 'route' AND path IS NOT NULL")
-  .all() as Array<{ key: string; path: string; link: number }>;
-const dbActions = sqlite.prepare("SELECT key FROM sys_rule WHERE type = 'action'").all() as Array<{
+  .all()) as Array<{ key: string; path: string; link: number }>;
+const dbActions = (await sqlite
+  .prepare("SELECT key FROM sys_rule WHERE type = 'action'")
+  .all()) as Array<{
   key: string;
 }>;
 
@@ -35,7 +37,9 @@ if (missingInManifest.length || missingInDatabase.length || missingAuthRules.len
   if (missingAuthRules.length) {
     console.error("Manifest auth rules missing in DB:", missingAuthRules);
   }
+  await closeDb();
   process.exit(1);
 }
 
 console.log("Route consistency check passed");
+await closeDb();
