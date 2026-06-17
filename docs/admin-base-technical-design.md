@@ -12,18 +12,18 @@ tmp/xin-admin-laravel
 
 `xin-admin-laravel` 不是单纯 Laravel 后端，它是一个“后端 API + React/Vite 前端 + 已构建静态资源”的全栈后台模板。核心技术和能力如下：
 
-| 维度 | 参考项目实现 | 对新项目的启发 |
-| --- | --- | --- |
-| 后端框架 | Laravel，模块位于 `modules/*` | Node 侧应保持模块化，按 `system/user`、`system/tool`、`common` 分层 |
-| 前端框架 | React + Vite，页面在 `web/pages` | Next.js App Router 可以天然替代文件路由 |
-| UI | Ant Design，通用 `XinTable`、`XinForm` | 只参考它的产品模式和交互结构，不复用 Xin 封装组件、源码或组件 API |
-| 状态 | Zustand 管理用户、字典、全局主题 | 可继续使用 Zustand，减少心智迁移成本 |
-| 鉴权 | 登录后生成 Sanctum token，token abilities 保存权限码 | Node 侧用 bearer token + abilities 快照复刻 |
-| 权限模型 | `sys_rule` 存菜单、路由、按钮权限；`sys_role_rule` 绑定角色 | 保留 `menu/route/action` 三层权限模型 |
-| 菜单 | `/system/menu` 返回用户可见菜单树 | 前端布局由后端菜单树驱动 |
-| CRUD | 控制器继承 `BaseController`，统一分页、筛选、排序、快速搜索 | Hono API 侧提供统一 query builder |
-| 响应 | `{ success, msg, data, showType }` | 保留响应契约，前端统一拦截和提示 |
-| 系统模块 | 用户、角色、菜单权限、部门、字典、配置、文件、邮件、存储、AI | MVP 先做用户、角色、菜单权限、部门、字典、配置、文件 |
+| 维度     | 参考项目实现                                                 | 对新项目的启发                                                      |
+| -------- | ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| 后端框架 | Laravel，模块位于 `modules/*`                                | Node 侧应保持模块化，按 `system/user`、`system/tool`、`common` 分层 |
+| 前端框架 | React + Vite，页面在 `web/pages`                             | Next.js App Router 可以天然替代文件路由                             |
+| UI       | Ant Design，通用 `XinTable`、`XinForm`                       | 只参考它的产品模式和交互结构，不复用 Xin 封装组件、源码或组件 API   |
+| 状态     | Zustand 管理用户、字典、全局主题                             | 可继续使用 Zustand，减少心智迁移成本                                |
+| 鉴权     | 登录后生成 Sanctum token，token abilities 保存权限码         | Node 侧用 bearer token + abilities 快照复刻                         |
+| 权限模型 | `sys_rule` 存菜单、路由、按钮权限；`sys_role_rule` 绑定角色  | 保留 `menu/route/action` 三层权限模型                               |
+| 菜单     | `/system/menu` 返回用户可见菜单树                            | 前端布局由后端菜单树驱动                                            |
+| CRUD     | 控制器继承 `BaseController`，统一分页、筛选、排序、快速搜索  | Hono API 侧提供统一 query builder                                   |
+| 响应     | `{ success, msg, data, showType }`                           | 保留响应契约，前端统一拦截和提示                                    |
+| 系统模块 | 用户、角色、菜单权限、部门、字典、配置、文件、邮件、存储、AI | MVP 先做用户、角色、菜单权限、部门、字典、配置、文件                |
 
 关键源码位置：
 
@@ -333,11 +333,7 @@ type PageScaffoldProps = {
 export function PageScaffold(props: PageScaffoldProps) {
   return (
     <div className="admin-page">
-      <PageHeader
-        title={props.title}
-        description={props.description}
-        actions={props.actions}
-      />
+      <PageHeader title={props.title} description={props.description} actions={props.actions} />
       <div className="admin-page-content">{props.children}</div>
     </div>
   );
@@ -365,19 +361,19 @@ export function UserPage() {
 
 ## 3. 技术选型
 
-| 类别 | 选型 | 说明 |
-| --- | --- | --- |
-| Runtime | Node.js 22 LTS 或当前项目约定版本 | 保持现代 Web API 能力 |
-| 框架 | Next.js App Router | 页面、布局、路由、构建统一 |
-| API | Hono | 路由和中间件轻量，适合 Node/Edge 双部署 |
-| ORM | Drizzle ORM | 类型安全 schema、迁移、查询构造 |
-| DB | PostgreSQL 优先，SQLite 可做本地开发 | Admin 框架最终建议 Postgres |
-| UI | Ant Design | 后台管理系统主 UI |
-| 状态 | Zustand | 用户、权限、字典、主题等客户端状态 |
-| 校验 | Zod | Hono 入参校验、表单 schema 共用 |
-| 密码 | argon2id 或 bcrypt | 推荐 argon2id，bcrypt 作为兼容选项 |
-| 上传 | 本地磁盘 MVP，后续 S3/R2 | 先实现最小可用文件管理 |
-| 测试 | Vitest + Playwright | API 单测、权限单测、关键页面 e2e |
+| 类别    | 选型                                 | 说明                                    |
+| ------- | ------------------------------------ | --------------------------------------- |
+| Runtime | Node.js 22 LTS 或当前项目约定版本    | 保持现代 Web API 能力                   |
+| 框架    | Next.js App Router                   | 页面、布局、路由、构建统一              |
+| API     | Hono                                 | 路由和中间件轻量，适合 Node/Edge 双部署 |
+| ORM     | Drizzle ORM                          | 类型安全 schema、迁移、查询构造         |
+| DB      | PostgreSQL 优先，SQLite 可做本地开发 | Admin 框架最终建议 Postgres             |
+| UI      | Ant Design                           | 后台管理系统主 UI                       |
+| 状态    | Zustand                              | 用户、权限、字典、主题等客户端状态      |
+| 校验    | Zod                                  | Hono 入参校验、表单 schema 共用         |
+| 密码    | argon2id 或 bcrypt                   | 推荐 argon2id，bcrypt 作为兼容选项      |
+| 上传    | 本地磁盘 MVP，后续 S3/R2             | 先实现最小可用文件管理                  |
+| 测试    | Vitest + Playwright                  | API 单测、权限单测、关键页面 e2e        |
 
 ## 4. 核心领域模型
 
@@ -385,13 +381,13 @@ export function UserPage() {
 
 ### 4.1 用户与组织
 
-| 表 | 说明 |
-| --- | --- |
-| `sys_user` | 后台管理员用户 |
-| `sys_role` | 角色 |
-| `sys_user_role` | 用户角色关联 |
-| `sys_dept` | 部门树 |
-| `sys_login_record` | 登录日志 |
+| 表                 | 说明           |
+| ------------------ | -------------- |
+| `sys_user`         | 后台管理员用户 |
+| `sys_role`         | 角色           |
+| `sys_user_role`    | 用户角色关联   |
+| `sys_dept`         | 部门树         |
+| `sys_login_record` | 登录日志       |
 
 `sys_user` 关键字段：
 
@@ -459,14 +455,14 @@ last_used_at, expires_at, created_at, updated_at
 
 ### 4.4 字典、配置、文件
 
-| 表 | 说明 |
-| --- | --- |
-| `sys_dict` | 字典类型 |
-| `sys_dict_item` | 字典项 |
-| `sys_config_group` | 配置分组 |
-| `sys_config_items` | 配置项 |
-| `sys_file_group` | 文件分组 |
-| `sys_file` | 文件元数据 |
+| 表                 | 说明       |
+| ------------------ | ---------- |
+| `sys_dict`         | 字典类型   |
+| `sys_dict_item`    | 字典项     |
+| `sys_config_group` | 配置分组   |
+| `sys_config_items` | 配置项     |
+| `sys_file_group`   | 文件分组   |
+| `sys_file`         | 文件元数据 |
 
 配置建议保留动态表单能力：
 
@@ -874,16 +870,16 @@ type AdminDataTableColumn<T> = AntdTableColumn<T> & {
 
 URL 参数规范：
 
-| 状态 | URL 参数 | 示例 |
-| --- | --- | --- |
-| 当前页 | `page` | `page=2` |
-| 每页条数 | `pageSize` | `pageSize=20` |
-| 快速搜索 | `keyword` | `keyword=admin` |
-| 排序 | `sort` | `sort=createdAt.desc` |
-| 普通字段 | 字段名 | `status=1` |
-| 多选字段 | 重复字段名 | `roleId=1&roleId=2` |
+| 状态     | URL 参数                  | 示例                                                |
+| -------- | ------------------------- | --------------------------------------------------- |
+| 当前页   | `page`                    | `page=2`                                            |
+| 每页条数 | `pageSize`                | `pageSize=20`                                       |
+| 快速搜索 | `keyword`                 | `keyword=admin`                                     |
+| 排序     | `sort`                    | `sort=createdAt.desc`                               |
+| 普通字段 | 字段名                    | `status=1`                                          |
+| 多选字段 | 重复字段名                | `roleId=1&roleId=2`                                 |
 | 日期范围 | `field.from` / `field.to` | `createdAt.from=2026-06-01&createdAt.to=2026-06-11` |
-| 树选择 | 字段名 | `deptId=3` |
+| 树选择   | 字段名                    | `deptId=3`                                          |
 
 不要把搜索状态压成一个 JSON 字符串放到 URL。JSON 虽然实现简单，但不利于可读、分享、调试和手动修改。
 
@@ -1017,11 +1013,11 @@ radio, radioButton, switch, dateRange, image
 
 Next.js 下权限分三层控制：
 
-| 层级 | 控制点 | 作用 |
-| --- | --- | --- |
-| 路由存在性 | `src/router/route-manifest.ts` | 判断这个前端页面是否存在 |
-| 菜单可见性 | `/api/system/menu` 返回的 `sys_rule` 菜单树 | 决定侧边栏、面包屑、用户可导航页面 |
-| 操作权限 | `/api/system/info` 返回的 `access` + Hono `ability()` | 前端按钮显隐和后端接口强校验 |
+| 层级       | 控制点                                                | 作用                               |
+| ---------- | ----------------------------------------------------- | ---------------------------------- |
+| 路由存在性 | `src/router/route-manifest.ts`                        | 判断这个前端页面是否存在           |
+| 菜单可见性 | `/api/system/menu` 返回的 `sys_rule` 菜单树           | 决定侧边栏、面包屑、用户可导航页面 |
+| 操作权限   | `/api/system/info` 返回的 `access` + Hono `ability()` | 前端按钮显隐和后端接口强校验       |
 
 #### 7.7.1 菜单不是 Next 文件路由生成的
 
@@ -1089,15 +1085,9 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
     void initMenus();
   }, [token, pathname, router, initSession, initMenus]);
 
-  const route = useMemo(
-    () => adminRoutes.find((item) => item.path === pathname),
-    [pathname],
-  );
+  const route = useMemo(() => adminRoutes.find((item) => item.path === pathname), [pathname]);
 
-  const menu = useMemo(
-    () => findMenuByPath(menus, pathname),
-    [menus, pathname],
-  );
+  const menu = useMemo(() => findMenuByPath(menus, pathname), [menus, pathname]);
 
   if (!token || !initialized) return <Spin fullscreen />;
 
@@ -1124,23 +1114,13 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
 前端菜单和按钮不能作为安全边界。每个敏感 API 都要写：
 
 ```ts
-systemUserRoutes.get(
-  "/user",
-  authRequired(),
-  ability("system.user.query"),
-  async (c) => {
-    return c.json(success(await userService.list(c.req.query())));
-  },
-);
+systemUserRoutes.get("/user", authRequired(), ability("system.user.query"), async (c) => {
+  return c.json(success(await userService.list(c.req.query())));
+});
 
-systemUserRoutes.post(
-  "/user",
-  authRequired(),
-  ability("system.user.create"),
-  async (c) => {
-    return c.json(success(await userService.create(await c.req.json())));
-  },
-);
+systemUserRoutes.post("/user", authRequired(), ability("system.user.create"), async (c) => {
+  return c.json(success(await userService.create(await c.req.json())));
+});
 ```
 
 权限码来源于 `sys_rule.type = "action"` 或兼容 XinAdmin 的 `type = "rule"`。用户登录时把当前权限快照写进 token abilities；如果希望角色改动实时生效，可以在每次请求从数据库重算，或者在角色权限变更后使相关 token 失效。MVP 建议使用 token abilities 快照，角色权限变更后提示用户重新登录；第二阶段再做 token version 或权限缓存失效。
@@ -1149,12 +1129,12 @@ systemUserRoutes.post(
 
 需要定义清楚不一致场景：
 
-| 场景 | 处理 |
-| --- | --- |
+| 场景                            | 处理                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
 | manifest 有页面，数据库没有菜单 | 页面可存在，但默认不可通过菜单访问；直接访问返回 403，除非 route 标记为 public/adminHidden |
-| 数据库有菜单，manifest 没页面 | 菜单渲染时过滤或点击后跳 404，同时在开发环境 warning |
-| 用户有菜单但无 action 查询权限 | 不推荐出现；seed 和角色授权要保证 route 对应 query 权限 |
-| 用户有 action 但无菜单 | API 可被授权访问，但页面不显示；适合纯接口权限 |
+| 数据库有菜单，manifest 没页面   | 菜单渲染时过滤或点击后跳 404，同时在开发环境 warning                                       |
+| 用户有菜单但无 action 查询权限  | 不推荐出现；seed 和角色授权要保证 route 对应 query 权限                                    |
+| 用户有 action 但无菜单          | API 可被授权访问，但页面不显示；适合纯接口权限                                             |
 
 推荐启动时提供一个开发期检查脚本：
 
@@ -1236,15 +1216,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
 统一规则：
 
-| 元素 | 规则 |
-| --- | --- |
+| 元素     | 规则                                                      |
+| -------- | --------------------------------------------------------- |
 | 页面标题 | `PageScaffold.title`，不要在页面里手写 `Typography.Title` |
-| 页面描述 | `PageScaffold.description`，可选但位置固定 |
-| 主操作 | 放 `PageScaffold.actions` 或 `AdminDataTable` action bar |
-| 内容容器 | 由 `PageScaffold` 决定 padding 和 spacing |
-| 卡片 | 只用于表格、表单、详情等真实内容容器，不做套娃卡片 |
-| 空状态 | 使用统一 `EmptyState` |
-| 错误状态 | 使用统一 `ForbiddenPage`、`NotFoundPage` |
+| 页面描述 | `PageScaffold.description`，可选但位置固定                |
+| 主操作   | 放 `PageScaffold.actions` 或 `AdminDataTable` action bar  |
+| 内容容器 | 由 `PageScaffold` 决定 padding 和 spacing                 |
+| 卡片     | 只用于表格、表单、详情等真实内容容器，不做套娃卡片        |
+| 空状态   | 使用统一 `EmptyState`                                     |
+| 错误状态 | 使用统一 `ForbiddenPage`、`NotFoundPage`                  |
 
 #### 7.8.4 CRUD 页面
 
@@ -1320,22 +1300,22 @@ image     -> ImageUploader
 
 第一版建议只做基础 admin 框架，不做 AI、邮件、复杂存储配置：
 
-| 模块 | MVP 是否做 | 说明 |
-| --- | --- | --- |
-| 登录/退出 | 做 | 必需 |
-| 用户信息/修改密码 | 做 | 必需 |
-| 菜单权限 | 做 | 框架核心 |
-| 用户管理 | 做 | 框架核心 |
-| 角色管理 | 做 | 框架核心 |
-| 部门管理 | 做 | 组织基础 |
-| 字典管理 | 做 | 通用业务支撑 |
-| 系统配置 | 做 | 网站标题、Logo、基础开关 |
-| 文件管理 | 做轻量版 | 本地上传、列表、删除 |
-| 仪表盘 | 做占位 | 后续业务替换 |
-| 国际化 | 可延后 | 参考项目有 i18n，但基础框架可先中文 |
-| 主题设置 | 可延后 | 先保留 AntD token 基础主题 |
-| 邮件/存储配置 | 延后 | 等业务需要 |
-| AI 模块 | 不做 | 与基础 admin 框架无关 |
+| 模块              | MVP 是否做 | 说明                                |
+| ----------------- | ---------- | ----------------------------------- |
+| 登录/退出         | 做         | 必需                                |
+| 用户信息/修改密码 | 做         | 必需                                |
+| 菜单权限          | 做         | 框架核心                            |
+| 用户管理          | 做         | 框架核心                            |
+| 角色管理          | 做         | 框架核心                            |
+| 部门管理          | 做         | 组织基础                            |
+| 字典管理          | 做         | 通用业务支撑                        |
+| 系统配置          | 做         | 网站标题、Logo、基础开关            |
+| 文件管理          | 做轻量版   | 本地上传、列表、删除                |
+| 仪表盘            | 做占位     | 后续业务替换                        |
+| 国际化            | 可延后     | 参考项目有 i18n，但基础框架可先中文 |
+| 主题设置          | 可延后     | 先保留 AntD token 基础主题          |
+| 邮件/存储配置     | 延后       | 等业务需要                          |
+| AI 模块           | 不做       | 与基础 admin 框架无关               |
 
 ## 9. 实施任务清单
 
