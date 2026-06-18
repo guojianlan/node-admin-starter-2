@@ -6,7 +6,6 @@ import { request } from "@/lib/request";
 export type DictOption = {
   label: string;
   value: string | number;
-  color?: string | null;
 };
 
 type DictState = {

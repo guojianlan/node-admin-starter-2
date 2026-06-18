@@ -19,12 +19,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AuthButton } from "@/components/auth-button/AuthButton";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
 import { AdminSearchForm } from "@/components/admin-search-form/AdminSearchForm";
-import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
 import { buildQueryString, request } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { feedback } from "@/ui/feedback/feedback";
 import { EmptyState } from "@/ui/states/EmptyState";
-import { useTableUrlState } from "./use-table-url-state";
+import { useTableUrlState, type TableUrlField } from "./use-table-url-state";
 
 type AdminDataTableProps<T extends object> = {
   api: string;
@@ -39,8 +39,14 @@ type AdminDataTableProps<T extends object> = {
   enableDelete?: boolean;
   enableActions?: boolean;
   showSearchButton?: boolean;
+  showSearchForm?: boolean;
   showKeywordSearch?: boolean;
   showToolbarSettings?: boolean;
+  cardClassName?: string;
+  searchCardClassName?: string;
+  searchPlacement?: "inside" | "card";
+  toolbarTitle?: React.ReactNode;
+  urlStatePrefix?: string;
   pagination?: false;
   tableProps?: Omit<
     TableProps<T>,
@@ -50,12 +56,34 @@ type AdminDataTableProps<T extends object> = {
   canDelete?: (record: T) => boolean;
   actionBarRender?: (reload: () => void) => React.ReactNode;
   operateRender?: (record: T, reload: () => void) => React.ReactNode;
-  beforeSubmit?: (values: Record<string, unknown>, mode: "create" | "update") => Record<string, unknown>;
+  beforeSubmit?: (
+    values: Record<string, unknown>,
+    mode: "create" | "update",
+  ) => Record<string, unknown>;
   handleRequest?: (params: Record<string, unknown>) => Promise<PageResult<T>>;
 };
 
 function getRowId<T extends object>(record: T, rowKey: keyof T & string) {
   return String(record[rowKey]);
+}
+
+function normalizeFieldOptions(options?: FieldOption[]): FieldOption[] | undefined {
+  if (!options?.length) return undefined;
+  return options.map((option) => ({
+    label: option.label,
+    value: option.value,
+    children: normalizeFieldOptions(option.children),
+  }));
+}
+
+function buildSearchFieldSignature<T extends object>(columns: AdminDataTableColumn<T>[]) {
+  return columns
+    .filter((column) => !column.hideInSearch)
+    .map((column) => ({
+      name: column.dataIndex,
+      valueType: column.valueType,
+      options: normalizeFieldOptions(column.options),
+    }));
 }
 
 export function AdminDataTable<T extends object>({
@@ -70,9 +98,15 @@ export function AdminDataTable<T extends object>({
   enableUpdate = true,
   enableDelete = true,
   enableActions = true,
-  showSearchButton = true,
+  showSearchButton = false,
+  showSearchForm = true,
   showKeywordSearch = true,
   showToolbarSettings = true,
+  cardClassName,
+  searchCardClassName,
+  searchPlacement = "inside",
+  toolbarTitle,
+  urlStatePrefix,
   pagination,
   tableProps,
   canUpdate,
@@ -90,23 +124,18 @@ export function AdminDataTable<T extends object>({
   const [editingRecord, setEditingRecord] = useState<T | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "update">("create");
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(true);
   const [draftKeyword, setDraftKeyword] = useState<string | null>(null);
   const [density, setDensity] = useState<TableProps<T>["size"]>();
   const [bordered, setBordered] = useState(false);
   const [columnsChecked, setColumnsChecked] = useState<string[] | null>(null);
 
-  const fields = useMemo(
-    () =>
-      columns
-        .filter((column) => !column.hideInSearch)
-        .map((column) => ({
-          name: column.dataIndex,
-          valueType: column.valueType,
-        })),
-    [columns],
+  const fieldSignature = JSON.stringify(buildSearchFieldSignature(columns));
+  const fields = useMemo<TableUrlField[]>(
+    () => JSON.parse(fieldSignature) as TableUrlField[],
+    [fieldSignature],
   );
-  const { state, actions } = useTableUrlState({ defaultPageSize, fields });
+  const { state, actions } = useTableUrlState({ defaultPageSize, fields, urlStatePrefix });
   const hasActiveSearch = Boolean(state.keyword || Object.keys(state.filters).length);
   const defaultColumnKeys = useMemo(
     () => columns.filter((column) => !column.hideInTable).map((column) => column.dataIndex),
@@ -114,7 +143,7 @@ export function AdminDataTable<T extends object>({
   );
   const activeColumnKeys = columnsChecked ?? defaultColumnKeys;
   const keywordText = draftKeyword ?? state.keyword ?? "";
-  const shouldShowSearch = searchOpen || hasActiveSearch;
+  const shouldShowSearch = showSearchForm && (searchOpen || hasActiveSearch);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -185,10 +214,12 @@ export function AdminDataTable<T extends object>({
                   icon={<DeleteOutlined />}
                   onClick={() => {
                     if (!window.confirm("确认删除当前记录？")) return;
-                    void request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }).then(() => {
-                      feedback.success("删除成功");
-                      reload();
-                    });
+                    void request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }).then(
+                      () => {
+                        feedback.success("删除成功");
+                        reload();
+                      },
+                    );
                   }}
                 />
               </Tooltip>
@@ -267,6 +298,21 @@ export function AdminDataTable<T extends object>({
     });
   }
 
+  const searchNode = shouldShowSearch ? (
+    <AdminSearchForm
+      columns={columns}
+      values={state.formValues}
+      keyword={state.keyword}
+      includeKeyword={false}
+      loading={loading}
+      onSearch={(values) => actions.setSearch({ ...values, keyword: keywordText })}
+      onReset={() => {
+        setDraftKeyword(null);
+        actions.reset();
+      }}
+    />
+  ) : null;
+
   const densityMenu = {
     items: [
       { key: "large", label: "默认", onClick: () => setDensity("large") },
@@ -293,27 +339,17 @@ export function AdminDataTable<T extends object>({
     </div>
   );
 
-  return (
-    <div className="admin-card admin-table-card">
-      {shouldShowSearch ? (
+  const tableCard = (
+    <div className={["admin-card", "admin-table-card", cardClassName].filter(Boolean).join(" ")}>
+      {searchPlacement === "inside" && searchNode ? (
         <>
-          <AdminSearchForm
-            columns={columns}
-            values={state.formValues}
-            keyword={state.keyword}
-            includeKeyword={false}
-            loading={loading}
-            onSearch={(values) => actions.setSearch({ ...values, keyword: keywordText })}
-            onReset={() => {
-              setDraftKeyword(null);
-              actions.reset();
-            }}
-          />
+          {searchNode}
           <Divider className="admin-search-divider" />
         </>
       ) : null}
       <div className="admin-toolbar">
         <div className="admin-toolbar-left">
+          {toolbarTitle ? <div className="admin-toolbar-title">{toolbarTitle}</div> : null}
           {enableCreate ? (
             <AuthButton auth={`${accessName}.create`}>
               <Button
@@ -427,4 +463,21 @@ export function AdminDataTable<T extends object>({
       />
     </div>
   );
+
+  if (searchPlacement === "card" && searchNode) {
+    return (
+      <>
+        <div
+          className={["admin-card", "admin-search-card", searchCardClassName]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {searchNode}
+        </div>
+        {tableCard}
+      </>
+    );
+  }
+
+  return tableCard;
 }

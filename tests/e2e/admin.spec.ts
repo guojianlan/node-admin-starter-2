@@ -29,7 +29,22 @@ async function login(page: Page, username = "admin", password = "123456") {
 }
 
 async function confirmModal(page: Page) {
-  await page.locator(".ant-modal").getByRole("button", { name: /确\s*定|OK/ }).click();
+  await page
+    .locator(".ant-modal")
+    .getByRole("button", { name: /确\s*定|OK/ })
+    .click();
+}
+
+async function getSearchSelectText(page: Page, label: string) {
+  return page.locator(".admin-search-form").evaluate((root, labelText) => {
+    const item = Array.from(root.querySelectorAll(".ant-form-item")).find(
+      (element) => element.querySelector("label")?.textContent?.trim() === labelText,
+    );
+    const selectedText = item?.querySelector(".ant-select-selection-item")?.textContent?.trim();
+    if (selectedText) return selectedText;
+    const text = item?.textContent?.replace(/\s+/g, "").trim() ?? "";
+    return text.startsWith(labelText) ? text.slice(labelText.length) : text;
+  }, label);
 }
 
 test("login, search URL state, refresh, back and reset", async ({ page }) => {
@@ -63,7 +78,10 @@ test("user form validation and created user appears in list", async ({ page, req
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await confirmModal(page);
   await expect(page.getByText("请输入用户名")).toBeVisible();
-  await page.locator(".ant-modal").getByRole("button", { name: /取\s*消|Cancel/ }).click();
+  await page
+    .locator(".ant-modal")
+    .getByRole("button", { name: /取\s*消|Cancel/ })
+    .click();
 
   const suffix = Date.now().toString().slice(-6);
   const token = await page.evaluate(() => window.localStorage.getItem("admin-base-token"));
@@ -125,7 +143,57 @@ test("system management edit forms preload existing data", async ({ page }) => {
   await expect(page.locator(".ant-modal input#title")).toHaveValue("站点名称");
 });
 
-test("unauthorized user only sees permitted shell and no system menu", async ({ page, request }) => {
+test("URL select filters decode labels and apply numeric filters", async ({ page }) => {
+  await login(page);
+
+  await page.goto("/system/user?sex=1");
+  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await expect.poll(() => getSearchSelectText(page, "性别")).toBe("男");
+  const userRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
+  await expect(userRows).toHaveCount(1);
+  await expect(userRows.first().locator("td").nth(1)).toHaveText("demo");
+  await expect(userRows.first().locator("td").nth(3)).toHaveText("男");
+
+  await page.goto("/system/role?status=1");
+  await expect(page.getByRole("heading", { name: "角色管理" })).toBeVisible();
+  await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
+
+  await page.goto("/system/dict?status=1");
+  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
+});
+
+test("list search forms are visible by default and dict items stay on the dict page", async ({
+  page,
+}) => {
+  await login(page);
+
+  await page.goto("/system/user");
+  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await expect(page.locator(".admin-search-form")).toBeVisible();
+  await expect(page.locator('.admin-search-form label[for="sex"]')).toBeVisible();
+
+  await page.goto("/system/dict");
+  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await expect(page.locator(".admin-search-form").first()).toBeVisible();
+  const dictRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
+  await expect(dictRows).not.toHaveCount(0);
+  await dictRows.first().click();
+  await expect(page).toHaveURL(/\/system\/dict\?[^#]*dictId=1/);
+  await expect(page).not.toHaveURL(/\/system\/dict\/item/);
+  await expect(page.locator(".system-dict-title").getByText("status")).toBeVisible();
+  const itemRows = page
+    .locator(".ant-table")
+    .last()
+    .locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
+  await expect(itemRows).toHaveCount(2);
+  await expect(itemRows.first()).toContainText("启用");
+});
+
+test("unauthorized user only sees permitted shell and no system menu", async ({
+  page,
+  request,
+}) => {
   const loginResponse = await request.post("/api/system/login", {
     data: { username: "admin", password: "123456" },
   });

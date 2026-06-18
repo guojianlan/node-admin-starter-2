@@ -3,11 +3,12 @@
 import dayjs from "dayjs";
 import { useMemo } from "react";
 import { useNavigationAdapter } from "@/platform/navigation";
-import type { FieldValueType } from "@/components/admin-fields/types";
+import type { FieldOption, FieldValueType } from "@/components/admin-fields/types";
 
 export type TableUrlField = {
   name: string;
   valueType?: FieldValueType;
+  options?: FieldOption[];
 };
 
 export type TableUrlState = {
@@ -15,7 +16,7 @@ export type TableUrlState = {
   pageSize: number;
   keyword?: string;
   sort?: { field: string; order: "asc" | "desc" };
-  filters: Record<string, string | string[] | undefined>;
+  filters: Record<string, unknown>;
   formValues: Record<string, unknown>;
   query: Record<string, unknown>;
 };
@@ -23,6 +24,7 @@ export type TableUrlState = {
 type UseTableUrlStateOptions = {
   defaultPageSize?: number;
   fields: TableUrlField[];
+  urlStatePrefix?: string;
 };
 
 function readPositiveInt(value: string | null, fallback: number) {
@@ -39,35 +41,70 @@ function isEmptyValue(value: unknown) {
   );
 }
 
-function encodeFormValue(field: TableUrlField, value: unknown, params: URLSearchParams) {
+function getParamName(prefix: string | undefined, name: string) {
+  return prefix ? `${prefix}.${name}` : name;
+}
+
+function encodeFormValue(
+  field: TableUrlField,
+  value: unknown,
+  params: URLSearchParams,
+  prefix?: string,
+) {
   if (isEmptyValue(value)) return;
+  const fieldName = getParamName(prefix, field.name);
 
   if (field.valueType === "dateRange" && Array.isArray(value)) {
     const [from, to] = value;
-    if (from) params.set(`${field.name}.from`, dayjs(from).format("YYYY-MM-DD"));
-    if (to) params.set(`${field.name}.to`, dayjs(to).format("YYYY-MM-DD"));
+    if (from) params.set(`${fieldName}.from`, dayjs(from).format("YYYY-MM-DD"));
+    if (to) params.set(`${fieldName}.to`, dayjs(to).format("YYYY-MM-DD"));
     return;
   }
 
   if (Array.isArray(value)) {
     value.forEach((item) => {
-      if (!isEmptyValue(item)) params.append(field.name, String(item));
+      if (!isEmptyValue(item)) params.append(fieldName, String(item));
     });
     return;
   }
 
-  params.set(field.name, String(value));
+  params.set(fieldName, String(value));
 }
 
-function removeTableParams(params: URLSearchParams, fields: TableUrlField[]) {
-  params.delete("page");
-  params.delete("pageSize");
-  params.delete("keyword");
-  params.delete("sort");
+function findOptionValue(
+  options: FieldOption[] | undefined,
+  rawValue: string,
+): FieldOption["value"] | undefined {
+  for (const option of options ?? []) {
+    if (String(option.value) === rawValue) return option.value;
+    const childValue = findOptionValue(option.children, rawValue);
+    if (childValue !== undefined) return childValue;
+  }
+  return undefined;
+}
+
+function decodeFormValue(field: TableUrlField, rawValue: string) {
+  const optionValue = findOptionValue(field.options, rawValue);
+  if (optionValue !== undefined) return optionValue;
+
+  if (field.valueType === "digit") {
+    const numericValue = Number(rawValue);
+    return Number.isFinite(numericValue) ? numericValue : rawValue;
+  }
+
+  return rawValue;
+}
+
+function removeTableParams(params: URLSearchParams, fields: TableUrlField[], prefix?: string) {
+  params.delete(getParamName(prefix, "page"));
+  params.delete(getParamName(prefix, "pageSize"));
+  params.delete(getParamName(prefix, "keyword"));
+  params.delete(getParamName(prefix, "sort"));
   fields.forEach((field) => {
-    params.delete(field.name);
-    params.delete(`${field.name}.from`);
-    params.delete(`${field.name}.to`);
+    const fieldName = getParamName(prefix, field.name);
+    params.delete(fieldName);
+    params.delete(`${fieldName}.from`);
+    params.delete(`${fieldName}.to`);
   });
 }
 
@@ -76,15 +113,22 @@ function buildUrl(pathname: string, params: URLSearchParams) {
   return query ? `${pathname}?${query}` : pathname;
 }
 
-export function useTableUrlState({ defaultPageSize = 20, fields }: UseTableUrlStateOptions) {
+export function useTableUrlState({
+  defaultPageSize = 20,
+  fields,
+  urlStatePrefix,
+}: UseTableUrlStateOptions) {
   const navigation = useNavigationAdapter();
 
   const state = useMemo<TableUrlState>(() => {
     const params = new URLSearchParams(navigation.search);
-    const page = readPositiveInt(params.get("page"), 1);
-    const pageSize = readPositiveInt(params.get("pageSize"), defaultPageSize);
-    const keyword = params.get("keyword") || undefined;
-    const sortValue = params.get("sort");
+    const page = readPositiveInt(params.get(getParamName(urlStatePrefix, "page")), 1);
+    const pageSize = readPositiveInt(
+      params.get(getParamName(urlStatePrefix, "pageSize")),
+      defaultPageSize,
+    );
+    const keyword = params.get(getParamName(urlStatePrefix, "keyword")) || undefined;
+    const sortValue = params.get(getParamName(urlStatePrefix, "sort"));
     const [sortField, sortOrder] = sortValue?.split(".") ?? [];
     const sort: TableUrlState["sort"] =
       sortField && (sortOrder === "asc" || sortOrder === "desc")
@@ -95,9 +139,10 @@ export function useTableUrlState({ defaultPageSize = 20, fields }: UseTableUrlSt
     const formValues: Record<string, unknown> = {};
 
     fields.forEach((field) => {
+      const fieldName = getParamName(urlStatePrefix, field.name);
       if (field.valueType === "dateRange") {
-        const from = params.get(`${field.name}.from`);
-        const to = params.get(`${field.name}.to`);
+        const from = params.get(`${fieldName}.from`);
+        const to = params.get(`${fieldName}.to`);
         if (from || to) {
           filters[`${field.name}.from`] = from ?? undefined;
           filters[`${field.name}.to`] = to ?? undefined;
@@ -106,10 +151,11 @@ export function useTableUrlState({ defaultPageSize = 20, fields }: UseTableUrlSt
         return;
       }
 
-      const values = params.getAll(field.name);
+      const values = params.getAll(fieldName);
       if (!values.length) return;
-      filters[field.name] = values.length > 1 ? values : values[0];
-      formValues[field.name] = values.length > 1 ? values : values[0];
+      const decodedValues = values.map((value) => decodeFormValue(field, value));
+      filters[field.name] = decodedValues.length > 1 ? decodedValues : decodedValues[0];
+      formValues[field.name] = decodedValues.length > 1 ? decodedValues : decodedValues[0];
     });
 
     return {
@@ -127,41 +173,49 @@ export function useTableUrlState({ defaultPageSize = 20, fields }: UseTableUrlSt
         ...filters,
       },
     };
-  }, [defaultPageSize, fields, navigation.search]);
+  }, [defaultPageSize, fields, navigation.search, urlStatePrefix]);
 
   const actions = useMemo(
     () => ({
       setSearch(values: Record<string, unknown>) {
         const params = new URLSearchParams(navigation.search);
-        removeTableParams(params, fields);
-        if (values.keyword) params.set("keyword", String(values.keyword));
-        fields.forEach((field) => encodeFormValue(field, values[field.name], params));
-        if (state.pageSize !== defaultPageSize) params.set("pageSize", String(state.pageSize));
+        removeTableParams(params, fields, urlStatePrefix);
+        if (values.keyword)
+          params.set(getParamName(urlStatePrefix, "keyword"), String(values.keyword));
+        fields.forEach((field) =>
+          encodeFormValue(field, values[field.name], params, urlStatePrefix),
+        );
+        if (state.pageSize !== defaultPageSize) {
+          params.set(getParamName(urlStatePrefix, "pageSize"), String(state.pageSize));
+        }
         navigation.push(buildUrl(navigation.pathname, params));
       },
       setPage(page: number, pageSize?: number) {
         const params = new URLSearchParams(navigation.search);
-        if (page > 1) params.set("page", String(page));
-        else params.delete("page");
+        if (page > 1) params.set(getParamName(urlStatePrefix, "page"), String(page));
+        else params.delete(getParamName(urlStatePrefix, "page"));
         const nextPageSize = pageSize ?? state.pageSize;
-        if (nextPageSize !== defaultPageSize) params.set("pageSize", String(nextPageSize));
-        else params.delete("pageSize");
+        if (nextPageSize !== defaultPageSize) {
+          params.set(getParamName(urlStatePrefix, "pageSize"), String(nextPageSize));
+        } else {
+          params.delete(getParamName(urlStatePrefix, "pageSize"));
+        }
         navigation.push(buildUrl(navigation.pathname, params));
       },
       setSort(field?: string, order?: "asc" | "desc") {
         const params = new URLSearchParams(navigation.search);
-        params.delete("page");
-        if (field && order) params.set("sort", `${field}.${order}`);
-        else params.delete("sort");
+        params.delete(getParamName(urlStatePrefix, "page"));
+        if (field && order) params.set(getParamName(urlStatePrefix, "sort"), `${field}.${order}`);
+        else params.delete(getParamName(urlStatePrefix, "sort"));
         navigation.push(buildUrl(navigation.pathname, params));
       },
       reset() {
         const params = new URLSearchParams(navigation.search);
-        removeTableParams(params, fields);
+        removeTableParams(params, fields, urlStatePrefix);
         navigation.push(buildUrl(navigation.pathname, params));
       },
     }),
-    [defaultPageSize, fields, navigation, state.pageSize],
+    [defaultPageSize, fields, navigation, state.pageSize, urlStatePrefix],
   );
 
   return { state, actions };

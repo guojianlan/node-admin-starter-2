@@ -10,6 +10,7 @@ playwright-report/
 .env*.local
 data/*.sqlite
 data/*.sqlite-*
+data/*.db
 storage/uploads/*
 !storage/uploads/.gitkeep
 *.log

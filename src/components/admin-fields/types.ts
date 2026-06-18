@@ -1,5 +1,6 @@
-import type { FormItemProps } from "antd";
+import type { FormInstance, FormItemProps } from "antd";
 import type { ColumnType } from "antd/es/table";
+import type { ReactNode } from "react";
 
 export type FieldValueType =
   | "text"
@@ -18,7 +19,6 @@ export type FieldValueType =
 export type FieldOption = {
   label: string;
   value: string | number | boolean;
-  color?: string | null;
   children?: FieldOption[];
 };
 
@@ -32,9 +32,15 @@ export type AdminDataTableColumn<T extends object> = Omit<ColumnType<T>, "dataIn
   hideInCreate?: boolean;
   hideInUpdate?: boolean;
   required?: boolean;
+  formHelp?: ReactNode;
   formItemProps?: FormItemProps;
   fieldProps?: Record<string, unknown>;
   options?: FieldOption[];
   searchOperator?: "=" | "like" | "betweenDate";
   fullWidth?: boolean;
+  renderFormField?: (context: {
+    form: FormInstance<T>;
+    initialValues?: Partial<T> | null;
+    mode: "create" | "update";
+  }) => ReactNode;
 };

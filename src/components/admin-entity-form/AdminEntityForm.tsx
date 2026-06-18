@@ -1,9 +1,12 @@
 "use client";
 
-import { Form, Modal } from "antd";
+import { QuestionCircleOutlined } from "@ant-design/icons";
+import { Form, Modal, Tooltip } from "antd";
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { AdminFieldRenderer } from "@/components/admin-fields/AdminFieldRenderer";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import type { NamePath } from "antd/es/form/interface";
 
 type AdminEntityFormProps<T extends object> = {
   open: boolean;
@@ -15,6 +18,36 @@ type AdminEntityFormProps<T extends object> = {
   onCancel: () => void;
   onFinish: (values: Record<string, unknown>) => Promise<void> | void;
 };
+
+function renderFormLabel(title: string, help?: ReactNode) {
+  if (!help) return title;
+  return (
+    <span className="admin-form-label-help">
+      <span>{title}</span>
+      <Tooltip
+        title={help}
+        placement="topLeft"
+        rootClassName="admin-form-help-tooltip"
+        trigger={["hover", "focus", "click"]}
+        destroyOnHidden
+      >
+        <span
+          aria-label={`${title}说明`}
+          className="admin-form-help-trigger"
+          role="button"
+          tabIndex={0}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <QuestionCircleOutlined className="admin-form-help-icon" />
+        </span>
+      </Tooltip>
+    </span>
+  );
+}
 
 export function AdminEntityForm<T extends object>({
   open,
@@ -60,22 +93,31 @@ export function AdminEntityForm<T extends object>({
       <Form form={form} layout="vertical" onFinish={onFinish} requiredMark={false}>
         <div className="admin-entity-form-grid" data-testid="admin-entity-form">
           {formColumns.map((column) => (
-            <div className={column.fullWidth ? "admin-form-full" : undefined} key={column.dataIndex}>
+            <div
+              className={column.fullWidth ? "admin-form-full" : undefined}
+              key={column.dataIndex}
+            >
               <Form.Item
-                label={column.title}
-                name={column.dataIndex}
+                {...column.formItemProps}
+                label={
+                  column.formItemProps?.label ?? renderFormLabel(column.title, column.formHelp)
+                }
+                name={column.dataIndex as NamePath}
                 rules={
                   column.required
                     ? [{ required: true, message: `请输入${column.title}` }]
                     : column.formItemProps?.rules
                 }
-                {...column.formItemProps}
               >
-                <AdminFieldRenderer
-                  valueType={column.valueType}
-                  options={column.options}
-                  fieldProps={column.fieldProps}
-                />
+                {column.renderFormField ? (
+                  column.renderFormField({ form, initialValues, mode })
+                ) : (
+                  <AdminFieldRenderer
+                    valueType={column.valueType}
+                    options={column.options}
+                    fieldProps={column.fieldProps}
+                  />
+                )}
               </Form.Item>
             </div>
           ))}

@@ -87,7 +87,11 @@ export function DeptPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
-  const [modalInitialValues, setModalInitialValues] = useState<Partial<DeptRecord>>({ parentId: 0, sort: 0, status: 1 });
+  const [modalInitialValues, setModalInitialValues] = useState<Partial<DeptRecord>>({
+    parentId: 0,
+    sort: 0,
+    status: 1,
+  });
   const [deptUsers, setDeptUsers] = useState<DeptUserRecord[]>([]);
   const [deptUsersTotal, setDeptUsersTotal] = useState(0);
   const [deptUsersLoading, setDeptUsersLoading] = useState(false);
@@ -126,27 +130,31 @@ export function DeptPage() {
     [deptUserPage.page, deptUserPage.pageSize],
   );
 
-  const refreshDept = useCallback(async (preferredKey?: string) => {
-    setLoading(true);
-    try {
-      const rows = await request<DeptRecord[]>("/api/system/dept/tree", { silent: true });
-      setDeptTree(rows);
-      const flatRows = flattenDept(rows);
-      const activeKey = preferredKey && flatRows.some((item) => String(item.id) === preferredKey)
-        ? preferredKey
-        : flatRows[0]
-          ? String(flatRows[0].id)
-          : undefined;
-      setSelectedKey(activeKey);
-      const activeDept = flatRows.find((dept) => String(dept.id) === activeKey);
-      if (activeDept) {
-        form.setFieldsValue(activeDept);
-        void fetchDeptUsers(activeDept.id, 1, deptUserPage.pageSize);
+  const refreshDept = useCallback(
+    async (preferredKey?: string) => {
+      setLoading(true);
+      try {
+        const rows = await request<DeptRecord[]>("/api/system/dept/tree", { silent: true });
+        setDeptTree(rows);
+        const flatRows = flattenDept(rows);
+        const activeKey =
+          preferredKey && flatRows.some((item) => String(item.id) === preferredKey)
+            ? preferredKey
+            : flatRows[0]
+              ? String(flatRows[0].id)
+              : undefined;
+        setSelectedKey(activeKey);
+        const activeDept = flatRows.find((dept) => String(dept.id) === activeKey);
+        if (activeDept) {
+          form.setFieldsValue(activeDept);
+          void fetchDeptUsers(activeDept.id, 1, deptUserPage.pageSize);
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [deptUserPage.pageSize, fetchDeptUsers, form]);
+    },
+    [deptUserPage.pageSize, fetchDeptUsers, form],
+  );
 
   useEffect(() => {
     void Promise.resolve().then(() => refreshDept());
@@ -190,7 +198,11 @@ export function DeptPage() {
       title: "状态",
       dataIndex: "status",
       align: "center",
-      render: (value) => <Tag color={value === 1 ? "success" : "error"}>{value === 1 ? "正常" : "禁用"}</Tag>,
+      render: (value) => (
+        <Tag color={Number(value) === 1 ? "success" : "error"}>
+          {Number(value) === 1 ? "正常" : "禁用"}
+        </Tag>
+      ),
     },
   ];
 
@@ -233,7 +245,9 @@ export function DeptPage() {
   async function deleteChecked() {
     setLoading(true);
     try {
-      await Promise.all(checkedKeys.map((key) => request(`/api/system/dept/${String(key)}`, { method: "DELETE" })));
+      await Promise.all(
+        checkedKeys.map((key) => request(`/api/system/dept/${String(key)}`, { method: "DELETE" })),
+      );
       setCheckedKeys([]);
       feedback.success("删除成功");
       await refreshDept(selectedKey);
@@ -261,7 +275,12 @@ export function DeptPage() {
             className="system-side-card"
             title={
               <Space>
-                <Button loading={loading} type="primary" icon={<PlusOutlined />} onClick={() => openCreateModal()}>
+                <Button
+                  loading={loading}
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => openCreateModal()}
+                >
                   新增部门
                 </Button>
                 <Button
@@ -320,11 +339,21 @@ export function DeptPage() {
             styles={{ body: { minHeight: "70vh" } }}
           >
             {tabKey === "info" ? (
-              <Form form={form} layout="horizontal" labelCol={{ span: 5 }} wrapperCol={{ span: 16 }} onFinish={submitUpdate}>
+              <Form
+                form={form}
+                layout="horizontal"
+                labelCol={{ span: 5 }}
+                wrapperCol={{ span: 16 }}
+                onFinish={submitUpdate}
+              >
                 <Form.Item name="parentId" label="父级部门" rules={[{ required: true }]}>
                   <TreeSelect treeData={parentTreeData} disabled treeDefaultExpandAll />
                 </Form.Item>
-                <Form.Item name="name" label="部门名称" rules={[{ required: true, message: "请输入部门名称" }]}>
+                <Form.Item
+                  name="name"
+                  label="部门名称"
+                  rules={[{ required: true, message: "请输入部门名称" }]}
+                >
                   <Input />
                 </Form.Item>
                 <Form.Item name="code" label="部门编码">
@@ -343,7 +372,12 @@ export function DeptPage() {
                   <Select options={statusOptions} />
                 </Form.Item>
                 <Form.Item wrapperCol={{ offset: 5, span: 16 }}>
-                  <Button type="primary" htmlType="submit" loading={loading} disabled={!selectedDept}>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={loading}
+                    disabled={!selectedDept}
+                  >
                     保存信息
                   </Button>
                 </Form.Item>

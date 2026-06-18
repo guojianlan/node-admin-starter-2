@@ -28,6 +28,21 @@ export const configTypeOptions: FieldOption[] = [
   { label: "图片", value: "image" },
 ];
 
+export function getFieldOptionLabel(
+  options: FieldOption[],
+  value: unknown,
+  fallback = "-",
+): string {
+  for (const option of options) {
+    if (String(option.value) === String(value)) return option.label;
+    if (option.children?.length) {
+      const childLabel = getFieldOptionLabel(option.children, value, "");
+      if (childLabel) return childLabel;
+    }
+  }
+  return fallback;
+}
+
 type TreeNode = {
   id?: number;
   value?: number | string;

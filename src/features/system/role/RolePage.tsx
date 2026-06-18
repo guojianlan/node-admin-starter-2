@@ -112,7 +112,14 @@ export function RolePage() {
   }
 
   const roleColumns: AdminDataTableColumn<RoleRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72, align: "center" },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      align: "center",
+    },
     {
       title: "角色名称",
       dataIndex: "name",
@@ -125,7 +132,14 @@ export function RolePage() {
       ),
     },
     { title: "角色编码", dataIndex: "code", required: true, hideInTable: true },
-    { title: "备注", dataIndex: "remark", valueType: "textarea", fullWidth: true, hideInTable: true },
+    {
+      title: "备注",
+      dataIndex: "remark",
+      valueType: "textarea",
+      fullWidth: true,
+      hideInTable: true,
+      hideInSearch: true,
+    },
     {
       title: "排序",
       dataIndex: "sort",
@@ -181,7 +195,13 @@ export function RolePage() {
         />
       ),
     },
-    { title: "创建时间", dataIndex: "createdAt", hideInForm: true, hideInSearch: true, align: "center" },
+    {
+      title: "创建时间",
+      dataIndex: "createdAt",
+      hideInForm: true,
+      hideInSearch: true,
+      align: "center",
+    },
   ];
 
   const userColumns: TableProps<RoleUserRecord>["columns"] = [
@@ -195,7 +215,11 @@ export function RolePage() {
       dataIndex: "status",
       align: "center",
       width: 86,
-      render: (value) => <Tag color={value === 1 ? "success" : "error"}>{value === 1 ? "正常" : "禁用"}</Tag>,
+      render: (value) => (
+        <Tag color={Number(value) === 1 ? "success" : "error"}>
+          {Number(value) === 1 ? "正常" : "禁用"}
+        </Tag>
+      ),
     },
   ];
 
@@ -223,7 +247,10 @@ export function RolePage() {
   }
 
   return (
-    <PageScaffold title="角色管理" description="通过角色配置管理员权限，可查看角色用户并维护菜单权限">
+    <PageScaffold
+      title="角色管理"
+      description="通过角色配置管理员权限，可查看角色用户并维护菜单权限"
+    >
       <Row gutter={[20, 20]}>
         <Col xxl={14} lg={12} xs={24}>
           <AdminDataTable
@@ -279,7 +306,8 @@ export function RolePage() {
                     total: roleUsersTotal,
                     showSizeChanger: true,
                     showTotal: (total) => `共 ${total} 条`,
-                    onChange: (page, pageSize) => selectedRole && void fetchRoleUsers(selectedRole.id, page, pageSize),
+                    onChange: (page, pageSize) =>
+                      selectedRole && void fetchRoleUsers(selectedRole.id, page, pageSize),
                   }}
                   scroll={{ x: 600 }}
                 />

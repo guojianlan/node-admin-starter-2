@@ -10,15 +10,51 @@ import type { MenuNode } from "@/stores/auth";
 import { useAuthStore } from "@/stores/auth";
 import { renderMenuIcon } from "./icon-map";
 
-function toMenuItems(nodes: MenuNode[]): MenuProps["items"] {
+function getMenuKey(node: MenuNode) {
+  return node.path || node.key;
+}
+
+function findMenuByKey(nodes: MenuNode[], key: string): MenuNode | null {
+  for (const node of nodes) {
+    if (getMenuKey(node) === key) return node;
+    if (node.children?.length) {
+      const matched = findMenuByKey(node.children, key);
+      if (matched) return matched;
+    }
+  }
+  return null;
+}
+
+function normalizeExternalUrl(value: string) {
+  if (/^https?:\/\//i.test(value)) return value;
+  return `https://${value}`;
+}
+
+function toMenuItems(nodes: MenuNode[], onNavigate?: () => void): MenuProps["items"] {
   return nodes
     .filter((node) => node.status === 1 && node.hidden === 1)
     .map((node) => {
-      const children = node.children?.length ? toMenuItems(node.children) : undefined;
+      const children = node.children?.length ? toMenuItems(node.children, onNavigate) : undefined;
+      const isExternalLink = node.link === 1 && Boolean(node.path);
       return {
-        key: node.path || node.key,
+        key: getMenuKey(node),
         icon: renderMenuIcon(node.icon),
-        label: node.name,
+        label: isExternalLink ? (
+          <a
+            className="xin-menu-external-link"
+            href={normalizeExternalUrl(node.path || "")}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => {
+              event.stopPropagation();
+              onNavigate?.();
+            }}
+          >
+            {node.name}
+          </a>
+        ) : (
+          node.name
+        ),
         children,
       };
     });
@@ -32,29 +68,31 @@ export function AdminMenu({ onNavigate }: AdminMenuProps) {
   const pathname = usePathname();
   const navigation = useNavigationAdapter();
   const menus = useAuthStore((state) => state.menus);
-  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([]);
 
-  const items = useMemo(() => toMenuItems(menus), [menus]);
+  const items = useMemo(() => toMenuItems(menus, onNavigate), [menus, onNavigate]);
   const ancestors = useMemo(() => findMenuAncestors(menus, pathname), [menus, pathname]);
   const selectedKeys = pathname ? [pathname] : [];
-  const parentSelectedKeys = ancestors
-    .filter((item) => item.children?.length)
-    .map((item) => item.path || item.key);
+  const parentSelectedKeys = useMemo(
+    () => ancestors.filter((item) => item.children?.length).map((item) => getMenuKey(item)),
+    [ancestors],
+  );
   const rootKeys = useMemo(
-    () =>
-      menus
-        .filter((item) => item.children?.length)
-        .map((item) => item.path || item.key),
+    () => menus.filter((item) => item.children?.length).map((item) => getMenuKey(item)),
     [menus],
+  );
+  const openKeys = useMemo(
+    () => Array.from(new Set([...parentSelectedKeys, ...manualOpenKeys])),
+    [manualOpenKeys, parentSelectedKeys],
   );
 
   function handleOpenChange(keys: string[]) {
     const latestKey = keys.find((key) => !openKeys.includes(key));
     if (!latestKey || !rootKeys.includes(latestKey)) {
-      setOpenKeys(keys);
+      setManualOpenKeys(keys);
       return;
     }
-    setOpenKeys([latestKey]);
+    setManualOpenKeys([latestKey]);
   }
 
   return (
@@ -67,8 +105,15 @@ export function AdminMenu({ onNavigate }: AdminMenuProps) {
       onOpenChange={handleOpenChange}
       onClick={(info) => {
         const key = String(info.key);
-        if (key.startsWith("/")) {
-          navigation.push(key);
+        const menu = findMenuByKey(menus, key);
+        const path = menu?.path || key;
+        if (menu?.link === 1 && menu.path) {
+          window.open(normalizeExternalUrl(menu.path), "_blank", "noopener,noreferrer");
+          onNavigate?.();
+          return;
+        }
+        if (path.startsWith("/")) {
+          navigation.push(path);
           onNavigate?.();
         }
       }}

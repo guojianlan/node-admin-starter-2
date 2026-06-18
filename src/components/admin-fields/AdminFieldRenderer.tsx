@@ -1,6 +1,7 @@
 "use client";
 
 import { DatePicker, Input, InputNumber, Radio, Select, Switch, TreeSelect } from "antd";
+import { AdminImageField } from "./AdminImageField";
 import type { FieldOption, FieldValueType } from "./types";
 
 type AdminFieldRendererProps = {
@@ -35,11 +36,25 @@ export function AdminFieldRenderer({
     case "select":
       return <Select allowClear options={options} {...mergedFieldProps} />;
     case "treeSelect":
-      return <TreeSelect allowClear treeDefaultExpandAll treeData={toTreeData(options)} {...mergedFieldProps} />;
+      return (
+        <TreeSelect
+          allowClear
+          treeDefaultExpandAll
+          treeData={toTreeData(options)}
+          {...mergedFieldProps}
+        />
+      );
     case "radio":
       return <Radio.Group options={options} {...mergedFieldProps} />;
     case "radioButton":
-      return <Radio.Group optionType="button" buttonStyle="solid" options={options} {...mergedFieldProps} />;
+      return (
+        <Radio.Group
+          optionType="button"
+          buttonStyle="solid"
+          options={options}
+          {...mergedFieldProps}
+        />
+      );
     case "switch":
       return <Switch checkedChildren="启用" unCheckedChildren="停用" {...mergedFieldProps} />;
     case "date":
@@ -47,7 +62,7 @@ export function AdminFieldRenderer({
     case "dateRange":
       return <DatePicker.RangePicker style={{ width: "100%" }} {...mergedFieldProps} />;
     case "image":
-      return <Input placeholder="请输入图片 URL" {...mergedFieldProps} />;
+      return <AdminImageField {...mergedFieldProps} />;
     case "text":
     default:
       return <Input allowClear {...mergedFieldProps} />;

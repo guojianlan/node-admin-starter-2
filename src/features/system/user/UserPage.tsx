@@ -9,7 +9,7 @@ import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
 import { request } from "@/lib/request";
 import { PageScaffold } from "@/ui/page/PageScaffold";
-import { sexOptions, statusOptions } from "../shared/options";
+import { getFieldOptionLabel, sexOptions, statusOptions } from "../shared/options";
 
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
@@ -70,7 +70,7 @@ export function UserPage() {
       options: sexOptions,
       align: "center",
       width: 80,
-      render: (value) => sexOptions.find((item) => item.value === value)?.label ?? "未知",
+      render: (value) => getFieldOptionLabel(sexOptions, value, "未知"),
     },
     { title: "邮箱", dataIndex: "email", align: "center", width: 160 },
     {
@@ -108,7 +108,11 @@ export function UserPage() {
       options: statusOptions,
       align: "center",
       width: 80,
-      render: (value) => <Tag color={value === 1 ? "success" : "error"}>{value === 1 ? "启用" : "停用"}</Tag>,
+      render: (value) => (
+        <Tag color={Number(value) === 1 ? "success" : "error"}>
+          {Number(value) === 1 ? "启用" : "停用"}
+        </Tag>
+      ),
     },
     { title: "手机号", dataIndex: "mobile", align: "center", width: 132 },
     {
@@ -143,7 +147,10 @@ export function UserPage() {
   ];
 
   return (
-    <PageScaffold title="用户列表" description="通过管理员列表，能够方便的管理系统用户，为用户分配部门与角色">
+    <PageScaffold
+      title="用户列表"
+      description="通过管理员列表，能够方便的管理系统用户，为用户分配部门与角色"
+    >
       <AdminDataTable
         api="/api/system/user"
         accessName="system.user"

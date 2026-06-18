@@ -1,10 +1,10 @@
 "use client";
 
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
-import { Button, Col, Form, Input, Row, Space } from "antd";
+import { Button, Form, Input, Space } from "antd";
 import { useEffect } from "react";
 import { AdminFieldRenderer } from "@/components/admin-fields/AdminFieldRenderer";
-import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import type { AdminDataTableColumn, FieldValueType } from "@/components/admin-fields/types";
 
 type AdminSearchFormProps<T extends object> = {
   columns: AdminDataTableColumn<T>[];
@@ -15,6 +15,28 @@ type AdminSearchFormProps<T extends object> = {
   onSearch: (values: Record<string, unknown>) => void;
   onReset: () => void;
 };
+
+function getSearchValueType(valueType?: FieldValueType) {
+  return valueType === "textarea" ? "text" : valueType;
+}
+
+function getSearchFieldProps(
+  title: string,
+  valueType?: FieldValueType,
+  fieldProps?: Record<string, unknown>,
+) {
+  const searchFieldProps = { ...fieldProps };
+
+  if (valueType === "textarea") {
+    delete searchFieldProps.rows;
+    delete searchFieldProps.autoSize;
+  }
+
+  return {
+    placeholder: valueType === "textarea" ? `请输入${title}关键词` : title,
+    ...searchFieldProps,
+  };
+}
 
 export function AdminSearchForm<T extends object>({
   columns,
@@ -38,26 +60,30 @@ export function AdminSearchForm<T extends object>({
   return (
     <div className="admin-search-form">
       <Form form={form} layout="vertical" onFinish={onSearch}>
-        <Row gutter={[20, 20]}>
+        <div className="admin-search-row">
           {includeKeyword ? (
-            <Col xs={24} sm={12} md={12} lg={8} xl={6} xxl={4}>
+            <div className="admin-search-item">
               <Form.Item label="关键词" name="keyword">
                 <Input allowClear placeholder="请输入关键字" />
               </Form.Item>
-            </Col>
+            </div>
           ) : null}
           {searchColumns.map((column) => (
-            <Col xs={24} sm={12} md={12} lg={8} xl={6} xxl={4} key={column.dataIndex}>
+            <div className="admin-search-item" key={column.dataIndex}>
               <Form.Item label={column.title} name={String(column.dataIndex)}>
                 <AdminFieldRenderer
-                  valueType={column.valueType}
+                  valueType={getSearchValueType(column.valueType)}
                   options={column.options}
-                  fieldProps={{ placeholder: column.title, ...column.fieldProps }}
+                  fieldProps={getSearchFieldProps(
+                    column.title,
+                    column.valueType,
+                    column.fieldProps,
+                  )}
                 />
               </Form.Item>
-            </Col>
+            </div>
           ))}
-          <Col xs={24} sm={12} md={12} lg={8} xl={6} xxl={4}>
+          <div className="admin-search-actions">
             <Form.Item label=" " colon={false}>
               <Space size={16}>
                 <Button
@@ -69,13 +95,18 @@ export function AdminSearchForm<T extends object>({
                 >
                   重置
                 </Button>
-                <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={loading}>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  icon={<SearchOutlined />}
+                  loading={loading}
+                >
                   搜索
                 </Button>
               </Space>
             </Form.Item>
-          </Col>
-        </Row>
+          </div>
+        </div>
       </Form>
     </div>
   );
