@@ -1,22 +1,39 @@
 # Admin Base 迁移优化方案
 
-> 最后核对：2026-06-16  
-> 目标：把当前 SQLite/手写 SQL 的 Admin Base，迁移成以 PostgreSQL 为主、CRUD 可持续迭代、权限清晰、开发体验轻的后台基座。  
-> 边界：本文是本次迁移版本的执行方案，不替代 `docs/admin-base-technical-design.md` 的整体产品/技术设想。
+> 最后核对：2026-06-18  
+> 目标：在已经完成 PostgreSQL 基线迁移的基础上，继续把 Admin Base 收敛成 CRUD 可持续迭代、权限清晰、开发体验轻的后台基座。  
+> 边界：本文是当前版本的执行主文档；长期产品/技术设想见 `docs/admin-base-technical-design.md`。
 
 ## 1. 一句话结论
 
-本项目现在已经有一套可用的后台雏形：Next.js + Hono + Drizzle schema + SQLite + Ant Design，前端 CRUD 组件抽象已经比较完整，后端列表查询有 `buildListQuery`，但新增、修改、删除大多仍散落在各 route 文件中用原生 SQL 完成。下一版本应该优先做三件事：
+本项目现在已经完成基础后台闭环：Next.js + Hono + Drizzle schema + PostgreSQL + Ant Design。PG baseline、数据库级时间戳、软删除 partial unique index、默认 seed、前端 CRUD 组件、文件预览和系统管理页面已经可用。
 
-1. 数据库从 SQLite 切到 PostgreSQL，并把 `created_at` / `updated_at` / `deleted_at` 设计成数据库级语义。
-2. 用 Drizzle `pgTable` table object + Zod schema + 权限配置做轻量 CRUD factory，不新增 Repository/DAO 这类厚层。
-3. 把 CRUD 权限作为 factory 的必填配置，做到“每个启用动作都有服务端权限校验”，同时继续复用现有 `AdminDataTable` 和 `AuthButton`。
+下一阶段不再是“从 SQLite 迁移到 PG”，而是继续做三件事：
 
-推荐方向是 **PG-first，不做 SQLite 兼容层，不为了将来可能的 MySQL 现在就抽双方言层**。如果以后确实要 MySQL，可以再针对 MySQL 做一轮 schema/迁移适配；当前为了迭代效率和类型清晰，先把 PostgreSQL 做对。
+1. 把当前 route-local 常规 CRUD 收敛到 Drizzle `pgTable` table object + Zod schema + 权限配置的轻量 CRUD factory。
+2. 把 CRUD 权限作为 factory 的必填配置，做到“每个启用动作都有服务端权限校验”，并扩展 `admin:check-routes` 做 fail-fast 检查。
+3. 继续复用和增强现有 `AdminDataTable`、`AdminEntityForm`、`AuthButton`、文件预览和系统管理页面，不为了抽象新增 Repository/DAO 厚层。
+
+推荐方向保持 **PG-first，不做 SQLite 兼容层，不为了将来可能的 MySQL 现在就抽双方言层**。如果以后确实要 MySQL，可以再针对 MySQL 做一轮 schema/迁移适配；当前为了迭代效率和类型清晰，先把 PostgreSQL 和 CRUD/权限闭环做对。
+
+## 1.1 当前 ready 状态
+
+| 项目                | 状态     | 说明                                                                         |
+| ------------------- | -------- | ---------------------------------------------------------------------------- |
+| PG 基础设施         | 已完成   | `postgres` driver、Drizzle PG adapter、`DATABASE_URL` PG 连接串已就位        |
+| PG baseline         | 已完成   | `0001_pg_baseline` 手写迁移覆盖系统主表、外键、索引、trigger                 |
+| 时间戳              | 已完成   | `created_at/updated_at` 为 `timestamptz default now()`，更新触发器生效       |
+| 软删除唯一约束      | 已完成   | 主数据表采用 `deleted_at`，唯一约束改成 `where deleted_at is null`           |
+| 审计字段            | 部分完成 | schema/migration 已有 `created_by/updated_by/deleted_by`，route 尚未统一写入 |
+| 前端 CRUD           | 已完成   | `AdminDataTable`、URL 状态、表单、搜索、权限按钮已经可支撑系统页             |
+| 文件管理            | 已增强   | 文件夹管理、图片/视频/PDF/Word/Excel/文本预览、浮动音频播放器已加入          |
+| 后端 CRUD factory   | 未开始   | 下一阶段核心任务                                                             |
+| CRUD 权限 fail-fast | 未开始   | 下一阶段要把权限配置和 seed/route 检查绑定                                   |
+| main 分支整理       | 待处理   | 当前在 `codex/admin-base-migration-plan`，后续基座框架阶段再切 `main`        |
 
 ## 2. 当前实现快照
 
-本节来自当前代码核对，而不是理想方案。
+本节来自 2026-06-18 当前代码核对，而不是理想方案。
 
 ### 2.1 数据库与迁移
 
@@ -31,66 +48,64 @@
 
 现状：
 
-- ORM schema 使用 `drizzle-orm/sqlite-core` 的 `sqliteTable`。
-- 运行库使用 `better-sqlite3`，默认数据库文件是 `data/admin-base.sqlite`。
-- `DATABASE_URL` 现在只被当作 SQLite 文件路径处理，不是 PostgreSQL 连接串。
-- `drizzle.config.ts` 当前 `dialect: "sqlite"`。
-- 迁移不是 Drizzle 生成的 SQL 文件，而是 `src/server/db/migrations.ts` 中手写 SQL 数组。
-- Hono app 启动时会执行 `runMigrations(sqlite)`。
-- 本地 `data/admin-base.sqlite` 已应用 `0001_initial`、`0002_rule_form_fields`、`0003_file_group_tree_fields`。
+- ORM schema 已使用 `drizzle-orm/pg-core` 的 `pgTable`。
+- 运行库使用 `postgres` + `drizzle-orm/postgres-js`。
+- `DATABASE_URL` 是标准 PG 连接串，默认是 `postgres://admin_base:admin_base@localhost:5432/admin_base`。
+- `drizzle.config.ts` 当前 `dialect: "postgresql"`。
+- 迁移仍是 `src/server/db/migrations.ts` 中手写 SQL 数组，当前基线是 `0001_pg_baseline`。
+- `scripts/db-migrate.ts` / `scripts/db-reset.ts` 已按 PG 执行。
+- `src/server/db/index.ts` 仍导出名为 `sqlite` 的兼容 client，这是为了保留旧 route 的 `.prepare().all/get/run` 调用形态；它底层执行的是 PostgreSQL，不代表项目仍在使用 SQLite。
 
 当前 Drizzle schema 里公共时间戳是：
 
 ```ts
 const timestamps = {
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 };
 ```
 
-也就是说，现在的时间字段只是文本列，数据库没有默认值，也没有自动维护 `updated_at`。
+`src/server/db/migrations.ts` 还会为主数据表创建 `set_updated_at()` trigger，因此普通 UPDATE 会由数据库刷新 `updated_at`。
 
 ### 2.2 时间戳
 
-当前 `created_at` / `updated_at` 的来源是应用层：
+当前 `created_at` / `updated_at` 的事实：
 
-- `src/server/db/index.ts` 暴露 `nowIso()`。
-- `nowIso()` 返回 `new Date().toISOString()`。
-- 各 route 在 `INSERT` 时手动写 `created_at` 和 `updated_at`。
-- 各 route 在 `UPDATE` / 软删除时手动写 `updated_at`。
-- `src/server/db/seed/seed.ts` 也有一份本地 `nowIso()`。
+- DB 层字段类型是 `TIMESTAMPTZ`，默认值是 `now()`。
+- `updated_at` 的最终兜底是 PG trigger `set_updated_at()`。
+- 当前 route 里仍有少量 `nowIso()` 写入，主要是为了兼容旧 route-local SQL 写法；这不是目标形态。
+- 下一阶段 CRUD factory 应该避免普通 CRUD 手写 `created_at/updated_at`，只在 seed/backfill/import 需要固定历史时间时显式写入。
 
 结论：
 
-- 当前不是数据库自动时间戳。
-- 当前不是 Drizzle 自动时间戳。
-- 当前是 route/seed 代码手动维护 UTC ISO 字符串。
+- 数据库级时间戳已经 ready。
+- route-local SQL 里的手写时间戳是历史兼容残留，后续随 CRUD factory 迁移逐步移除。
 
 ### 2.3 软删除
 
 当前软删除是选择性存在：
 
-| 表                                | 当前删除策略                                    |
-| --------------------------------- | ----------------------------------------------- |
-| `sys_user`                        | `deleted_at` 软删除                             |
-| `sys_role`                        | `deleted_at` 软删除                             |
-| `sys_dept`                        | `deleted_at` 软删除                             |
-| `sys_dict`                        | `deleted_at` 软删除                             |
-| `sys_dict_item`                   | `deleted_at` 软删除                             |
-| `sys_config_group`                | `deleted_at` 软删除                             |
-| `sys_config_items`                | `deleted_at` 软删除                             |
-| `sys_file`                        | `deleted_at` 软删除，且已有回收站/恢复/永久删除 |
-| `sys_rule`                        | 硬删除                                          |
-| `sys_file_group`                  | 硬删除                                          |
-| `sys_user_role` / `sys_role_rule` | 关联表硬删除                                    |
-| `sys_access_token`                | 登出时硬删除                                    |
-| `sys_login_record`                | 日志只插入，不软删除                            |
+| 表                                | 当前删除策略                                          |
+| --------------------------------- | ----------------------------------------------------- |
+| `sys_user`                        | `deleted_at` 软删除                                   |
+| `sys_role`                        | `deleted_at` 软删除                                   |
+| `sys_dept`                        | `deleted_at` 软删除                                   |
+| `sys_dict`                        | `deleted_at` 软删除                                   |
+| `sys_dict_item`                   | `deleted_at` 软删除                                   |
+| `sys_config_group`                | `deleted_at` 软删除                                   |
+| `sys_config_items`                | `deleted_at` 软删除                                   |
+| `sys_file`                        | `deleted_at` 软删除，且已有回收站/恢复/永久删除       |
+| `sys_rule`                        | schema/migration 有 `deleted_at`，当前 route 仍硬删除 |
+| `sys_file_group`                  | schema/migration 有 `deleted_at`，当前 route 仍硬删除 |
+| `sys_user_role` / `sys_role_rule` | 关联表硬删除                                          |
+| `sys_access_token`                | 登出时硬删除                                          |
+| `sys_login_record`                | 日志只插入，不软删除                                  |
 
 当前问题：
 
-- 软删除表的唯一索引仍是普通 unique，例如 `sys_user.username`，软删后也无法重新创建同名用户。
-- `sys_rule` 是核心菜单权限表，当前硬删除风险偏高。
-- `sys_file_group` 是用户可维护树结构，当前硬删除可以接受，但如果后续要回收站或审计，也需要纳入软删除策略。
+- PG schema/migration 已经把主数据表的唯一索引改成 partial unique index。
+- `sys_rule` 和 `sys_file_group` 虽然已有 `deleted_at` 字段，但 route 行为仍是硬删除；下一阶段要决定是否把它们纳入通用软删除。
+- 审计字段已经落库，但 route 尚未统一写 `created_by/updated_by/deleted_by`。
 
 ### 2.4 后端 CRUD
 
@@ -124,7 +139,7 @@ const timestamps = {
 
 - 每个接口的权限清楚写在路由上。
 - Zod 校验靠近接口，业务规则容易读。
-- 用户/角色这种需要同步关联表的操作已经用 SQLite transaction 包起来。
+- 用户/角色这种需要同步关联表的操作已经用 PG transaction 兼容包装包起来。
 - 复杂业务如文件上传、角色分配、重置密码没有被强行塞进通用函数。
 
 当前 route 的问题：
@@ -132,7 +147,7 @@ const timestamps = {
 - 原生 SQL 重复，字段映射重复，时间戳重复。
 - `buildListQuery` 仍然接收字符串 table/select/fieldMap，类型不强。
 - `baseWhere` 有拼接字符串，例如 `sur.role_id = ${roleId}`，短期可控，但不是长期基座应该保留的模式。
-- SQLite `GROUP_CONCAT`、`INSERT OR IGNORE`、`?` 占位等细节会卡住 PG 迁移。
+- route 内仍保留旧 `.prepare().all/get/run` 写法，虽然已经通过 PG 兼容 client 跑通，但不是长期目标。
 - 常规 CRUD 和权限码没有绑定成一个声明，新增模块时容易漏权限。
 
 ### 2.5 前端 CRUD
@@ -154,8 +169,18 @@ const timestamps = {
 - 统一 `POST` 创建、`PUT` 更新、`DELETE` 删除。
 - `accessName.create/update/delete` 按钮显隐。
 - 自定义 `handleRequest` / `operateRender` / `beforeSubmit`。
+- 搜索表单是否展示、搜索区位置、toolbar 标题、多个表格的 URL state prefix。
 
 因此本次迁移不建议重做前端 CRUD 层。重点应该放在后端 CRUD factory 和 PG schema。
+
+最近已增强：
+
+- `AdminImageField` 支持图片 URL、上传和选择已有图片。
+- `AdminEntityForm` 支持字段帮助提示和自定义表单控件。
+- 配置项页面支持动态控件预览、选项 JSON/属性 JSON 校验和图片配置。
+- 字典页支持内嵌字典项管理。
+- 文件页支持文件夹 CRUD、文件预览、下载、回收站、音频浮动播放器。
+- `/uploads/[...path]` 支持 MIME、Range、流式输出和 `nosniff`。
 
 ### 2.6 权限
 
@@ -180,13 +205,13 @@ const timestamps = {
 
 ### 3.1 数据库：PostgreSQL 作为唯一当前目标
 
-本版本建议直接切 PG：
+本版本已经直接切到 PG：
 
-- 开发环境也用 Docker PG，不再继续以 SQLite 为主开发库。
-- `DATABASE_URL` 变成标准 PG 连接串。
-- Drizzle schema 从 `sqlite-core` 改为 `pg-core`。
-- `drizzle.config.ts` 改为 `dialect: "postgresql"`。
-- 迁移使用 Drizzle Kit 生成 SQL 文件，再补少量手写 SQL，例如 trigger、comment、特殊 index。
+- 开发环境使用 Docker PG，不再继续以 SQLite 为主开发库。
+- `DATABASE_URL` 已经是标准 PG 连接串。
+- Drizzle schema 已经从 `sqlite-core` 改为 `pg-core`。
+- `drizzle.config.ts` 已经是 `dialect: "postgresql"`。
+- 当前迁移使用手写 PG baseline SQL，补齐 trigger 和特殊 index；后续可以再决定是否引入 Drizzle Kit 生成迁移作为主流程。
 
 不建议现在做 SQLite/PG/MySQL 三方适配：
 
@@ -731,11 +756,11 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 
 ## 9. 两个参考框架的吸收对照
 
-| 来源                    | 已吸收的优势                                                                                                                     | 不吸收的部分                                                                                                         | 落到本项目的设计                                                                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tmp/xin-admin-laravel` | 菜单/路由/action 合一的 `sys_rule` 权限模型、token abilities、列表搜索/排序/分页模式、列配置驱动表格和表单、Ant Design 后台交互  | Laravel 控制器/模型结构、XinTable/XinForm 组件 API、参考项目里不一致的字段和路由细节                                 | `sys_rule` + `sys_role_rule`、`ability()`、`buildListQuery`、`AdminDataTable`、`AdminEntityForm`、`AuthButton`                              |
-| `tmp/continew-admin`    | 声明式 CRUD API、CRUD 动作推导权限、审计字段、角色数据权限、系统内置记录保护、代码生成器、文件元数据增强、字典/菜单/权限缓存意识 | Java Controller/Service/Mapper 层级、MyBatis Plus 逻辑删除实现、为了跨库牺牲 PG 能力的索引策略、一次性完整 generator | `createCrudRoutes`、`permissions.prefix + action map`、`timestamps + auditUsers + softDelete`、PG partial unique index、轻量 generator 预留 |
-| 本项目当前实现          | Next.js + Hono 单仓、前端 CRUD 组件已经成型、权限中间件可用、route-local 业务逻辑清晰                                            | SQLite 作为主库、route 内重复 raw SQL、应用层手写时间戳、权限与 CRUD 未统一声明                                      | PG-first schema、数据库级时间戳、Drizzle table object CRUD factory、权限 fail fast、自定义 route 保留复杂业务                               |
+| 来源                    | 已吸收的优势                                                                                                                           | 不吸收的部分                                                                                                         | 落到本项目的设计                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tmp/xin-admin-laravel` | 菜单/路由/action 合一的 `sys_rule` 权限模型、token abilities、列表搜索/排序/分页模式、列配置驱动表格和表单、Ant Design 后台交互        | Laravel 控制器/模型结构、XinTable/XinForm 组件 API、参考项目里不一致的字段和路由细节                                 | `sys_rule` + `sys_role_rule`、`ability()`、`buildListQuery`、`AdminDataTable`、`AdminEntityForm`、`AuthButton`                              |
+| `tmp/continew-admin`    | 声明式 CRUD API、CRUD 动作推导权限、审计字段、角色数据权限、系统内置记录保护、代码生成器、文件元数据增强、字典/菜单/权限缓存意识       | Java Controller/Service/Mapper 层级、MyBatis Plus 逻辑删除实现、为了跨库牺牲 PG 能力的索引策略、一次性完整 generator | `createCrudRoutes`、`permissions.prefix + action map`、`timestamps + auditUsers + softDelete`、PG partial unique index、轻量 generator 预留 |
+| 本项目当前实现          | Next.js + Hono 单仓、PG-first schema、数据库级时间戳、前端 CRUD 组件已经成型、权限中间件可用、文件预览已增强、route-local 业务逻辑清晰 | route 内仍有重复 raw SQL、兼容 client 名称仍叫 `sqlite`、审计字段未统一写入、权限与 CRUD 未统一声明                  | Drizzle table object CRUD factory、权限 fail fast、自定义 route 保留复杂业务、逐步移除 route-local CRUD 重复                                |
 
 结论：
 
@@ -745,89 +770,25 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 
 ## 10. 迁移实施步骤
 
-### Phase 0：冻结当前事实
+### Phase 0：事实冻结与 PG 基线，已完成
 
-目的：先避免迁移时不知道改坏了哪里。
+已完成内容：
 
-任务：
+- 当前默认账号、角色、权限种子已经由 `src/server/db/seed/default-data.ts` 维护。
+- `admin:check-routes` 已经只校验内部页面路由；`link = 1` 或 `http(s)://` 外链菜单不要求存在于前端 route manifest。
+- `postgres` driver、Drizzle PG adapter、PG `DATABASE_URL` 已经就位。
+- `drizzle.config.ts` 已经是 `dialect: "postgresql"`。
+- `scripts/db-migrate.ts` / `scripts/db-reset.ts` 已经按 PG 执行。
+- `src/server/db/schema/index.ts` 已经切到 `pgTable`。
+- `src/server/db/migrations.ts` 已经有 `0001_pg_baseline`，覆盖系统主表、外键、索引、partial unique index 和 `updated_at` trigger。
+- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 已经在当前分支通过。
 
-- 保留当前 SQLite 数据库只读备份。
-- 记录当前默认账号、角色、权限种子。
-- 跑一遍当前 `pnpm test`、`pnpm admin:check-routes`，记录基线。
-- 确认哪些本地 dirty change 属于正在开发的文件，避免迁移时误覆盖。
-- `admin:check-routes` 只校验内部页面路由；`link = 1` 或 `http(s)://` 外链菜单不要求存在于前端 route manifest。
+仍需注意：
 
-输出：
+- 当前 `src/server/db/index.ts` 的兼容 client 仍叫 `sqlite`，这是技术债命名；底层已经是 PG。
+- 如果后续要清理命名，应在 CRUD factory 开始前或完成后单独做一次小改，避免和业务迁移混在一起。
 
-- 当前 schema 快照。
-- 当前 API 清单。
-- 当前权限 action 清单。
-
-### Phase 1：PG 基础设施
-
-任务：
-
-- 增加 PG driver，例如 `postgres` 或 `pg`，并用 Drizzle PG adapter。
-- 修改 `src/server/db/index.ts`，让 `DATABASE_URL` 使用 PG 连接串。
-- 修改 `drizzle.config.ts` 为 `dialect: "postgresql"`。
-- 增加 `.env.example`：
-
-```text
-DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
-```
-
-- `scripts/db-migrate.ts` 改成执行 PG migrations。
-- `scripts/db-reset.ts` 改成 PG 下 drop/recreate schema 或 truncate + seed。
-- 保留 SQLite 代码到迁移完成前的分支即可，不建议长期双轨。
-
-验收：
-
-- 空 PG 可以 migration。
-- 空 PG 可以 seed。
-- `/api/health` 正常。
-
-### Phase 2：PG schema baseline
-
-任务：
-
-- 将 `src/server/db/schema/index.ts` 拆成多个 PG schema 文件。
-- 把 `text created_at/updated_at` 改成 `timestamptz`。
-- 增加 `deleted_at`、`created_by`、`updated_by`、`deleted_by`。
-- 增加外键和索引。
-- 把软删除唯一约束改成 partial unique index。
-- 增加 `set_updated_at()` trigger SQL。
-- Seed 写入时不再手动写普通时间戳，除非需要固定历史时间。
-
-验收：
-
-- Drizzle schema 和生成 SQL 可以落库。
-- `sys_rule` action 权限完整。
-- 软删后可以创建同 code/username 的新记录。
-- UPDATE 后 `updated_at` 自动变化。
-
-### Phase 3：迁移现有数据
-
-当前项目仍是开发期，优先建议 reset + seed：
-
-- 如果当前 SQLite 数据只是测试数据：直接 PG reset + seed。
-- 如果需要保留本地数据：写一次性迁移脚本，SQLite 读出 -> 字段转换 -> PG insert。
-
-字段转换重点：
-
-- ISO string -> `timestamptz`。
-- 缺失 `deleted_at` 的表补 null。
-- 新增 `created_by/updated_by/deleted_by` 默认 null 或 1。
-- SQLite 自增 ID 可以保留，导入后同步 PG sequence。
-
-导入后必须校验：
-
-- 用户、角色、权限关系数量。
-- 菜单树数量。
-- 权限 action 数量。
-- 字典项数量。
-- 文件元数据与 `storage/uploads` 文件是否对应。
-
-### Phase 4：CRUD factory 试点
+### Phase 1：当前执行主线，CRUD factory 试点
 
 先选低风险模块：
 
@@ -839,8 +800,49 @@ DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
 原因：
 
 - 结构简单。
-- 现在已经是标准 CRUD。
+- 当前已经是标准 CRUD。
 - 能验证 list/search/sort/create/update/delete/permission 的完整闭环。
+- 前端页面已经复用 `AdminDataTable` 和 `AdminEntityForm`，适合作为后端 factory 的试点面。
+
+任务：
+
+- 新增 `src/server/crud/create-crud-routes.ts`、`types.ts`、`permissions.ts`。
+- CRUD factory 接收 Drizzle table object，不接 table name string。
+- CRUD factory 接收 Zod create/update schema。
+- CRUD factory 接收 `permissions.prefix` 和 action map，enabled action 没有权限配置时开发期 fail fast。
+- list query 从字符串 SQL 逐步切到 Drizzle column/expression 白名单。
+- 字典和配置模块先迁到 factory，自定义接口保留显式 route：
+  - `/dict/list/all`
+  - `/config/items/save`
+  - `/config/items/refreshCache`
+
+验收：
+
+- 字典/配置列表、新增、编辑、删除行为不回退。
+- 普通用户无权限访问 CRUD API 返回 403。
+- 普通用户无权限时前端按钮不显示。
+- 超级管理员仍拥有全部启用 action。
+- route-local SQL 在试点模块明显减少。
+- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。
+
+### Phase 2：权限和 seed fail-fast
+
+任务：
+
+- 定义 CRUD action 到权限码的标准映射。
+- 扩展 `admin:check-routes`，校验 CRUD definitions 的权限码存在于 `sys_rule`。
+- 增加开发期启动校验：enabled action 必须有权限配置，公开例外必须显式写 `false`。
+- 确认字典公共接口、健康检查、登录等例外都显式标记。
+- 确认外链菜单继续只作为菜单数据存在，不参与前端内部 route manifest 校验。
+- 角色授权页能看到新增 action。
+
+验收：
+
+- 新增 CRUD 模块时，漏 seed 会在检查命令中失败。
+- 新增 CRUD 模块时，漏服务端权限会在注册或测试阶段失败。
+- `system.<module>.<action>` 命名保持统一。
+
+### Phase 3：系统模块迁移
 
 试点完成后再迁：
 
@@ -852,25 +854,24 @@ DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
 
 每迁一个模块，保留该模块自定义接口，不强行抽象。
 
-### Phase 5：权限和 seed 完善
+模块边界：
+
+- 部门：基础 CRUD 可迁，树结构和部门用户列表可保留自定义。
+- 菜单权限：基础 CRUD 可迁，父级选项、状态/显隐快捷操作可保留自定义。
+- 角色：基础 CRUD 可迁，分配权限、关联用户保留自定义。
+- 用户：基础 CRUD 可迁，重置密码、角色/部门选项保留自定义。
+- 文件：元数据列表、删除、恢复可部分迁，上传、下载、复制、移动、物理删除保留自定义。
+
+### Phase 4：审计字段和系统保护
 
 任务：
 
-- 定义 CRUD action 到权限码的标准映射。
-- 扩展 `admin:check-routes`，校验 CRUD definitions 的权限码存在于 `sys_rule`。
-- 增加开发期启动校验：enabled action 必须有权限配置。
-- 确认字典公共接口、健康检查、登录等例外都显式标记。
-- 确认外链菜单继续只作为菜单数据存在，不参与前端内部 route manifest 校验。
-- 角色授权页能看到新增 action。
+- CRUD factory 自动写 `created_by/updated_by/deleted_by`。
+- 明确哪些表启用 `is_system` 或 hard-coded protected IDs。
+- 超级管理员、内置角色、核心菜单权限禁止删除或限制关键字段修改。
+- 决定 `sys_rule` 和 `sys_file_group` 是否从当前硬删除改成软删除。
 
-验收：
-
-- 普通用户无权限访问 CRUD API 返回 403。
-- 普通用户无权限时前端按钮不显示。
-- 超级管理员仍拥有全部启用 action。
-- 新增 CRUD 模块时，漏 seed 会在检查命令中失败。
-
-### Phase 6：质量门禁
+### Phase 5：质量门禁
 
 建议迁移版本完成时至少跑：
 
@@ -896,7 +897,7 @@ PG 侧增加最小数据库断言：
 
 ## 11. 版本切分建议
 
-### v1：PG + 时间戳 + schema
+### v1：PG + 时间戳 + schema，已完成
 
 范围：
 
@@ -906,13 +907,13 @@ PG 侧增加最小数据库断言：
 - soft delete partial unique index。
 - seed 跑通。
 
-不做：
+遗留：
 
-- 全部 route 重构。
-- 数据权限。
-- generator。
+- 兼容 client 名称仍叫 `sqlite`。
+- route-local SQL 仍多。
+- 审计字段未统一写入。
 
-### v2：CRUD factory 试点
+### v2：CRUD factory 试点，下一步
 
 范围：
 
@@ -1010,15 +1011,21 @@ RLS 很适合多租户和数据库直连场景，但当前 Admin Base 是 Hono �
 
 ## 13. 完成标准
 
-本迁移版本完成时，应该满足：
+当前已经满足：
 
 - 开发环境默认使用 PG。
 - `DATABASE_URL` 是 PG 连接串。
 - `created_at` / `updated_at` 是 `timestamptz`，并由数据库维护。
 - 主数据表软删除使用 `deleted_at`。
 - 软删除表的唯一约束不会阻止重新创建同名有效记录。
+- 前端 `AdminDataTable` 不需要大改即可继续工作。
+- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。
+
+下一阶段完成时，应该满足：
+
 - 常规 CRUD 至少在字典/配置模块完成 factory 试点。
 - 每个 CRUD action 都有服务端权限校验。
 - 权限 seed 和 CRUD/meta 检查可自动发现遗漏。
-- 前端 `AdminDataTable` 不需要大改即可继续工作。
+- 审计字段由 CRUD factory 统一写入。
+- route-local raw SQL 在试点模块明显减少。
 - `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。

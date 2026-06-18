@@ -9,13 +9,15 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 - Ant Design
 - Hono
 - Drizzle ORM schema
-- SQLite 本地开发数据库
+- PostgreSQL 本地开发和上线数据库
 - Zustand
 - Zod
 - Vitest
 - Playwright
 
 ## 快速启动
+
+前置条件：本机已经有 PostgreSQL，并且存在 `admin_base` 用户和 `admin_base` 数据库。默认连接串见“本地数据库”。
 
 ```bash
 pnpm install
@@ -39,9 +41,9 @@ admin / 123456
 
 ```bash
 pnpm dev                 # 启动 Next + Hono
-pnpm db:migrate          # 创建本地 SQLite 表
+pnpm db:migrate          # 执行 PostgreSQL 迁移
 pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置
-pnpm db:reset            # 重置本地 SQLite 并重新 seed
+pnpm db:reset            # 重置 PostgreSQL public schema 并重新 seed
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
 pnpm lint                # ESLint
 pnpm typecheck           # TypeScript
@@ -151,16 +153,22 @@ export function UserPage() {
 
 ## 本地数据库
 
-默认数据库：
+项目现在按 PG-first 开发，不再使用 SQLite 作为本地开发主库。默认连接串：
 
 ```text
-data/admin-base.sqlite
+postgres://admin_base:admin_base@localhost:5432/admin_base
 ```
 
 测试数据库：
 
 ```text
-data/test-admin-base.sqlite
+postgres://admin_base:admin_base@localhost:5432/admin_base_test
+```
+
+如果需要覆盖连接，写入 `.env.local`：
+
+```text
+DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
 ```
 
 本地上传文件：

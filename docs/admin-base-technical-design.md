@@ -2,6 +2,8 @@
 
 > 目标：参考 `xin-admin/xin-admin-laravel` 的后台框架实现，建设一个 Node.js 技术栈的基础 Admin 框架。本文将用户提到的 `drizme` 按 `Drizzle ORM` 理解。
 
+> 当前核对：2026-06-18。项目已经完成 Next.js + Hono + Ant Design + Drizzle + PostgreSQL 的基础闭环，本文保留长期技术设计和验收标准；当前执行状态和下一步迁移任务以 `docs/admin-base-migration-optimization-plan.md` 为准。
+
 ## 1. 参考项目结论
 
 源码已拉取到：
@@ -361,19 +363,19 @@ export function UserPage() {
 
 ## 3. 技术选型
 
-| 类别    | 选型                                 | 说明                                    |
-| ------- | ------------------------------------ | --------------------------------------- |
-| Runtime | Node.js 22 LTS 或当前项目约定版本    | 保持现代 Web API 能力                   |
-| 框架    | Next.js App Router                   | 页面、布局、路由、构建统一              |
-| API     | Hono                                 | 路由和中间件轻量，适合 Node/Edge 双部署 |
-| ORM     | Drizzle ORM                          | 类型安全 schema、迁移、查询构造         |
-| DB      | PostgreSQL 优先，SQLite 可做本地开发 | Admin 框架最终建议 Postgres             |
-| UI      | Ant Design                           | 后台管理系统主 UI                       |
-| 状态    | Zustand                              | 用户、权限、字典、主题等客户端状态      |
-| 校验    | Zod                                  | Hono 入参校验、表单 schema 共用         |
-| 密码    | argon2id 或 bcrypt                   | 推荐 argon2id，bcrypt 作为兼容选项      |
-| 上传    | 本地磁盘 MVP，后续 S3/R2             | 先实现最小可用文件管理                  |
-| 测试    | Vitest + Playwright                  | API 单测、权限单测、关键页面 e2e        |
+| 类别    | 选型                              | 说明                                    |
+| ------- | --------------------------------- | --------------------------------------- |
+| Runtime | Node.js 22 LTS 或当前项目约定版本 | 保持现代 Web API 能力                   |
+| 框架    | Next.js App Router                | 页面、布局、路由、构建统一              |
+| API     | Hono                              | 路由和中间件轻量，适合 Node/Edge 双部署 |
+| ORM     | Drizzle ORM                       | 类型安全 schema、迁移、查询构造         |
+| DB      | PostgreSQL                        | 本地开发和上线环境统一 PG-first         |
+| UI      | Ant Design                        | 后台管理系统主 UI                       |
+| 状态    | Zustand                           | 用户、权限、字典、主题等客户端状态      |
+| 校验    | Zod                               | Hono 入参校验、表单 schema 共用         |
+| 密码    | argon2id 或 bcrypt                | 推荐 argon2id，bcrypt 作为兼容选项      |
+| 上传    | 本地磁盘 MVP，后续 S3/R2          | 先实现最小可用文件管理                  |
+| 测试    | Vitest + Playwright               | API 单测、权限单测、关键页面 e2e        |
 
 ## 4. 核心领域模型
 
@@ -689,29 +691,38 @@ type ListQueryConfig = {
 - `sorter` 只允许白名单字段排序。
 - 所有字段名从 schema 映射，不允许直接信任前端字段字符串。
 
-### 6.6 Service 分层
+### 6.6 Route、Service 与 CRUD factory 边界
 
-每个模块采用 route -> service -> db：
+本项目不强制每个模块都拆成 `route -> service -> repository/dao`。当前目标是降低重复 CRUD，同时保持调用链短、类型清晰。
+
+推荐边界：
 
 ```text
-routes/system/user.ts
-services/user-service.ts
-validators/user.ts
-db/schema/system-user.ts
+普通 CRUD
+  -> createCrudRoutes(...)
+  -> Drizzle query builder
+
+复杂业务
+  -> route-local endpoint
+  -> small service/helper when it crosses tables, auth, files, or cache
+  -> Drizzle query builder
 ```
 
-路由只做：
+route 负责：
 
-- 读取参数。
-- Zod 校验。
-- 调用 service。
+- API 路径和权限边界。
+- 读取参数和 Zod 校验。
+- 调用 CRUD factory 或少量业务 helper。
 - 返回统一响应。
 
-service 做：
+service/helper 只在这些场景使用：
 
-- 业务规则，例如超级管理员不能删除。
-- 事务，例如创建用户后绑定角色。
-- 权限数据聚合，例如用户 abilities。
+- 登录、token、权限聚合。
+- 用户角色、角色权限这类跨表事务。
+- 文件上传、下载、物理文件删除。
+- 配置或字典缓存刷新。
+
+不建议为了“分层完整”给每个简单 CRUD 都新增 service、repository、dao。后续常规模块应优先落到轻量 CRUD factory，复杂动作保留显式 route。
 
 ### 6.7 Drizzle schema 切分
 
@@ -1318,6 +1329,8 @@ image     -> ImageUploader
 | AI 模块           | 不做       | 与基础 admin 框架无关               |
 
 ## 9. 实施任务清单
+
+说明：下面清单是长期技术设计验收口径。当前代码已经完成 P0 到 P5 的主体闭环，并且已经切到 PostgreSQL。后续继续开发时，不要重新按 P0 从头搭建；应从 `docs/admin-base-migration-optimization-plan.md` 的“下一阶段执行清单”继续推进。
 
 ### P0：项目初始化
 
