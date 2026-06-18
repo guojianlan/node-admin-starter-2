@@ -28,6 +28,23 @@ async function login(page: Page, username = "admin", password = "123456") {
   await page.waitForURL("**/dashboard");
 }
 
+async function gotoAdminPage(page: Page, path: string, heading: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(path);
+    const headingLocator = page.getByRole("heading", { name: heading });
+    try {
+      await expect(headingLocator).toBeVisible();
+      return;
+    } catch (error) {
+      const stillLoading = await page
+        .getByText("加载后台权限...")
+        .isVisible()
+        .catch(() => false);
+      if (!stillLoading || attempt === 1) throw error;
+    }
+  }
+}
+
 async function confirmModal(page: Page) {
   await page
     .locator(".ant-modal")
@@ -49,8 +66,7 @@ async function getSearchSelectText(page: Page, label: string) {
 
 test("login, search URL state, refresh, back and reset", async ({ page }) => {
   await login(page);
-  await page.goto("/system/user");
-  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await gotoAdminPage(page, "/system/user", "用户列表");
 
   await page.getByPlaceholder("请输入关键字").fill("admin");
   await page.getByPlaceholder("请输入关键字").press("Enter");
@@ -71,8 +87,7 @@ test("login, search URL state, refresh, back and reset", async ({ page }) => {
 
 test("user form validation and created user appears in list", async ({ page, request }) => {
   await login(page);
-  await page.goto("/system/user");
-  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await gotoAdminPage(page, "/system/user", "用户列表");
 
   await page.getByTestId("admin-create-button").click();
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
@@ -98,39 +113,37 @@ test("user form validation and created user appears in list", async ({ page, req
     },
   });
   expect(createResponse.ok()).toBeTruthy();
-  await page.goto(`/system/user?keyword=tester${suffix}`);
+  await page.getByPlaceholder("请输入关键字").fill(`tester${suffix}`);
+  await page.getByPlaceholder("请输入关键字").press("Enter");
+  await expect(page).toHaveURL(new RegExp(`keyword=tester${suffix}`));
   await expect(page.getByText(`tester${suffix}`)).toBeVisible();
 });
 
 test("system management edit forms preload existing data", async ({ page }) => {
   await login(page);
 
-  await page.goto("/system/user");
-  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await gotoAdminPage(page, "/system/user", "用户列表");
   await page.getByRole("button", { name: "编辑" }).first().click();
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#username")).toHaveValue("admin");
   await expect(page.locator(".ant-modal input#nickname")).toHaveValue("超级管理员");
   await page.keyboard.press("Escape");
 
-  await page.goto("/system/role");
-  await expect(page.getByRole("heading", { name: "角色管理" })).toBeVisible();
+  await gotoAdminPage(page, "/system/role", "角色管理");
   await page.getByRole("button", { name: "编辑" }).first().click();
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#name")).not.toHaveValue("");
   await expect(page.locator(".ant-modal input#code")).not.toHaveValue("");
   await page.keyboard.press("Escape");
 
-  await page.goto("/system/dict");
-  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await gotoAdminPage(page, "/system/dict", "字典管理");
   await page.getByRole("button", { name: "编辑" }).first().click();
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#name")).toHaveValue("状态");
   await expect(page.locator(".ant-modal input#code")).toHaveValue("status");
   await page.keyboard.press("Escape");
 
-  await page.goto("/system/config");
-  await expect(page.getByRole("heading", { name: "系统配置" })).toBeVisible();
+  await gotoAdminPage(page, "/system/config", "系统配置");
   await page.locator(".system-menu-row").first().getByRole("button", { name: "编辑" }).click();
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#name")).toHaveValue("基础配置");
@@ -146,20 +159,17 @@ test("system management edit forms preload existing data", async ({ page }) => {
 test("URL select filters decode labels and apply numeric filters", async ({ page }) => {
   await login(page);
 
-  await page.goto("/system/user?sex=1");
-  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await gotoAdminPage(page, "/system/user?sex=1", "用户列表");
   await expect.poll(() => getSearchSelectText(page, "性别")).toBe("男");
   const userRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
   await expect(userRows).toHaveCount(1);
   await expect(userRows.first().locator("td").nth(1)).toHaveText("demo");
   await expect(userRows.first().locator("td").nth(3)).toHaveText("男");
 
-  await page.goto("/system/role?status=1");
-  await expect(page.getByRole("heading", { name: "角色管理" })).toBeVisible();
+  await gotoAdminPage(page, "/system/role?status=1", "角色管理");
   await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
 
-  await page.goto("/system/dict?status=1");
-  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await gotoAdminPage(page, "/system/dict?status=1", "字典管理");
   await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
 });
 
@@ -168,13 +178,11 @@ test("list search forms are visible by default and dict items stay on the dict p
 }) => {
   await login(page);
 
-  await page.goto("/system/user");
-  await expect(page.getByRole("heading", { name: "用户列表" })).toBeVisible();
+  await gotoAdminPage(page, "/system/user", "用户列表");
   await expect(page.locator(".admin-search-form")).toBeVisible();
   await expect(page.locator('.admin-search-form label[for="sex"]')).toBeVisible();
 
-  await page.goto("/system/dict");
-  await expect(page.getByRole("heading", { name: "字典管理" })).toBeVisible();
+  await gotoAdminPage(page, "/system/dict", "字典管理");
   await expect(page.locator(".admin-search-form").first()).toBeVisible();
   const dictRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
   await expect(dictRows).not.toHaveCount(0);

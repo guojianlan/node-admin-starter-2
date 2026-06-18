@@ -131,9 +131,11 @@ export function DictItemTable({ dict, showTitle = true, urlStatePrefix }: DictIt
       showSearchForm={false}
       toolbarTitle={
         showTitle ? (
-          <div className="system-dict-item-title">
+          <div className="system-dict-title system-dict-item-title">
             字典项管理
-            <span>（{dict.name}）</span>
+            <span>（{dict.name}</span>
+            <Tag>{dict.code}</Tag>
+            <span>）</span>
           </div>
         ) : null
       }

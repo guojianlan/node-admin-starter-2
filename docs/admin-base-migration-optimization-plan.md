@@ -27,7 +27,8 @@
 | 审计字段            | 部分完成 | schema/migration 已有 `created_by/updated_by/deleted_by`，route 尚未统一写入 |
 | 前端 CRUD           | 已完成   | `AdminDataTable`、URL 状态、表单、搜索、权限按钮已经可支撑系统页             |
 | 文件管理            | 已增强   | 文件夹管理、图片/视频/PDF/Word/Excel/文本预览、浮动音频播放器已加入          |
-| 后端 CRUD factory   | 未开始   | 下一阶段核心任务                                                             |
+| 后端 CRUD factory   | 已完成   | 已新增 Drizzle table object CRUD factory、权限 meta、批量删除、审计字段写入  |
+| CRUD 试点迁移       | 已完成   | `dict` / `config` / `dept` 常规 CRUD 已迁移，复杂接口继续保留显式 route      |
 | CRUD 权限 fail-fast | 未开始   | 下一阶段要把权限配置和 seed/route 检查绑定                                   |
 | main 分支整理       | 待处理   | 当前在 `codex/admin-base-migration-plan`，后续基座框架阶段再切 `main`        |
 
@@ -756,11 +757,11 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 
 ## 9. 两个参考框架的吸收对照
 
-| 来源                    | 已吸收的优势                                                                                                                           | 不吸收的部分                                                                                                         | 落到本项目的设计                                                                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tmp/xin-admin-laravel` | 菜单/路由/action 合一的 `sys_rule` 权限模型、token abilities、列表搜索/排序/分页模式、列配置驱动表格和表单、Ant Design 后台交互        | Laravel 控制器/模型结构、XinTable/XinForm 组件 API、参考项目里不一致的字段和路由细节                                 | `sys_rule` + `sys_role_rule`、`ability()`、`buildListQuery`、`AdminDataTable`、`AdminEntityForm`、`AuthButton`                              |
-| `tmp/continew-admin`    | 声明式 CRUD API、CRUD 动作推导权限、审计字段、角色数据权限、系统内置记录保护、代码生成器、文件元数据增强、字典/菜单/权限缓存意识       | Java Controller/Service/Mapper 层级、MyBatis Plus 逻辑删除实现、为了跨库牺牲 PG 能力的索引策略、一次性完整 generator | `createCrudRoutes`、`permissions.prefix + action map`、`timestamps + auditUsers + softDelete`、PG partial unique index、轻量 generator 预留 |
-| 本项目当前实现          | Next.js + Hono 单仓、PG-first schema、数据库级时间戳、前端 CRUD 组件已经成型、权限中间件可用、文件预览已增强、route-local 业务逻辑清晰 | route 内仍有重复 raw SQL、兼容 client 名称仍叫 `sqlite`、审计字段未统一写入、权限与 CRUD 未统一声明                  | Drizzle table object CRUD factory、权限 fail fast、自定义 route 保留复杂业务、逐步移除 route-local CRUD 重复                                |
+| 来源                    | 已吸收的优势                                                                                                                          | 不吸收的部分                                                                                                         | 落到本项目的设计                                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tmp/xin-admin-laravel` | 菜单/路由/action 合一的 `sys_rule` 权限模型、token abilities、列表搜索/排序/分页模式、列配置驱动表格和表单、Ant Design 后台交互       | Laravel 控制器/模型结构、XinTable/XinForm 组件 API、参考项目里不一致的字段和路由细节                                 | `sys_rule` + `sys_role_rule`、`ability()`、`buildListQuery`、`AdminDataTable`、`AdminEntityForm`、`AuthButton`                              |
+| `tmp/continew-admin`    | 声明式 CRUD API、CRUD 动作推导权限、审计字段、角色数据权限、系统内置记录保护、代码生成器、文件元数据增强、字典/菜单/权限缓存意识      | Java Controller/Service/Mapper 层级、MyBatis Plus 逻辑删除实现、为了跨库牺牲 PG 能力的索引策略、一次性完整 generator | `createCrudRoutes`、`permissions.prefix + action map`、`timestamps + auditUsers + softDelete`、PG partial unique index、轻量 generator 预留 |
+| 本项目当前实现          | Next.js + Hono 单仓、PG-first schema、数据库级时间戳、前端 CRUD 组件已经成型、权限中间件可用、CRUD factory 试点已落地、文件预览已增强 | 用户、角色、菜单、文件仍有 route-local SQL；兼容 client 名称仍叫 `sqlite`；跨表事务模块暂未迁入 CRUD factory         | 继续沿用 Drizzle table object CRUD factory、权限 fail fast、自定义 route 保留复杂业务、逐步移除 route-local CRUD 重复                       |
 
 结论：
 
@@ -788,14 +789,15 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 - 当前 `src/server/db/index.ts` 的兼容 client 仍叫 `sqlite`，这是技术债命名；底层已经是 PG。
 - 如果后续要清理命名，应在 CRUD factory 开始前或完成后单独做一次小改，避免和业务迁移混在一起。
 
-### Phase 1：当前执行主线，CRUD factory 试点
+### Phase 1：CRUD factory 试点，已完成
 
-先选低风险模块：
+已迁移低风险模块：
 
 1. `sys_dict`
 2. `sys_dict_item`
 3. `sys_config_group`
 4. `sys_config_items`
+5. `sys_dept`
 
 原因：
 
@@ -804,7 +806,7 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 - 能验证 list/search/sort/create/update/delete/permission 的完整闭环。
 - 前端页面已经复用 `AdminDataTable` 和 `AdminEntityForm`，适合作为后端 factory 的试点面。
 
-任务：
+已完成任务：
 
 - 新增 `src/server/crud/create-crud-routes.ts`、`types.ts`、`permissions.ts`。
 - CRUD factory 接收 Drizzle table object，不接 table name string。
@@ -815,58 +817,66 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
   - `/dict/list/all`
   - `/config/items/save`
   - `/config/items/refreshCache`
+- 部门常规 CRUD 已迁到 factory，自定义接口保留显式 route：
+  - `/dept/tree`
+  - `/dept/users/:id`
+- factory 统一写入 `created_by/updated_by/deleted_by`，`created_at/updated_at` 继续由 PG 默认值和 trigger 维护。
+- factory 支持单条删除和 `POST <basePath>/batch-delete`，默认映射到 `<prefix>.delete` 权限。
 
-验收：
+验收结果：
 
 - 字典/配置列表、新增、编辑、删除行为不回退。
 - 普通用户无权限访问 CRUD API 返回 403。
 - 普通用户无权限时前端按钮不显示。
 - 超级管理员仍拥有全部启用 action。
 - route-local SQL 在试点模块明显减少。
-- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm admin:check-routes`、`pnpm build`、`pnpm e2e` 通过。
 
-### Phase 2：权限和 seed fail-fast
+### Phase 2：权限和 seed fail-fast，已完成
 
-任务：
+已完成任务：
 
 - 定义 CRUD action 到权限码的标准映射。
 - 扩展 `admin:check-routes`，校验 CRUD definitions 的权限码存在于 `sys_rule`。
 - 增加开发期启动校验：enabled action 必须有权限配置，公开例外必须显式写 `false`。
-- 确认字典公共接口、健康检查、登录等例外都显式标记。
+- 字典公共接口、健康检查、登录等继续保留显式 route，不进入 CRUD factory。
 - 确认外链菜单继续只作为菜单数据存在，不参与前端内部 route manifest 校验。
 - 角色授权页能看到新增 action。
 
-验收：
+验收结果：
 
 - 新增 CRUD 模块时，漏 seed 会在检查命令中失败。
 - 新增 CRUD 模块时，漏服务端权限会在注册或测试阶段失败。
 - `system.<module>.<action>` 命名保持统一。
 
-### Phase 3：系统模块迁移
+### Phase 3：系统模块迁移，下一步
 
-试点完成后再迁：
+试点完成后继续迁：
 
-1. `sys_dept`
-2. `sys_rule`
-3. `sys_role`
-4. `sys_user`
-5. `sys_file`
+1. `sys_rule`
+2. `sys_role`
+3. `sys_user`
+4. `sys_file`
 
 每迁一个模块，保留该模块自定义接口，不强行抽象。
 
 模块边界：
 
-- 部门：基础 CRUD 可迁，树结构和部门用户列表可保留自定义。
-- 菜单权限：基础 CRUD 可迁，父级选项、状态/显隐快捷操作可保留自定义。
-- 角色：基础 CRUD 可迁，分配权限、关联用户保留自定义。
-- 用户：基础 CRUD 可迁，重置密码、角色/部门选项保留自定义。
+- 部门：基础 CRUD 已迁，树结构和部门用户列表保留自定义。
+- 菜单权限：基础 CRUD 可迁，但删除语义、父级选项、状态/显隐快捷操作要保留自定义或用 hook 保护。
+- 角色：存在 `sys_role_rule` 同步事务，迁移前需要给 CRUD factory 增加事务型 hook 或继续显式 route。
+- 用户：存在密码 hash、`sys_user_role` 同步事务和超级管理员保护，迁移前需要事务型 hook 或继续显式 route。
 - 文件：元数据列表、删除、恢复可部分迁，上传、下载、复制、移动、物理删除保留自定义。
 
-### Phase 4：审计字段和系统保护
+### Phase 4：审计字段和系统保护，部分完成
 
-任务：
+已完成：
 
 - CRUD factory 自动写 `created_by/updated_by/deleted_by`。
+- 默认部门 `id = 1` 禁止通过 CRUD factory 删除。
+
+后续任务：
+
 - 明确哪些表启用 `is_system` 或 hard-coded protected IDs。
 - 超级管理员、内置角色、核心菜单权限禁止删除或限制关键字段修改。
 - 决定 `sys_rule` 和 `sys_file_group` 是否从当前硬删除改成软删除。
@@ -880,6 +890,7 @@ pnpm typecheck
 pnpm test
 pnpm admin:check-routes
 pnpm lint
+pnpm build
 ```
 
 如果改了前端页面或 AdminDataTable 行为，再跑：
@@ -913,27 +924,29 @@ PG 侧增加最小数据库断言：
 - route-local SQL 仍多。
 - 审计字段未统一写入。
 
-### v2：CRUD factory 试点，下一步
+### v2：CRUD factory 试点，已完成
 
 范围：
 
 - `createCrudRoutes`。
 - Drizzle list query。
-- 字典/配置模块迁移。
+- 字典/配置/部门模块迁移。
 - 权限 fail-fast。
 - `admin:check-routes` 扩展。
+- CRUD factory 统一写入 `created_by/updated_by/deleted_by`。
+- 字典页面 URL 状态和字典项标题契约补齐。
 
 不做：
 
 - 用户/角色复杂模块一次性迁完。
 - 文件模块重构。
 
-### v3：系统模块迁移
+### v3：系统模块事务型迁移，下一步
 
 范围：
 
-- 部门、菜单、角色、用户迁移到 CRUD factory + custom routes。
-- 审计字段写入。
+- 菜单、角色、用户、文件逐步迁移到 CRUD factory + custom routes。
+- 为角色/用户这类跨表写入增加事务型 hook，或继续保留显式 route。
 - 系统内置记录保护，例如 `is_system` 或 hard-coded protected IDs。
 
 ### v4：增强能力
@@ -1019,13 +1032,16 @@ RLS 很适合多租户和数据库直连场景，但当前 Admin Base 是 Hono �
 - 主数据表软删除使用 `deleted_at`。
 - 软删除表的唯一约束不会阻止重新创建同名有效记录。
 - 前端 `AdminDataTable` 不需要大改即可继续工作。
-- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。
-
-下一阶段完成时，应该满足：
-
-- 常规 CRUD 至少在字典/配置模块完成 factory 试点。
+- 常规 CRUD 已在字典、配置、部门模块完成 factory 试点。
 - 每个 CRUD action 都有服务端权限校验。
 - 权限 seed 和 CRUD/meta 检查可自动发现遗漏。
 - 审计字段由 CRUD factory 统一写入。
 - route-local raw SQL 在试点模块明显减少。
-- `pnpm typecheck`、`pnpm test`、`pnpm admin:check-routes` 通过。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm admin:check-routes`、`pnpm build`、`pnpm e2e` 通过。
+
+下一阶段完成时，应该满足：
+
+- 菜单、角色、用户、文件中适合迁入 CRUD factory 的标准动作继续减少 route-local SQL。
+- 对跨表事务模块给出明确事务型 hook 或显式 route 保留策略。
+- 系统内置记录保护规则从 hard-coded ID 逐步收敛到统一 schema 或配置。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm admin:check-routes`、`pnpm build` 通过；涉及前端时 `pnpm e2e` 通过。

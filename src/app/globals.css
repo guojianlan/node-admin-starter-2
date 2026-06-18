@@ -377,6 +377,16 @@ a {
   font-weight: 700;
 }
 
+.admin-page-title-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 .admin-page-description {
   display: block;
   margin-top: 8px;

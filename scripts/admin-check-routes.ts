@@ -1,6 +1,8 @@
 import { adminRoutes } from "../src/router/route-manifest";
+import "../src/server/routes/system/index";
 import { closeDb, sqlite } from "../src/server/db";
 import { seedDatabase } from "../src/server/db/seed/seed";
+import { crudMetas } from "../src/server/crud/registry";
 
 await seedDatabase();
 
@@ -25,8 +27,31 @@ const missingInDatabase = adminRoutes.filter(
   (item) => !item.adminHidden && !dbPathSet.has(item.path),
 );
 const missingAuthRules = adminRoutes.filter((item) => item.auth && !actionKeys.has(item.auth));
+const invalidCrudPermissions = crudMetas.flatMap((meta) =>
+  Object.entries(meta.actions)
+    .filter(([, permission]) => permission !== false && !actionKeys.has(permission))
+    .map(([action, permission]) => ({
+      basePath: meta.basePath,
+      action,
+      permission,
+    })),
+);
+const missingCrudPermissions = crudMetas.flatMap((meta) =>
+  Object.entries(meta.actions)
+    .filter(([, permission]) => permission === undefined || permission === "")
+    .map(([action]) => ({
+      basePath: meta.basePath,
+      action,
+    })),
+);
 
-if (missingInManifest.length || missingInDatabase.length || missingAuthRules.length) {
+if (
+  missingInManifest.length ||
+  missingInDatabase.length ||
+  missingAuthRules.length ||
+  invalidCrudPermissions.length ||
+  missingCrudPermissions.length
+) {
   console.error("Route consistency check failed");
   if (missingInManifest.length) {
     console.error("DB routes missing in manifest:", missingInManifest);
@@ -36,6 +61,12 @@ if (missingInManifest.length || missingInDatabase.length || missingAuthRules.len
   }
   if (missingAuthRules.length) {
     console.error("Manifest auth rules missing in DB:", missingAuthRules);
+  }
+  if (invalidCrudPermissions.length) {
+    console.error("CRUD permissions missing in DB:", invalidCrudPermissions);
+  }
+  if (missingCrudPermissions.length) {
+    console.error("CRUD actions missing permission config:", missingCrudPermissions);
   }
   await closeDb();
   process.exit(1);

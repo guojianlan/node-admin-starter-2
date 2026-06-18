@@ -168,6 +168,12 @@ admin-base/
     server/
       app.ts
       context.ts
+      crud/
+        create-crud-routes.ts
+        list-query.ts
+        permissions.ts
+        registry.ts
+        types.ts
       db/
         index.ts
         schema/
@@ -546,26 +552,31 @@ PUT    /api/system/rule/status/:id
 GET    /api/system/dept
 POST   /api/system/dept
 PUT    /api/system/dept/:id
-DELETE /api/system/dept
+DELETE /api/system/dept/:id
+POST   /api/system/dept/batch-delete
 
 GET    /api/system/dict/list
 POST   /api/system/dict/list
 PUT    /api/system/dict/list/:id
 DELETE /api/system/dict/list/:id
+POST   /api/system/dict/list/batch-delete
 GET    /api/system/dict/list/all
 GET    /api/system/dict/item
 POST   /api/system/dict/item
 PUT    /api/system/dict/item/:id
 DELETE /api/system/dict/item/:id
+POST   /api/system/dict/item/batch-delete
 
 GET    /api/system/config/group
 POST   /api/system/config/group
 PUT    /api/system/config/group/:id
 DELETE /api/system/config/group/:id
+POST   /api/system/config/group/batch-delete
 GET    /api/system/config/items
 POST   /api/system/config/items
 PUT    /api/system/config/items/:id
 DELETE /api/system/config/items/:id
+POST   /api/system/config/items/batch-delete
 PUT    /api/system/config/items/save
 POST   /api/system/config/items/refreshCache
 

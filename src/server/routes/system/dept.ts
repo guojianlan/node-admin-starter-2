@@ -3,7 +3,9 @@ import { z } from "zod";
 import { buildTree } from "@/lib/tree";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
-import { nowIso, sqlite } from "@/server/db";
+import { sqlite } from "@/server/db";
+import { sysDept } from "@/server/db/schema";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildListQuery } from "@/server/services/list-query";
@@ -18,30 +20,24 @@ const deptSchema = z.object({
   status: z.coerce.number().default(1),
 });
 
-export const deptRoutes = new Hono<{ Variables: HonoVariables }>();
-
-deptRoutes.get("/dept", authRequired(), ability("system.dept.query"), async (c) => {
-  const page = await buildListQuery(c.req.url, {
-    table: "sys_dept d",
-    select: `
-      d.id,
-      d.parent_id AS parentId,
-      d.name,
-      d.code,
-      d.sort,
-      d.leader,
-      d.phone,
-      d.status,
-      d.created_at AS createdAt
-    `,
-    fieldMap: {
-      id: "d.id",
-      parentId: "d.parent_id",
-      name: "d.name",
-      code: "d.code",
-      status: "d.status",
-      sort: "d.sort",
-      createdAt: "d.created_at",
+const deptCrud = createCrudRoutes({
+  basePath: "/dept",
+  table: sysDept,
+  idColumn: sysDept.id,
+  createSchema: deptSchema,
+  updateSchema: deptSchema.partial(),
+  permissions: { prefix: "system.dept" },
+  list: {
+    select: {
+      id: sysDept.id,
+      parentId: sysDept.parentId,
+      name: sysDept.name,
+      code: sysDept.code,
+      sort: sysDept.sort,
+      leader: sysDept.leader,
+      phone: sysDept.phone,
+      status: sysDept.status,
+      createdAt: sysDept.createdAt,
     },
     searchable: {
       name: "like",
@@ -51,10 +47,15 @@ deptRoutes.get("/dept", authRequired(), ability("system.dept.query"), async (c) 
     quickSearchFields: ["name", "code", "leader", "phone"],
     sortableFields: ["id", "sort", "status", "createdAt"],
     defaultSort: { field: "sort", order: "asc" },
-    baseWhere: ["d.deleted_at IS NULL"],
-  });
-  return c.json(success(page));
+  },
+  hooks: {
+    beforeDelete: (_ctx, ids) => {
+      if (ids.includes(1)) throw new Error("不能删除默认部门");
+    },
+  },
 });
+
+export const deptRoutes = new Hono<{ Variables: HonoVariables }>();
 
 deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), async (c) => {
   const rows = (await sqlite
@@ -104,68 +105,7 @@ deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), 
     defaultSort: { field: "id", order: "asc" },
     baseWhere: [`u.dept_id = ${deptId}`, "u.deleted_at IS NULL"],
   });
-
   return c.json(success(page));
 });
 
-deptRoutes.post("/dept", authRequired(), ability("system.dept.create"), async (c) => {
-  const payload = deptSchema.parse(await c.req.json());
-  const now = nowIso();
-  await sqlite
-    .prepare(
-      `INSERT INTO sys_dept
-        (parent_id, name, code, sort, leader, phone, status, created_at, updated_at)
-       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      payload.parentId,
-      payload.name,
-      payload.code ?? null,
-      payload.sort,
-      payload.leader ?? null,
-      payload.phone ?? null,
-      payload.status,
-      now,
-      now,
-    );
-  return c.json(success(null, "创建成功"));
-});
-
-deptRoutes.put("/dept/:id", authRequired(), ability("system.dept.update"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = deptSchema.partial().parse(await c.req.json());
-  await sqlite
-    .prepare(
-      `UPDATE sys_dept
-       SET parent_id = COALESCE(?, parent_id),
-           name = COALESCE(?, name),
-           code = ?,
-           sort = COALESCE(?, sort),
-           leader = ?,
-           phone = ?,
-           status = COALESCE(?, status),
-           updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(
-      payload.parentId ?? null,
-      payload.name ?? null,
-      payload.code ?? null,
-      payload.sort ?? null,
-      payload.leader ?? null,
-      payload.phone ?? null,
-      payload.status ?? null,
-      nowIso(),
-      id,
-    );
-  return c.json(success(null, "更新成功"));
-});
-
-deptRoutes.delete("/dept/:id", authRequired(), ability("system.dept.delete"), async (c) => {
-  const id = Number(c.req.param("id"));
-  await sqlite
-    .prepare("UPDATE sys_dept SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), id);
-  return c.json(success(null, "删除成功"));
-});
+deptRoutes.route("/", deptCrud.routes);

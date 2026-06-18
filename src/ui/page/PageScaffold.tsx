@@ -17,7 +17,11 @@ export function PageScaffold({
 }: PageScaffoldProps) {
   return (
     <div className="admin-page">
-      {hideHeader ? null : <PageHeader title={title} description={description} actions={actions} />}
+      {hideHeader ? (
+        <h1 className="admin-page-title admin-page-title-hidden">{title}</h1>
+      ) : (
+        <PageHeader title={title} description={description} actions={actions} />
+      )}
       <div className="admin-page-content">{children}</div>
     </div>
   );

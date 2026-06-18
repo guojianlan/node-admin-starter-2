@@ -111,7 +111,6 @@ export function DictPage() {
       dataIndex: "status",
       valueType: "select",
       options: statusOptions,
-      hideInSearch: true,
       hideInTable: true,
       align: "center",
       formHelp: dictStatusHelp,
