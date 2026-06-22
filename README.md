@@ -6,6 +6,10 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 当前起手式完成范围与验收记录见 [`docs/admin-base-starter-completion-plan.md`](docs/admin-base-starter-completion-plan.md)。
 
+当前技术栈、模块边界和运行架构见 [`docs/admin-base-architecture.md`](docs/admin-base-architecture.md)。
+
+生产级对齐路线和与 XinAdmin / ContiNew 的差距见 [`docs/admin-base-production-readiness-plan.md`](docs/admin-base-production-readiness-plan.md)。
+
 源码启动、环境变量、数据库初始化和常见问题见 [`docs/admin-base-startup-guide.md`](docs/admin-base-startup-guide.md)。
 
 快速开发框架的启动体验、最小配置项和后续缺口见 [`docs/admin-base-quick-start-framework-plan.md`](docs/admin-base-quick-start-framework-plan.md)。

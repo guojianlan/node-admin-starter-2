@@ -2,7 +2,7 @@
 
 > 目标：参考 `xin-admin/xin-admin-laravel` 的后台框架实现，建设一个 Node.js 技术栈的基础 Admin 框架。本文将用户提到的 `drizme` 按 `Drizzle ORM` 理解。
 
-> 当前核对：2026-06-22。项目已经完成 Next.js + Hono + Ant Design + Drizzle + PostgreSQL 的基础闭环，本文保留长期技术设计和验收标准；当前起手式完成范围以 `docs/admin-base-starter-completion-plan.md` 为准，PG/CRUD 迁移细节见 `docs/admin-base-migration-optimization-plan.md`。
+> 当前核对：2026-06-22。项目已经完成 Next.js + Hono + Ant Design + Drizzle + PostgreSQL 的基础闭环，本文保留长期技术设计和验收标准；当前真实技术栈和架构以 `docs/admin-base-architecture.md` 为准，生产级对齐路线以 `docs/admin-base-production-readiness-plan.md` 为准，当前起手式完成范围以 `docs/admin-base-starter-completion-plan.md` 为准，PG/CRUD 迁移细节见 `docs/admin-base-migration-optimization-plan.md`。
 
 ## 1. 参考项目结论
 
