@@ -196,7 +196,7 @@ export function UserPage() {
   return (
     <PageScaffold
       title="用户列表"
-      description="通过管理员列表，能够方便的管理系统用户，为用户分配部门与角色"
+      description="通过用户列表管理系统账号，并为用户分配部门与角色"
     >
       <AdminDataTable
         api="/api/system/user"

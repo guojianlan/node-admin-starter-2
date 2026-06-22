@@ -31,27 +31,30 @@ export const antdTheme: ThemeConfig = {
       itemSelectedColor: adminTokens.colorPrimary,
     },
     Table: {
-      headerBg: "#fafafa",
-      headerBorderRadius: 10,
-      headerColor: "rgba(0, 0, 0, 0.88)",
-      rowHoverBg: "#fafafa",
+      headerBg: "#f8fafc",
+      headerBorderRadius: 8,
+      headerColor: "#172033",
+      rowHoverBg: "#f8fbff",
     },
     Card: {
       borderRadiusLG: adminTokens.borderRadius,
-      paddingLG: 24,
+      paddingLG: 20,
     },
     Modal: {
       borderRadiusLG: adminTokens.borderRadius,
     },
     Button: {
-      borderRadius: 8,
+      borderRadius: 6,
       controlHeight: 32,
     },
     Input: {
-      borderRadius: 8,
+      borderRadius: 6,
     },
     Select: {
-      borderRadius: 8,
+      borderRadius: 6,
+    },
+    Drawer: {
+      paddingLG: 20,
     },
   },
 };

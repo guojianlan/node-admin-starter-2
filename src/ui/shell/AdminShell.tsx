@@ -36,12 +36,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </Layout.Sider>
           <Layout className="xin-main-layout">
             <Layout.Content className="xin-content">{children}</Layout.Content>
-            <Layout.Footer className="xin-footer">Xin Admin ©2026 Created by xiaoliu</Layout.Footer>
+            <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
           </Layout>
         </Layout>
       ) : null}
       <Drawer
-        title="Xin Admin"
+        title="Admin Base"
         placement="left"
         size={280}
         open={isMobile && mobileMenuOpen}
@@ -53,7 +53,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       {isMobile ? (
         <Layout className="xin-main-layout">
           <Layout.Content className="xin-content">{children}</Layout.Content>
-          <Layout.Footer className="xin-footer">Xin Admin ©2026 Created by xiaoliu</Layout.Footer>
+          <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
         </Layout>
       ) : null}
     </Layout>

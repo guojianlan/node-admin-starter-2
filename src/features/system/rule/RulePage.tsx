@@ -702,7 +702,7 @@ export function RulePage() {
         open={drawerOpen}
         closable={false}
         destroyOnHidden
-        width={560}
+        size="min(620px, calc(100vw - 24px))"
         onClose={() => {
           setDrawerOpen(false);
           setEditingRecord(null);
@@ -713,15 +713,13 @@ export function RulePage() {
         footer={
           <div className="rule-drawer-footer">
             <Button
+              className="rule-drawer-reset"
               onClick={() => {
                 form.resetFields();
                 form.setFieldsValue(drawerInitialValues);
               }}
             >
               重置
-            </Button>
-            <Button type="primary" loading={saving} onClick={() => void handleSubmit()}>
-              提交
             </Button>
             <Button
               onClick={() => {
@@ -731,6 +729,9 @@ export function RulePage() {
             >
               取消
             </Button>
+            <Button type="primary" loading={saving} onClick={() => void handleSubmit()}>
+              提交
+            </Button>
           </div>
         }
       >
@@ -739,7 +740,7 @@ export function RulePage() {
           form={form}
           requiredMark
           labelAlign="left"
-          labelCol={{ flex: "96px" }}
+          labelCol={{ flex: "104px" }}
           wrapperCol={{ flex: 1 }}
           colon
         >

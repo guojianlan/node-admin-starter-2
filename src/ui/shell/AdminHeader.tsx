@@ -123,8 +123,8 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
     <>
       <div className="xin-header">
         <div className={collapsed ? "xin-brand xin-brand-collapsed" : "xin-brand"}>
-          <span className="xin-brand-logo" aria-label="Xin Admin" />
-          {!collapsed ? <span className="xin-brand-title">Xin Admin</span> : null}
+          <span className="xin-brand-logo" aria-label="Admin Base" />
+          {!collapsed ? <span className="xin-brand-title">Admin Base</span> : null}
         </div>
         <div className="xin-header-main">
           <div className="xin-header-left">

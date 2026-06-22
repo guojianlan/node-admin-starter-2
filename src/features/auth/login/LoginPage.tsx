@@ -51,9 +51,9 @@ export function LoginPage() {
           </div>
 
           <div className="xin-login-brand">
-            <span className="xin-login-logo" aria-label="Xin Admin" />
-            <h1 className="xin-login-title">Xin Admin</h1>
-            <div className="xin-login-subtitle">基于 Ant Design 的后台管理框架</div>
+            <span className="xin-login-logo" aria-label="Admin Base" />
+            <h1 className="xin-login-title">Admin Base</h1>
+            <div className="xin-login-subtitle">起手式后台管理框架</div>
           </div>
 
           <Form<LoginFormValues>
@@ -97,7 +97,7 @@ export function LoginPage() {
               </div>
             </Form.Item>
             <Button type="primary" htmlType="submit" size="large" loading={loading} block>
-              login.submit
+              登录
             </Button>
           </Form>
 
