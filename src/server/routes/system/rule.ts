@@ -3,10 +3,12 @@ import { z } from "zod";
 import { buildTree } from "@/lib/tree";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
-import { nowIso, sqlite } from "@/server/db";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
+import { sqlite } from "@/server/db";
+import { sysRule } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
-import { buildListQuery } from "@/server/services/list-query";
+import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 
 const ruleSchema = z.object({
   parentId: z.coerce.number().default(0),
@@ -41,49 +43,38 @@ type RuleRow = {
   hidden: number;
   link: number;
   defaultAuth: number;
+  isSystem: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
-export const ruleRoutes = new Hono<{ Variables: HonoVariables }>();
-
-ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), async (c) => {
-  const page = await buildListQuery<RuleRow>(c.req.url, {
-    table: "sys_rule r",
-    select: `
-      r.id,
-      r.parent_id AS parentId,
-      r.type,
-      r.key,
-      r.name,
-      r.display_name AS displayName,
-      r.path,
-      r.icon,
-      r.i18n_key AS i18nKey,
-      r.component,
-      r."order",
-      r.status,
-      r.hidden,
-      r.link,
-      r.default_auth AS defaultAuth,
-      r.created_at AS createdAt,
-      r.updated_at AS updatedAt
-    `,
-    fieldMap: {
-      id: "r.id",
-      parentId: "r.parent_id",
-      type: "r.type",
-      key: "r.key",
-      name: "r.name",
-      displayName: "r.display_name",
-      path: "r.path",
-      i18nKey: "r.i18n_key",
-      component: "r.component",
-      status: "r.status",
-      hidden: "r.hidden",
-      order: 'r."order"',
-      createdAt: "r.created_at",
-      updatedAt: "r.updated_at",
+const ruleCrud = createCrudRoutes({
+  basePath: "/rule",
+  table: sysRule,
+  idColumn: sysRule.id,
+  createSchema: ruleSchema,
+  updateSchema: ruleSchema.partial(),
+  permissions: { prefix: "system.rule" },
+  list: {
+    select: {
+      id: sysRule.id,
+      parentId: sysRule.parentId,
+      type: sysRule.type,
+      key: sysRule.key,
+      name: sysRule.name,
+      displayName: sysRule.displayName,
+      path: sysRule.path,
+      icon: sysRule.icon,
+      i18nKey: sysRule.i18nKey,
+      component: sysRule.component,
+      order: sysRule.order,
+      status: sysRule.status,
+      hidden: sysRule.hidden,
+      link: sysRule.link,
+      defaultAuth: sysRule.defaultAuth,
+      isSystem: sysRule.isSystem,
+      createdAt: sysRule.createdAt,
+      updatedAt: sysRule.updatedAt,
     },
     searchable: {
       type: "=",
@@ -95,9 +86,33 @@ ruleRoutes.get("/rule", authRequired(), ability("system.rule.query"), async (c) 
     quickSearchFields: ["key", "name", "displayName", "path", "i18nKey", "component"],
     sortableFields: ["id", "order", "status", "createdAt", "updatedAt"],
     defaultSort: { field: "order", order: "asc" },
-  });
-  return c.json(success(page));
+  },
+  hooks: {
+    beforeUpdate: async (ctx, id, values) => {
+      const isSystem = await getSystemFlag(ctx.sql, "sys_rule", id);
+      if (!isSystem) return values;
+      const current = (await ctx.sql
+        .prepare("SELECT key, type FROM sys_rule WHERE id = ?")
+        .get(id)) as { key: string; type: string } | undefined;
+      const keyChanged = values.key !== undefined && values.key !== current?.key;
+      const typeChanged = values.type !== undefined && values.type !== current?.type;
+      if (keyChanged || typeChanged) {
+        throw new Error("系统内置权限不能修改类型或权限标识");
+      }
+      if (values.status === 0) throw new Error("系统内置权限不能停用");
+      return values;
+    },
+    beforeDelete: (ctx, ids) =>
+      assertNotSystemRecords({
+        db: ctx.sql,
+        table: "sys_rule",
+        ids,
+        message: "系统内置权限不能删除",
+      }),
+  },
 });
+
+export const ruleRoutes = new Hono<{ Variables: HonoVariables }>();
 
 ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), async (c) => {
   const rows = (await sqlite
@@ -118,9 +133,11 @@ ruleRoutes.get("/rule/tree", authRequired(), ability("system.rule.query"), async
         hidden,
         link,
         default_auth AS defaultAuth,
+        is_system AS isSystem,
         created_at AS createdAt,
         updated_at AS updatedAt
        FROM sys_rule
+       WHERE deleted_at IS NULL
        ORDER BY "order" ASC, id ASC`,
     )
     .all()) as RuleRow[];
@@ -133,108 +150,35 @@ ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), asy
       `SELECT id AS value, name AS label, parent_id AS parentId
        FROM sys_rule
        WHERE type IN ('menu', 'route', 'nested')
+         AND deleted_at IS NULL
        ORDER BY "order" ASC, id ASC`,
     )
     .all();
   return c.json(success(rows));
 });
 
-ruleRoutes.post("/rule", authRequired(), ability("system.rule.create"), async (c) => {
-  const payload = ruleSchema.parse(await c.req.json());
-  const now = nowIso();
-  await sqlite
-    .prepare(
-      `INSERT INTO sys_rule
-        (parent_id, type, key, name, display_name, path, icon, i18n_key, component, "order", status, hidden, link, default_auth, created_at, updated_at)
-       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      payload.parentId,
-      payload.type,
-      payload.key,
-      payload.name,
-      payload.displayName ?? null,
-      payload.path ?? null,
-      payload.icon ?? null,
-      payload.i18nKey ?? null,
-      payload.component ?? null,
-      payload.order,
-      payload.status,
-      payload.hidden,
-      payload.link,
-      payload.defaultAuth,
-      now,
-      now,
-    );
-  return c.json(success(null, "创建成功"));
-});
-
 ruleRoutes.put("/rule/hidden/:id", authRequired(), ability("system.rule.hidden"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ hidden: z.coerce.number() }).parse(await c.req.json());
+  if (payload.hidden === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
+    throw new Error("系统内置权限不能隐藏");
+  }
   await sqlite
-    .prepare("UPDATE sys_rule SET hidden = ?, updated_at = ? WHERE id = ?")
-    .run(payload.hidden, nowIso(), id);
+    .prepare("UPDATE sys_rule SET hidden = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL")
+    .run(payload.hidden, id);
   return c.json(success(null, "更新成功"));
 });
 
 ruleRoutes.put("/rule/status/:id", authRequired(), ability("system.rule.status"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
+  if (payload.status === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
+    throw new Error("系统内置权限不能停用");
+  }
   await sqlite
-    .prepare("UPDATE sys_rule SET status = ?, updated_at = ? WHERE id = ?")
-    .run(payload.status, nowIso(), id);
+    .prepare("UPDATE sys_rule SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL")
+    .run(payload.status, id);
   return c.json(success(null, "更新成功"));
 });
 
-ruleRoutes.put("/rule/:id", authRequired(), ability("system.rule.update"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = ruleSchema.partial().parse(await c.req.json());
-  await sqlite
-    .prepare(
-      `UPDATE sys_rule
-       SET parent_id = COALESCE(?, parent_id),
-           type = COALESCE(?, type),
-           key = COALESCE(?, key),
-           name = COALESCE(?, name),
-           display_name = ?,
-           path = ?,
-           icon = ?,
-           i18n_key = ?,
-           component = ?,
-           "order" = COALESCE(?, "order"),
-           status = COALESCE(?, status),
-           hidden = COALESCE(?, hidden),
-           link = COALESCE(?, link),
-           default_auth = COALESCE(?, default_auth),
-           updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(
-      payload.parentId ?? null,
-      payload.type ?? null,
-      payload.key ?? null,
-      payload.name ?? null,
-      payload.displayName ?? null,
-      payload.path ?? null,
-      payload.icon ?? null,
-      payload.i18nKey ?? null,
-      payload.component ?? null,
-      payload.order ?? null,
-      payload.status ?? null,
-      payload.hidden ?? null,
-      payload.link ?? null,
-      payload.defaultAuth ?? null,
-      nowIso(),
-      id,
-    );
-  return c.json(success(null, "更新成功"));
-});
-
-ruleRoutes.delete("/rule/:id", authRequired(), ability("system.rule.delete"), async (c) => {
-  const id = Number(c.req.param("id"));
-  await sqlite.prepare("DELETE FROM sys_role_rule WHERE rule_id = ?").run(id);
-  await sqlite.prepare("DELETE FROM sys_rule WHERE id = ?").run(id);
-  return c.json(success(null, "删除成功"));
-});
+ruleRoutes.route("/", ruleCrud.routes);

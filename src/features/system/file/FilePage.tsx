@@ -65,6 +65,8 @@ type FileGroup = {
 type FileRecord = {
   id: number;
   groupId?: number | null;
+  storageId?: number | null;
+  storageName?: string | null;
   originalName: string;
   filename: string;
   path: string;
@@ -72,6 +74,9 @@ type FileRecord = {
   size: number;
   ext?: string | null;
   mime?: string | null;
+  type?: string | null;
+  sha256?: string | null;
+  thumbnailUrl?: string | null;
   uploaderId?: number | null;
   deletedAt?: string | null;
   createdAt: string;
@@ -289,13 +294,22 @@ export function FilePage() {
     },
     {
       title: "文件类型",
-      dataIndex: "ext",
+      dataIndex: "type",
       hideInForm: true,
       align: "center",
       width: 96,
       render: (value, record) => {
-        return <Tag color={getFileTypeColor(record)}>{String(value || "file")}</Tag>;
+        return <Tag color={getFileTypeColor(record)}>{String(value || record.ext || "file")}</Tag>;
       },
+    },
+    {
+      title: "扩展名",
+      dataIndex: "ext",
+      hideInForm: true,
+      hideInSearch: true,
+      align: "center",
+      width: 84,
+      render: (value) => <Tag>{String(value || "-")}</Tag>,
     },
     {
       title: "文件分组",
@@ -305,6 +319,15 @@ export function FilePage() {
       align: "center",
       width: 120,
       render: (value) => <Tag>{groupMap.get(Number(value))?.name || "未分组"}</Tag>,
+    },
+    {
+      title: "存储",
+      dataIndex: "storageName",
+      hideInForm: true,
+      hideInSearch: true,
+      align: "center",
+      width: 120,
+      render: (value) => <Tag color="blue">{String(value || "默认存储")}</Tag>,
     },
     {
       title: "预览",
@@ -908,6 +931,9 @@ export function FilePage() {
                 { key: "size", label: "文件大小", children: formatSize(detailFile.size) },
                 { key: "ext", label: "扩展名", children: detailFile.ext || "-" },
                 { key: "mime", label: "MIME", children: detailFile.mime || "-" },
+                { key: "type", label: "文件类型", children: detailFile.type || "-" },
+                { key: "sha256", label: "SHA256", children: detailFile.sha256 || "-" },
+                { key: "storage", label: "存储", children: detailFile.storageName || "-" },
                 {
                   key: "group",
                   label: "文件分组",

@@ -1,12 +1,20 @@
 import bcrypt from "bcryptjs";
+import { eq, sql as drizzleSql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
-import { type DbClient, nowIso, sqlite } from "@/server/db";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
+import { type DbClient, sqlite } from "@/server/db";
+import { sysDept, sysUser } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
-import { buildListQuery } from "@/server/services/list-query";
+import {
+  buildDataScopeCondition,
+  buildDataScopeWhereSql,
+  resolveDataScope,
+} from "@/server/services/data-scope";
+import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 
 const userCreateSchema = z.object({
   username: z.string().min(2),
@@ -30,65 +38,65 @@ async function syncUserRoles(dbClient: DbClient, userId: number, roleIds: number
   const insert = dbClient.prepare(
     "INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
   );
-  for (const roleId of roleIds) {
+  for (const roleId of [...new Set(roleIds)]) {
     await insert.run(userId, roleId);
   }
 }
 
-function parseRoleIds(value: string | null) {
+function parseRoleIds(value: unknown) {
   if (!value) return [];
-  return value
+  return String(value)
     .split(",")
     .map((item) => Number(item))
     .filter((item) => Number.isFinite(item));
 }
 
-type UserListRow = {
-  id: number;
-  username: string;
-  nickname: string;
-  email: string | null;
-  mobile: string | null;
-  sex: number;
-  deptId: number | null;
-  deptName: string | null;
-  status: number;
-  createdAt: string;
-  updatedAt: string;
-  roleIds: string | null;
-};
+async function assertUsernameAvailable(dbClient: DbClient, username: string, currentId?: number) {
+  const row = (await dbClient
+    .prepare(
+      `SELECT id
+       FROM sys_user
+       WHERE username = ?
+         AND deleted_at IS NULL
+         ${currentId ? "AND id <> ?" : ""}
+       LIMIT 1`,
+    )
+    .get(...(currentId ? [username, currentId] : [username]))) as { id: number } | undefined;
+  if (row) throw new Error("账号已存在");
+}
 
-export const userRoutes = new Hono<{ Variables: HonoVariables }>();
-
-userRoutes.get("/user", authRequired(), ability("system.user.query"), async (c) => {
-  const page = await buildListQuery<UserListRow>(c.req.url, {
-    table: "sys_user u LEFT JOIN sys_dept d ON d.id = u.dept_id",
-    select: `
-      u.id,
-      u.username,
-      u.nickname,
-      u.email,
-      u.mobile,
-      u.sex,
-      u.dept_id AS deptId,
-      d.name AS deptName,
-      u.status,
-      u.created_at AS createdAt,
-      u.updated_at AS updatedAt,
-      (SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = u.id) AS roleIds
-    `,
-    fieldMap: {
-      id: "u.id",
-      username: "u.username",
-      nickname: "u.nickname",
-      sex: "u.sex",
-      email: "u.email",
-      mobile: "u.mobile",
-      deptId: "u.dept_id",
-      status: "u.status",
-      createdAt: "u.created_at",
-      updatedAt: "u.updated_at",
+const userCrud = createCrudRoutes({
+  basePath: "/user",
+  table: sysUser,
+  idColumn: sysUser.id,
+  createSchema: userCreateSchema,
+  updateSchema: userUpdateSchema,
+  permissions: { prefix: "system.user" },
+  list: {
+    select: {
+      id: sysUser.id,
+      username: sysUser.username,
+      nickname: sysUser.nickname,
+      email: sysUser.email,
+      mobile: sysUser.mobile,
+      sex: sysUser.sex,
+      deptId: sysUser.deptId,
+      deptName: sysDept.name,
+      status: sysUser.status,
+      isSystem: sysUser.isSystem,
+      createdAt: sysUser.createdAt,
+      updatedAt: sysUser.updatedAt,
+      roleIds: drizzleSql<string | null>`(SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = ${sysUser.id})`.as(
+        "roleIds",
+      ),
     },
+    joins: [
+      {
+        type: "left",
+        table: sysDept,
+        on: eq(sysDept.id, sysUser.deptId),
+      },
+    ],
     searchable: {
       username: "like",
       nickname: "like",
@@ -102,19 +110,52 @@ userRoutes.get("/user", authRequired(), ability("system.user.query"), async (c) 
     quickSearchFields: ["username", "nickname", "mobile", "email"],
     sortableFields: ["id", "username", "status", "createdAt", "updatedAt"],
     defaultSort: { field: "id", order: "asc" },
-    baseWhere: ["u.deleted_at IS NULL"],
-  });
-
-  return c.json(
-    success({
+  },
+  hooks: {
+    beforeList: async (ctx) => {
+      const scope = await resolveDataScope(ctx.c);
+      return buildDataScopeCondition(scope, { deptId: sysUser.deptId, userId: sysUser.id });
+    },
+    afterList: (_ctx, page) => ({
       ...page,
       data: page.data.map((item) => ({
         ...item,
         roleIds: parseRoleIds(item.roleIds),
       })),
     }),
-  );
+    beforeCreate: async (ctx, values) => {
+      await assertUsernameAvailable(ctx.sql, values.username);
+      return {
+        ...values,
+        passwordHash: await bcrypt.hash(values.password, 10),
+      };
+    },
+    afterCreate: (ctx, id, values) => syncUserRoles(ctx.sql, id, values.roleIds ?? []),
+    beforeUpdate: async (ctx, id, values) => {
+      const isSystem = await getSystemFlag(ctx.sql, "sys_user", id);
+      if (values.username) await assertUsernameAvailable(ctx.sql, values.username, id);
+      if (isSystem) {
+        if (values.username !== undefined) throw new Error("系统内置用户不能修改账号");
+        if (values.status === 0) throw new Error("系统内置用户不能停用");
+        if (Array.isArray(values.roleIds) && !values.roleIds.includes(1)) {
+          throw new Error("超级管理员不能移除超级管理员角色");
+        }
+      }
+      return values;
+    },
+    afterUpdate: (ctx, id, values) =>
+      values.roleIds ? syncUserRoles(ctx.sql, id, values.roleIds) : undefined,
+    beforeDelete: (ctx, ids) =>
+      assertNotSystemRecords({
+        db: ctx.sql,
+        table: "sys_user",
+        ids,
+        message: "系统内置用户不能删除",
+      }),
+  },
 });
+
+export const userRoutes = new Hono<{ Variables: HonoVariables }>();
 
 userRoutes.get("/user/role", authRequired(), ability("system.user.query"), async (c) => {
   const rows = await sqlite
@@ -129,50 +170,22 @@ userRoutes.get("/user/role", authRequired(), ability("system.user.query"), async
 });
 
 userRoutes.get("/user/dept", authRequired(), ability("system.user.query"), async (c) => {
+  const scope = await resolveDataScope(c);
+  const scopeWhere = buildDataScopeWhereSql(scope, {
+    selfFallbackDept: "id",
+    deptId: "id",
+  });
   const rows = await sqlite
     .prepare(
       `SELECT id AS value, name AS label, parent_id AS parentId
        FROM sys_dept
-       WHERE deleted_at IS NULL AND status = 1
+       WHERE deleted_at IS NULL
+         AND status = 1
+         ${scopeWhere ? `AND ${scopeWhere}` : ""}
        ORDER BY sort ASC, id ASC`,
     )
     .all();
   return c.json(success(rows));
-});
-
-userRoutes.post("/user", authRequired(), ability("system.user.create"), async (c) => {
-  const payload = userCreateSchema.parse(await c.req.json());
-  const exists = await sqlite
-    .prepare("SELECT id FROM sys_user WHERE username = ?")
-    .get(payload.username);
-  if (exists) throw new Error("账号已存在");
-
-  const now = nowIso();
-  const passwordHash = await bcrypt.hash(payload.password, 10);
-  await sqlite.transaction(async (tx) => {
-    const result = await tx
-      .prepare(
-        `INSERT INTO sys_user
-          (username, password_hash, nickname, email, mobile, sex, dept_id, status, created_at, updated_at)
-         VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         RETURNING id`,
-      )
-      .run(
-        payload.username,
-        passwordHash,
-        payload.nickname,
-        payload.email || null,
-        payload.mobile || null,
-        payload.sex,
-        payload.deptId ?? null,
-        payload.status,
-        now,
-        now,
-      );
-    await syncUserRoles(tx, Number(result.lastInsertRowid), payload.roleIds);
-  });
-  return c.json(success(null, "创建成功"));
 });
 
 userRoutes.put(
@@ -189,53 +202,10 @@ userRoutes.put(
 
     const passwordHash = await bcrypt.hash(payload.password, 10);
     await sqlite
-      .prepare("UPDATE sys_user SET password_hash = ?, updated_at = ? WHERE id = ?")
-      .run(passwordHash, nowIso(), payload.id);
+      .prepare("UPDATE sys_user SET password_hash = ?, updated_at = now() WHERE id = ?")
+      .run(passwordHash, payload.id);
     return c.json(success(null, "重置成功"));
   },
 );
 
-userRoutes.put("/user/:id", authRequired(), ability("system.user.update"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = userUpdateSchema.parse(await c.req.json());
-  if (id === 1 && payload.status === 0) throw new Error("不能停用超级管理员");
-
-  const now = nowIso();
-  await sqlite.transaction(async (tx) => {
-    await tx
-      .prepare(
-        `UPDATE sys_user
-         SET username = COALESCE(?, username),
-             nickname = COALESCE(?, nickname),
-             email = ?,
-             mobile = ?,
-             sex = COALESCE(?, sex),
-             dept_id = ?,
-             status = COALESCE(?, status),
-             updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(
-        payload.username ?? null,
-        payload.nickname ?? null,
-        payload.email || null,
-        payload.mobile || null,
-        payload.sex ?? null,
-        payload.deptId ?? null,
-        payload.status ?? null,
-        now,
-        id,
-      );
-    if (payload.roleIds) await syncUserRoles(tx, id, payload.roleIds);
-  });
-  return c.json(success(null, "更新成功"));
-});
-
-userRoutes.delete("/user/:id", authRequired(), ability("system.user.delete"), async (c) => {
-  const id = Number(c.req.param("id"));
-  if (id === 1) throw new Error("不能删除超级管理员");
-  await sqlite
-    .prepare("UPDATE sys_user SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), id);
-  return c.json(success(null, "删除成功"));
-});
+userRoutes.route("/", userCrud.routes);

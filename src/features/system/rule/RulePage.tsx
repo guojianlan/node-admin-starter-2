@@ -69,6 +69,7 @@ type RuleRecord = {
   hidden: number;
   link: number;
   defaultAuth: number;
+  isSystem?: boolean;
   createdAt: string;
   updatedAt: string;
   children?: RuleRecord[];
@@ -118,6 +119,8 @@ const iconOptions = [
   "dict",
   "config",
   "file",
+  "storage",
+  "mail",
 ].map((value) => ({
   value,
   label: (
@@ -500,6 +503,7 @@ export function RulePage() {
             checked={record.hidden === 1}
             checkedChildren="显示"
             unCheckedChildren="隐藏"
+            disabled={record.isSystem}
             onClick={(_, event) => event.stopPropagation()}
             onChange={(checked) => void toggleHidden(record, checked)}
           />
@@ -517,6 +521,7 @@ export function RulePage() {
           checked={record.status === 1}
           checkedChildren="启用"
           unCheckedChildren="禁用"
+          disabled={record.isSystem}
           onClick={(_, event) => event.stopPropagation()}
           onChange={(checked) => void toggleStatus(record, checked)}
         />
@@ -577,18 +582,20 @@ export function RulePage() {
                 />
               </Tooltip>
             </AuthButton>
-            <AuthButton auth="system.rule.delete">
-              <Popconfirm
-                title="确认删除当前权限？"
-                okText="确认"
-                cancelText="取消"
-                onConfirm={() => void deleteRecord(record)}
-              >
-                <Tooltip title="删除">
-                  <Button aria-label="删除" danger type="primary" size="small" icon={<DeleteOutlined />} />
-                </Tooltip>
-              </Popconfirm>
-            </AuthButton>
+            {!record.isSystem ? (
+              <AuthButton auth="system.rule.delete">
+                <Popconfirm
+                  title="确认删除当前权限？"
+                  okText="确认"
+                  cancelText="取消"
+                  onConfirm={() => void deleteRecord(record)}
+                >
+                  <Tooltip title="删除">
+                    <Button aria-label="删除" danger type="primary" size="small" icon={<DeleteOutlined />} />
+                  </Tooltip>
+                </Popconfirm>
+              </AuthButton>
+            ) : null}
           </Space>
         ),
       },
@@ -680,7 +687,7 @@ export function RulePage() {
         className="rule-form-drawer"
         title={
           <div className="rule-drawer-title">
-            <span>{drawerMode === "create" ? "新增" : "编辑"}</span>
+            <span>{drawerMode === "create" ? "新增菜单权限" : "编辑菜单权限"}</span>
             <Button
               aria-label="关闭"
               type="text"
@@ -695,7 +702,7 @@ export function RulePage() {
         open={drawerOpen}
         closable={false}
         destroyOnHidden
-        size={490}
+        width={560}
         onClose={() => {
           setDrawerOpen(false);
           setEditingRecord(null);
@@ -732,7 +739,7 @@ export function RulePage() {
           form={form}
           requiredMark
           labelAlign="left"
-          labelCol={{ flex: "82px" }}
+          labelCol={{ flex: "96px" }}
           wrapperCol={{ flex: 1 }}
           colon
         >

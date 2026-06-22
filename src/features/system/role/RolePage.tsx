@@ -19,8 +19,11 @@ type RoleRecord = {
   remark?: string | null;
   sort: number;
   status: number;
+  dataScope: "all" | "custom_dept" | "current_dept" | "current_dept_tree" | "self";
   userCount: number;
   ruleIds?: number[];
+  deptIds?: number[];
+  isSystem?: boolean;
   createdAt: string;
 };
 
@@ -49,6 +52,13 @@ type RuleNode = {
   children?: RuleNode[];
 };
 
+type DeptNode = {
+  id: number;
+  parentId: number;
+  name: string;
+  children?: DeptNode[];
+};
+
 function getAllNodeKeys(nodes: RuleNode[]): number[] {
   return nodes.flatMap((node) => [node.id, ...getAllNodeKeys(node.children ?? [])]);
 }
@@ -68,6 +78,7 @@ function toTreeData(nodes: RuleNode[]): TreeProps["treeData"] {
 
 export function RolePage() {
   const [ruleOptions, setRuleOptions] = useState<FieldOption[]>([]);
+  const [deptOptions, setDeptOptions] = useState<FieldOption[]>([]);
   const [ruleTree, setRuleTree] = useState<RuleNode[]>([]);
   const [selectedRole, setSelectedRole] = useState<RoleRecord | null>(null);
   const [activeTab, setActiveTab] = useState("users");
@@ -83,6 +94,9 @@ export function RolePage() {
     void request<RuleNode[]>("/api/system/role/ruleList", { silent: true }).then((rows) => {
       setRuleTree(rows);
       setRuleOptions(toFieldOptions(rows));
+    });
+    void request<DeptNode[]>("/api/system/role/deptTree", { silent: true }).then((rows) => {
+      setDeptOptions(toFieldOptions(rows));
     });
   }, []);
 
@@ -172,6 +186,43 @@ export function RolePage() {
       },
     },
     {
+      title: "数据范围",
+      dataIndex: "dataScope",
+      valueType: "select",
+      options: [
+        { label: "全部数据", value: "all" },
+        { label: "指定部门", value: "custom_dept" },
+        { label: "本部门", value: "current_dept" },
+        { label: "本部门及子部门", value: "current_dept_tree" },
+        { label: "仅本人", value: "self" },
+      ],
+      align: "center",
+      width: 140,
+      render: (value) => {
+        const option = [
+          { label: "全部数据", value: "all" },
+          { label: "指定部门", value: "custom_dept" },
+          { label: "本部门", value: "current_dept" },
+          { label: "本部门及子部门", value: "current_dept_tree" },
+          { label: "仅本人", value: "self" },
+        ].find((item) => item.value === value);
+        return <Tag color={value === "all" ? "green" : "blue"}>{option?.label ?? String(value)}</Tag>;
+      },
+    },
+    {
+      title: "指定部门",
+      dataIndex: "deptIds",
+      valueType: "treeSelect",
+      options: deptOptions,
+      hideInTable: true,
+      hideInSearch: true,
+      fullWidth: true,
+      fieldProps: {
+        treeCheckable: true,
+        showCheckedStrategy: "SHOW_PARENT",
+      },
+    },
+    {
       title: "状态",
       dataIndex: "status",
       valueType: "select",
@@ -180,7 +231,7 @@ export function RolePage() {
       width: 104,
       render: (value, record) => (
         <Switch
-          disabled={record.id === 1}
+          disabled={record.isSystem}
           defaultChecked={Number(value) === 1}
           checkedChildren="启用"
           unCheckedChildren="停用"
@@ -260,8 +311,8 @@ export function RolePage() {
             columns={roleColumns}
             createTitle="新增角色"
             updateTitle="编辑角色"
-            canUpdate={(record) => record.id !== 1}
-            canDelete={(record) => record.id !== 1}
+            canUpdate={(record) => !record.isSystem}
+            canDelete={(record) => !record.isSystem}
             tableProps={{
               size: "small",
               bordered: true,
@@ -354,7 +405,7 @@ export function RolePage() {
                       size="small"
                       icon={<SaveOutlined />}
                       loading={savingRules}
-                      disabled={selectedRole.id === 1}
+                      disabled={selectedRole.isSystem}
                       onClick={() => void saveRules()}
                     >
                       保存权限

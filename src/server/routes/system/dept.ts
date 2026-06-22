@@ -8,6 +8,12 @@ import { sysDept } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import {
+  buildDataScopeCondition,
+  buildDataScopeWhereSql,
+  resolveDataScope,
+} from "@/server/services/data-scope";
+import { getSystemFlag } from "@/server/services/protected-records";
 import { buildListQuery } from "@/server/services/list-query";
 
 const deptSchema = z.object({
@@ -37,6 +43,7 @@ const deptCrud = createCrudRoutes({
       leader: sysDept.leader,
       phone: sysDept.phone,
       status: sysDept.status,
+      isSystem: sysDept.isSystem,
       createdAt: sysDept.createdAt,
     },
     searchable: {
@@ -49,8 +56,23 @@ const deptCrud = createCrudRoutes({
     defaultSort: { field: "sort", order: "asc" },
   },
   hooks: {
-    beforeDelete: (_ctx, ids) => {
-      if (ids.includes(1)) throw new Error("不能删除默认部门");
+    beforeList: async (ctx) => {
+      const scope = await resolveDataScope(ctx.c);
+      return buildDataScopeCondition(scope, {
+        deptId: sysDept.id,
+        selfFallbackDept: sysDept.id,
+      });
+    },
+    beforeUpdate: async (ctx, id, values) => {
+      const isSystem = await getSystemFlag(ctx.sql, "sys_dept", id);
+      if (isSystem && values.status === 0) throw new Error("默认部门不能停用");
+      if (isSystem && values.code !== undefined) throw new Error("默认部门不能修改编码");
+      return values;
+    },
+    beforeDelete: async (ctx, ids) => {
+      for (const id of ids) {
+        if (await getSystemFlag(ctx.sql, "sys_dept", id)) throw new Error("不能删除默认部门");
+      }
     },
   },
 });
@@ -58,11 +80,17 @@ const deptCrud = createCrudRoutes({
 export const deptRoutes = new Hono<{ Variables: HonoVariables }>();
 
 deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), async (c) => {
+  const scope = await resolveDataScope(c);
+  const scopeWhere = buildDataScopeWhereSql(scope, {
+    deptId: "id",
+    selfFallbackDept: "id",
+  });
   const rows = (await sqlite
     .prepare(
       `SELECT id, parent_id AS parentId, name, code, sort, leader, phone, status
        FROM sys_dept
        WHERE deleted_at IS NULL
+         ${scopeWhere ? `AND ${scopeWhere}` : ""}
        ORDER BY sort ASC, id ASC`,
     )
     .all()) as Array<{ id: number; parentId: number }>;
@@ -72,6 +100,11 @@ deptRoutes.get("/dept/tree", authRequired(), ability("system.dept.query"), async
 deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), async (c) => {
   const deptId = Number(c.req.param("id"));
   if (!Number.isFinite(deptId)) throw new Error("部门不存在");
+  const scope = await resolveDataScope(c);
+  const scopeWhere = buildDataScopeWhereSql(scope, {
+    deptId: "u.dept_id",
+    userId: "u.id",
+  });
 
   const page = await buildListQuery(c.req.url, {
     table: "sys_user u",
@@ -103,7 +136,9 @@ deptRoutes.get("/dept/users/:id", authRequired(), ability("system.dept.query"), 
     quickSearchFields: ["username", "nickname", "email", "mobile"],
     sortableFields: ["id", "username", "status", "createdAt"],
     defaultSort: { field: "id", order: "asc" },
-    baseWhere: [`u.dept_id = ${deptId}`, "u.deleted_at IS NULL"],
+    baseWhere: [`u.dept_id = ${deptId}`, "u.deleted_at IS NULL", scopeWhere].filter(
+      Boolean,
+    ) as string[],
   });
   return c.json(success(page));
 });

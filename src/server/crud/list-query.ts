@@ -96,7 +96,7 @@ export async function buildCrudListQuery<T>(
   url: string,
   table: PgTable,
   config: CrudListConfig,
-  options: { softDeleteColumn?: AnyPgColumn | null } = {},
+  options: { softDeleteColumn?: AnyPgColumn | null; extraWhere?: SQL[] } = {},
 ): Promise<PageResult<T>> {
   const params = new URL(url).searchParams;
   const page = normalizePage(params.get("page"), 1);
@@ -105,6 +105,7 @@ export async function buildCrudListQuery<T>(
 
   const where: SQL[] = [...(config.baseWhere ?? [])];
   if (options.softDeleteColumn) where.push(isNull(options.softDeleteColumn));
+  if (options.extraWhere?.length) where.push(...options.extraWhere);
 
   const keyword = params.get("keyword")?.trim();
   if (keyword && config.quickSearchFields?.length) {

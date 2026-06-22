@@ -26,6 +26,7 @@ type UserRecord = {
   deptName?: string | null;
   avatarUrl?: string | null;
   status: number;
+  isSystem?: boolean;
   roleIds?: number[];
   createdAt: string;
   updatedAt: string;
@@ -158,6 +159,7 @@ export function UserPage() {
         columns={columns}
         createTitle="新增用户"
         updateTitle="编辑用户"
+        canDelete={(record) => !record.isSystem}
       />
     </PageScaffold>
   );

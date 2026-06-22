@@ -16,7 +16,7 @@ const moduleRules = [
       id: 10,
       parentId: 2,
       key: "system.user",
-      name: "管理员",
+      name: "用户管理",
       path: "/system/user",
       icon: "user",
       order: 10,
@@ -136,6 +136,46 @@ const moduleRules = [
       ["download", "下载文件"],
     ],
   },
+  {
+    route: {
+      id: 80,
+      parentId: 2,
+      key: "system.storage",
+      name: "存储配置",
+      path: "/system/storage",
+      icon: "storage",
+      order: 80,
+    },
+    actions: [
+      ["query", "查询存储"],
+      ["create", "新增存储"],
+      ["update", "编辑存储"],
+      ["delete", "删除存储"],
+      ["status", "切换状态"],
+      ["setDefault", "设为默认"],
+      ["test", "测试连接"],
+    ],
+  },
+  {
+    route: {
+      id: 90,
+      parentId: 2,
+      key: "system.mail",
+      name: "邮件配置",
+      path: "/system/mail/account",
+      icon: "mail",
+      order: 90,
+    },
+    actions: [
+      ["query", "查询邮件"],
+      ["create", "新增邮件"],
+      ["update", "编辑邮件"],
+      ["delete", "删除邮件"],
+      ["status", "切换状态"],
+      ["setDefault", "设为默认"],
+      ["test", "测试发送"],
+    ],
+  },
 ] as const;
 
 export const seedRules: SeedRule[] = [
@@ -241,6 +281,27 @@ export const seedDicts = [
       { label: "路由页面", value: "route", color: "green", sort: 2 },
       { label: "嵌套路由", value: "nested", color: "cyan", sort: 3 },
       { label: "权限项", value: "action", color: "orange", sort: 4 },
+    ],
+  },
+  {
+    id: 4,
+    name: "数据范围",
+    code: "data_scope",
+    items: [
+      { label: "全部数据", value: "all", color: "green", sort: 1 },
+      { label: "指定部门", value: "custom_dept", color: "blue", sort: 2 },
+      { label: "本部门", value: "current_dept", color: "cyan", sort: 3 },
+      { label: "本部门及子部门", value: "current_dept_tree", color: "purple", sort: 4 },
+      { label: "仅本人", value: "self", color: "orange", sort: 5 },
+    ],
+  },
+  {
+    id: 5,
+    name: "存储类型",
+    code: "storage_type",
+    items: [
+      { label: "本地存储", value: "local", color: "green", sort: 1 },
+      { label: "S3-compatible", value: "s3", color: "blue", sort: 2 },
     ],
   },
 ];

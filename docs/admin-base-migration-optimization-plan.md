@@ -1,18 +1,20 @@
 # Admin Base 迁移优化方案
 
-> 最后核对：2026-06-18  
+> 最后核对：2026-06-22  
 > 目标：在已经完成 PostgreSQL 基线迁移的基础上，继续把 Admin Base 收敛成 CRUD 可持续迭代、权限清晰、开发体验轻的后台基座。  
-> 边界：本文是当前版本的执行主文档；长期产品/技术设想见 `docs/admin-base-technical-design.md`。
+> 边界：本文保留 PG/CRUD 迁移细节；当前起手式完成范围和后续任务拆分以 `docs/admin-base-starter-completion-plan.md` 为准，长期产品/技术设想见 `docs/admin-base-technical-design.md`。
 
 ## 1. 一句话结论
 
 本项目现在已经完成基础后台闭环：Next.js + Hono + Drizzle schema + PostgreSQL + Ant Design。PG baseline、数据库级时间戳、软删除 partial unique index、默认 seed、前端 CRUD 组件、文件预览和系统管理页面已经可用。
 
-下一阶段不再是“从 SQLite 迁移到 PG”，而是继续做三件事：
+本轮已经不再是“从 SQLite 迁移到 PG”，而是完成了五件事：
 
 1. 把当前 route-local 常规 CRUD 收敛到 Drizzle `pgTable` table object + Zod schema + 权限配置的轻量 CRUD factory。
 2. 把 CRUD 权限作为 factory 的必填配置，做到“每个启用动作都有服务端权限校验”，并扩展 `admin:check-routes` 做 fail-fast 检查。
 3. 继续复用和增强现有 `AdminDataTable`、`AdminEntityForm`、`AuthButton`、文件预览和系统管理页面，不为了抽象新增 Repository/DAO 厚层。
+4. 将数据权限、系统内置数据保护、多存储文件管理、邮件配置纳入起手式完成范围。
+5. 明确用户导入/导出和 generator 后置，不作为当前起手式交付阻塞项。
 
 推荐方向保持 **PG-first，不做 SQLite 兼容层，不为了将来可能的 MySQL 现在就抽双方言层**。如果以后确实要 MySQL，可以再针对 MySQL 做一轮 schema/迁移适配；当前为了迭代效率和类型清晰，先把 PostgreSQL 和 CRUD/权限闭环做对。
 
@@ -24,17 +26,19 @@
 | PG baseline         | 已完成   | `0001_pg_baseline` 手写迁移覆盖系统主表、外键、索引、trigger                 |
 | 时间戳              | 已完成   | `created_at/updated_at` 为 `timestamptz default now()`，更新触发器生效       |
 | 软删除唯一约束      | 已完成   | 主数据表采用 `deleted_at`，唯一约束改成 `where deleted_at is null`           |
-| 审计字段            | 部分完成 | schema/migration 已有 `created_by/updated_by/deleted_by`，route 尚未统一写入 |
+| 审计字段            | 已完成   | CRUD factory 统一写入 `created_by/updated_by/deleted_by`，复杂 custom route 保留必要显式写入 |
 | 前端 CRUD           | 已完成   | `AdminDataTable`、URL 状态、表单、搜索、权限按钮已经可支撑系统页             |
 | 文件管理            | 已增强   | 文件夹管理、图片/视频/PDF/Word/Excel/文本预览、浮动音频播放器已加入          |
-| 后端 CRUD factory   | 已完成   | 已新增 Drizzle table object CRUD factory、权限 meta、批量删除、审计字段写入  |
-| CRUD 试点迁移       | 已完成   | `dict` / `config` / `dept` 常规 CRUD 已迁移，复杂接口继续保留显式 route      |
-| CRUD 权限 fail-fast | 未开始   | 下一阶段要把权限配置和 seed/route 检查绑定                                   |
+| 后端 CRUD factory   | 已完成   | 已支持动作声明、list hook、恢复/永久删除、审计字段和权限 meta                |
+| CRUD 核心迁移       | 已完成   | `dict` / `config` / `dept` / `rule` / `role` / `user` / `file` 常规 CRUD 已迁移，复杂接口继续保留显式 route |
+| CRUD 权限 fail-fast | 已完成   | `admin:check-routes` 会检查 route manifest、seed action 和 CRUD meta 权限    |
+| 数据权限            | 已完成   | `sys_role.data_scope`、`sys_role_dept`、`resolveDataScope` 和核心列表过滤已落地 |
+| 存储/邮件配置       | 已完成   | `sys_storage`、`sys_mail_account`、页面、权限、seed 和测试路径已落地          |
 | main 分支整理       | 待处理   | 当前在 `codex/admin-base-migration-plan`，后续基座框架阶段再切 `main`        |
 
 ## 2. 当前实现快照
 
-本节来自 2026-06-18 当前代码核对，而不是理想方案。
+本节来自 2026-06-22 当前代码核对，而不是理想方案。
 
 ### 2.1 数据库与迁移
 
@@ -708,14 +712,15 @@ setRule / assign / resetPassword 等业务动作
 
 ### 7.3 数据权限
 
-ContiNew 有角色数据权限设计，我们可以预留，但不建议本版本直接做复杂 RLS。
+ContiNew 有角色数据权限设计。根据 2026-06-22 的起手式范围调整，数据权限不再只是预留项，而是当前起手式必做能力；但仍不建议本阶段直接做复杂 PG RLS。
 
 建议阶段：
 
 1. 先在 `sys_role` 增加 `data_scope`，在 `sys_role_dept` 存自定义部门范围。
 2. CRUD list config 支持 `dataScope` hook，根据当前用户注入部门/本人过滤条件。
 3. 用户、部门、角色这几个模块先验证数据权限。
-4. 如果未来是多租户或数据库直连客户端，再考虑 PG RLS。
+4. 后续业务 CRUD 通过 factory 的 `dataScope` 配置接入。
+5. 如果未来是多租户或数据库直连客户端，再考虑 PG RLS。
 
 为什么不一开始启用 RLS：
 
@@ -868,22 +873,33 @@ ContiNew 有角色数据权限设计，我们可以预留，但不建议本版�
 - 用户：存在密码 hash、`sys_user_role` 同步事务和超级管理员保护，迁移前需要事务型 hook 或继续显式 route。
 - 文件：元数据列表、删除、恢复可部分迁，上传、下载、复制、移动、物理删除保留自定义。
 
-### Phase 4：审计字段和系统保护，部分完成
+完整任务拆分见 `docs/admin-base-starter-completion-plan.md`。
+
+### Phase 4：审计字段、系统保护和数据权限，已完成
 
 已完成：
 
 - CRUD factory 自动写 `created_by/updated_by/deleted_by`。
 - 默认部门 `id = 1` 禁止通过 CRUD factory 删除。
 
-后续任务：
-
 - 明确哪些表启用 `is_system` 或 hard-coded protected IDs。
 - 超级管理员、内置角色、核心菜单权限禁止删除或限制关键字段修改。
 - 决定 `sys_rule` 和 `sys_file_group` 是否从当前硬删除改成软删除。
+- 增加 `sys_role.data_scope` 和 `sys_role_dept`，并让 CRUD factory 支持 `dataScope` hook。
 
-### Phase 5：质量门禁
+### Phase 5：多存储、文件管理和邮件配置，已完成
 
-建议迁移版本完成时至少跑：
+已完成：
+
+- 增加 `sys_storage`，至少支持 `local` 和 S3-compatible 配置。
+- 文件表补充 `storage_id`、`sha256`、`type`、`metadata_json` 等元数据。
+- 文件上传、预览、下载、回收站继续可用，并由存储配置驱动。
+- 增加 `sys_mail_account`，支持 SMTP 配置、默认账号、测试发送和密钥脱敏。
+- 用户导入/导出暂缓，不作为当前起手式完成阻塞项。
+
+### Phase 6：质量门禁，已完成
+
+本轮已跑：
 
 ```bash
 pnpm typecheck
@@ -949,14 +965,20 @@ PG 侧增加最小数据库断言：
 - 为角色/用户这类跨表写入增加事务型 hook，或继续保留显式 route。
 - 系统内置记录保护，例如 `is_system` 或 hard-coded protected IDs。
 
-### v4：增强能力
+### v4：起手式完成能力
 
 范围：
 
 - 文件模块 PG 化和更完整元数据。
-- 导入/导出。
 - 数据权限。
+- 多存储配置。
+- 邮件配置。
+- 系统内置数据保护。
 - 字典/配置缓存失效。
+
+不做：
+
+- 用户导入/导出。
 - 轻量 generator。
 
 ## 12. 关键取舍说明

@@ -120,7 +120,9 @@ export async function getUserAccess(userId: number) {
   if (userId === 1) {
     return (
       (await sqlite
-        .prepare("SELECT key FROM sys_rule WHERE type = 'action' AND status = 1 ORDER BY key ASC")
+        .prepare(
+          "SELECT key FROM sys_rule WHERE type = 'action' AND status = 1 AND deleted_at IS NULL ORDER BY key ASC",
+        )
         .all()) as Array<{ key: string }>
     ).map((item) => item.key);
   }
@@ -138,6 +140,7 @@ export async function getUserAccess(userId: number) {
            AND role.deleted_at IS NULL
            AND sr.type = 'action'
            AND sr.status = 1
+           AND sr.deleted_at IS NULL
          ORDER BY sr.key ASC`,
       )
       .all(userId)) as Array<{ key: string }>
@@ -160,7 +163,7 @@ export async function getUserMenus(userId: number) {
           hidden,
           link
          FROM sys_rule
-         WHERE type IN ('menu', 'route', 'nested') AND status = 1
+         WHERE type IN ('menu', 'route', 'nested') AND status = 1 AND deleted_at IS NULL
          ORDER BY "order" ASC, id ASC`
       : `SELECT DISTINCT
           sr.id,
@@ -183,6 +186,7 @@ export async function getUserMenus(userId: number) {
            AND role.deleted_at IS NULL
            AND sr.type IN ('menu', 'route', 'nested')
            AND sr.status = 1
+           AND sr.deleted_at IS NULL
          ORDER BY sr."order" ASC, sr.id ASC`;
 
   const rows =

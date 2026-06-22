@@ -11,6 +11,7 @@ export const sql = postgres(process.env.DATABASE_URL ?? defaultDatabaseUrl, {
 });
 
 export const db = drizzle(sql, { schema });
+export { schema };
 
 export type QueryParam = string | number | boolean | null | Date | Uint8Array;
 type QueryResultRow = Record<string, unknown>;
@@ -20,6 +21,7 @@ const aliasMap: Record<string, string> = {
   abilitiesjson: "abilitiesJson",
   createdat: "createdAt",
   createdby: "createdBy",
+  datascope: "dataScope",
   defaultauth: "defaultAuth",
   deletedat: "deletedAt",
   deletedby: "deletedBy",
@@ -28,17 +30,31 @@ const aliasMap: Record<string, string> = {
   dictid: "dictId",
   displayname: "displayName",
   expiresat: "expiresAt",
+  fromemail: "fromEmail",
+  fromname: "fromName",
   groupid: "groupId",
   groupname: "groupName",
+  haspassword: "hasPassword",
+  hassecretkey: "hasSecretKey",
   i18nkey: "i18nKey",
+  isdefault: "isDefault",
+  issystem: "isSystem",
   lastusedat: "lastUsedAt",
+  metadatajson: "metadataJson",
   originalname: "originalName",
   parentid: "parentId",
+  passwordencrypted: "passwordEncrypted",
   passwordhash: "passwordHash",
   propsjson: "propsJson",
   optionsjson: "optionsJson",
+  replyto: "replyTo",
   roleids: "roleIds",
   ruleids: "ruleIds",
+  secretkeyencrypted: "secretKeyEncrypted",
+  storageid: "storageId",
+  storagename: "storageName",
+  thumbnailpath: "thumbnailPath",
+  thumbnailurl: "thumbnailUrl",
   tokenhash: "tokenHash",
   updatedat: "updatedAt",
   updatedby: "updatedBy",
@@ -91,7 +107,7 @@ export type RunResult = {
   lastInsertRowid: number;
 };
 
-function createDbClient(client: SqlExecutor) {
+export function createDbClient(client: SqlExecutor) {
   return {
     prepare(query: string) {
       return {

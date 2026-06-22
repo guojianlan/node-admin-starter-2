@@ -4,6 +4,7 @@ import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { authRequired } from "@/server/middleware/auth";
 import { getUserAccess, getUserMenus, login, logout } from "@/server/services/auth-service";
+import { resolveDataScopeForUser } from "@/server/services/data-scope";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -34,6 +35,7 @@ authRoutes.get("/info", authRequired(), async (c) => {
     success({
       user,
       access: await getUserAccess(user.id),
+      dataScope: await resolveDataScopeForUser(user.id),
     }),
   );
 });

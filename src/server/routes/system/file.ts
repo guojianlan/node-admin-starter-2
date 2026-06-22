@@ -1,30 +1,24 @@
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { nowIso, sqlite } from "@/server/db";
+import { sysFile, sysStorage } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildListQuery } from "@/server/services/list-query";
-
-function uploadRoot() {
-  return path.join(process.cwd(), "storage", "uploads");
-}
-
-function safeExt(filename: string) {
-  return path
-    .extname(filename)
-    .replace(/[^a-zA-Z0-9.]/g, "")
-    .toLowerCase();
-}
-
-function normalizeIds(value: unknown) {
-  const values = Array.isArray(value) ? value : [value];
-  return values.map(Number).filter((item) => Number.isFinite(item));
-}
+import {
+  classifyFile,
+  copyStoredObject,
+  deleteStoredObject,
+  readStoredObject,
+  safeExt,
+  uploadFileToDefaultStorage,
+  type FileObjectRow,
+} from "@/server/services/storage-service";
 
 function placeholders(values: unknown[]) {
   return values.map(() => "?").join(", ");
@@ -47,6 +41,100 @@ const fileGroupSchema = z.object({
   name: z.string().min(1),
   sort: z.coerce.number().default(0),
   describe: z.string().optional().nullable(),
+});
+
+async function getFileObjectRows(ids: number[]) {
+  if (!ids.length) return [];
+  return (await sqlite
+    .prepare(
+      `SELECT
+        f.id,
+        f.original_name AS originalName,
+        f.filename,
+        f.path,
+        f.url,
+        f.mime,
+        f.storage_id AS storageId,
+        COALESCE(s.type, 'local') AS storageType,
+        s.endpoint,
+        s.region,
+        s.bucket,
+        s.access_key AS accessKey,
+        s.secret_key_encrypted AS secretKeyEncrypted,
+        s.root_path AS rootPath
+       FROM sys_file f
+       LEFT JOIN sys_storage s ON s.id = f.storage_id
+       WHERE f.id IN (${placeholders(ids)})`,
+    )
+    .all(...ids)) as FileObjectRow[];
+}
+
+const fileCrud = createCrudRoutes({
+  basePath: "/file/list",
+  table: sysFile,
+  idColumn: sysFile.id,
+  createSchema: z.object({}),
+  updateSchema: z
+    .object({
+      originalName: z.string().min(1).optional(),
+      groupId: z.coerce.number().nullable().optional(),
+    })
+    .partial(),
+  actions: ["query", "update", "delete", "batchDelete", "restore", "forceDelete"],
+  permissions: {
+    prefix: "system.file",
+    actions: {
+      update: "system.file.upload",
+      restore: "system.file.delete",
+      forceDelete: "system.file.delete",
+    },
+  },
+  list: {
+    select: {
+      id: sysFile.id,
+      groupId: sysFile.groupId,
+      storageId: sysFile.storageId,
+      storageName: sysStorage.name,
+      originalName: sysFile.originalName,
+      filename: sysFile.filename,
+      path: sysFile.path,
+      url: sysFile.url,
+      size: sysFile.size,
+      ext: sysFile.ext,
+      mime: sysFile.mime,
+      type: sysFile.type,
+      sha256: sysFile.sha256,
+      thumbnailUrl: sysFile.thumbnailUrl,
+      uploaderId: sysFile.uploaderId,
+      createdAt: sysFile.createdAt,
+      updatedAt: sysFile.updatedAt,
+    },
+    joins: [
+      {
+        type: "left",
+        table: sysStorage,
+        on: eq(sysStorage.id, sysFile.storageId),
+      },
+    ],
+    searchable: {
+      groupId: "=",
+      storageId: "=",
+      originalName: "like",
+      ext: "=",
+      mime: "like",
+      type: "=",
+      createdAt: "betweenDate",
+    },
+    quickSearchFields: ["originalName", "filename", "sha256"],
+    sortableFields: ["id", "size", "createdAt", "updatedAt"],
+    defaultSort: { field: "id", order: "desc" },
+  },
+  hooks: {
+    beforeForceDelete: async (_ctx, ids) => {
+      const rows = await getFileObjectRows(ids);
+      await Promise.all(rows.map((row) => deleteStoredObject(row)));
+    },
+  },
 });
 
 function buildGroupTree(rows: FileGroupRow[], parentId = 0): FileGroupNode[] {
@@ -145,90 +233,25 @@ fileRoutes.delete("/file/group/:id", authRequired(), ability("system.file.delete
   return c.json(success(null, "删除成功"));
 });
 
-fileRoutes.get("/file/list", authRequired(), ability("system.file.query"), async (c) => {
-  const page = await buildListQuery(c.req.url, {
-    table: "sys_file f",
-    select: `
-      f.id,
-      f.group_id AS groupId,
-      f.original_name AS originalName,
-      f.filename,
-      f.path,
-      f.url,
-      f.size,
-      f.ext,
-      f.mime,
-      f.uploader_id AS uploaderId,
-      f.created_at AS createdAt
-    `,
-    fieldMap: {
-      id: "f.id",
-      groupId: "f.group_id",
-      originalName: "f.original_name",
-      filename: "f.filename",
-      ext: "f.ext",
-      mime: "f.mime",
-      createdAt: "f.created_at",
-    },
-    searchable: {
-      groupId: "=",
-      originalName: "like",
-      ext: "=",
-      createdAt: "betweenDate",
-    },
-    quickSearchFields: ["originalName", "filename"],
-    sortableFields: ["id", "size", "createdAt"],
-    defaultSort: { field: "id", order: "desc" },
-    baseWhere: ["f.deleted_at IS NULL"],
-  });
-  return c.json(success(page));
-});
-
 fileRoutes.post("/file/list/upload", authRequired(), ability("system.file.upload"), async (c) => {
   const user = c.get("user");
   const body = await c.req.parseBody();
   const file = body.file;
   if (!(file instanceof File)) throw new Error("请选择文件");
-
-  const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  const ext = safeExt(file.name);
-  const filename = `${crypto.randomUUID()}${ext}`;
-  const relativePath = `${dateDir}/${filename}`;
-  const absoluteDir = path.join(uploadRoot(), dateDir);
-  const absolutePath = path.join(absoluteDir, filename);
-  await fs.mkdir(absoluteDir, { recursive: true });
-  await fs.writeFile(absolutePath, Buffer.from(await file.arrayBuffer()));
-
-  const now = nowIso();
-  const result = await sqlite
-    .prepare(
-      `INSERT INTO sys_file
-        (group_id, original_name, filename, path, url, size, ext, mime, uploader_id, created_at, updated_at)
-       VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       RETURNING id`,
-    )
-    .run(
-      Number(body.groupId || 1),
-      file.name,
-      filename,
-      relativePath,
-      `/uploads/${relativePath}`,
-      file.size,
-      ext.replace(".", ""),
-      file.type,
-      user.id,
-      now,
-      now,
-    );
+  const result = await uploadFileToDefaultStorage({
+    file,
+    groupId: Number(body.groupId || 1),
+    userId: user.id,
+  });
 
   return c.json(
     success(
       {
-        id: Number(result.lastInsertRowid),
-        url: `/uploads/${relativePath}`,
+        id: result.id,
+        url: result.url,
+        deduped: result.deduped,
       },
-      "上传成功",
+      result.deduped ? "文件已存在，已复用" : "上传成功",
     ),
   );
 });
@@ -241,13 +264,27 @@ fileRoutes.get(
     const id = Number(c.req.param("id"));
     const row = (await sqlite
       .prepare(
-        "SELECT original_name AS originalName, path FROM sys_file WHERE id = ? AND deleted_at IS NULL",
+        `SELECT
+          f.original_name AS originalName,
+          f.filename,
+          f.path,
+          f.mime,
+          f.storage_id AS storageId,
+          COALESCE(s.type, 'local') AS storageType,
+          s.endpoint,
+          s.region,
+          s.bucket,
+          s.access_key AS accessKey,
+          s.secret_key_encrypted AS secretKeyEncrypted,
+          s.root_path AS rootPath
+         FROM sys_file f
+         LEFT JOIN sys_storage s ON s.id = f.storage_id
+         WHERE f.id = ? AND f.deleted_at IS NULL`,
       )
-      .get(id)) as { originalName: string; path: string } | undefined;
+      .get(id)) as (FileObjectRow & { originalName: string }) | undefined;
     if (!row) throw new Error("文件不存在");
 
-    const filePath = path.join(uploadRoot(), row.path);
-    const buffer = await fs.readFile(filePath);
+    const buffer = await readStoredObject(row);
     return new Response(buffer, {
       headers: {
         "Content-Type": "application/octet-stream",
@@ -259,10 +296,12 @@ fileRoutes.get(
 
 fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"), async (c) => {
   const page = await buildListQuery(c.req.url, {
-    table: "sys_file f",
+    table: "sys_file f LEFT JOIN sys_storage s ON s.id = f.storage_id",
     select: `
       f.id,
       f.group_id AS groupId,
+      f.storage_id AS storageId,
+      s.name AS storageName,
       f.original_name AS originalName,
       f.filename,
       f.path,
@@ -270,6 +309,8 @@ fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"),
       f.size,
       f.ext,
       f.mime,
+      f.type,
+      f.sha256,
       f.uploader_id AS uploaderId,
       f.deleted_at AS deletedAt,
       f.created_at AS createdAt
@@ -277,20 +318,24 @@ fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"),
     fieldMap: {
       id: "f.id",
       groupId: "f.group_id",
+      storageId: "f.storage_id",
       originalName: "f.original_name",
       filename: "f.filename",
       ext: "f.ext",
       mime: "f.mime",
+      type: "f.type",
       deletedAt: "f.deleted_at",
       createdAt: "f.created_at",
     },
     searchable: {
       groupId: "=",
+      storageId: "=",
       originalName: "like",
       ext: "=",
+      type: "=",
       deletedAt: "betweenDate",
     },
-    quickSearchFields: ["originalName", "filename"],
+    quickSearchFields: ["originalName", "filename", "sha256"],
     sortableFields: ["id", "size", "deletedAt", "createdAt"],
     defaultSort: { field: "deletedAt", order: "desc" },
     baseWhere: ["f.deleted_at IS NOT NULL"],
@@ -333,20 +378,45 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
     .parse(await c.req.json());
   const rows = (await sqlite
     .prepare(
-      `SELECT * FROM sys_file WHERE id IN (${placeholders(payload.ids)}) AND deleted_at IS NULL`,
+      `SELECT
+        f.*,
+        COALESCE(s.type, 'local') AS storageType,
+        s.endpoint,
+        s.region,
+        s.bucket,
+        s.access_key AS accessKey,
+        s.secret_key_encrypted AS secretKeyEncrypted,
+        s.root_path AS rootPath
+       FROM sys_file f
+       LEFT JOIN sys_storage s ON s.id = f.storage_id
+       WHERE f.id IN (${placeholders(payload.ids)}) AND f.deleted_at IS NULL`,
     )
     .all(...payload.ids)) as Array<{
+    group_id: number | null;
+    storage_id: number | null;
     original_name: string;
+    filename: string;
     path: string;
+    url: string;
     size: number;
     ext: string | null;
     mime: string | null;
+    type: string | null;
+    sha256: string | null;
+    metadata_json: string | null;
+    storageType: "local" | "s3";
+    endpoint: string | null;
+    region: string | null;
+    bucket: string | null;
+    accessKey: string | null;
+    secretKeyEncrypted: string | null;
+    rootPath: string | null;
   }>;
   const insert = sqlite.prepare(
     `INSERT INTO sys_file
-      (group_id, original_name, filename, path, url, size, ext, mime, uploader_id, created_at, updated_at)
+      (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type, sha256, metadata_json, uploader_id, created_at, updated_at)
      VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   for (const row of rows) {
@@ -354,18 +424,37 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
     const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
     const filename = `${crypto.randomUUID()}${ext}`;
     const relativePath = `${dateDir}/${filename}`;
-    await fs.mkdir(path.join(uploadRoot(), dateDir), { recursive: true });
-    await fs.copyFile(path.join(uploadRoot(), row.path), path.join(uploadRoot(), relativePath));
+    await copyStoredObject({
+      source: {
+        filename: row.filename,
+        path: row.path,
+        mime: row.mime,
+        storageId: row.storage_id,
+        storageType: row.storageType,
+        endpoint: row.endpoint,
+        region: row.region,
+        bucket: row.bucket,
+        accessKey: row.accessKey,
+        secretKeyEncrypted: row.secretKeyEncrypted,
+        rootPath: row.rootPath,
+      },
+      targetPath: relativePath,
+      contentType: row.mime,
+    });
     const now = nowIso();
     await insert.run(
       payload.groupId,
+      row.storage_id,
       row.original_name,
       filename,
       relativePath,
-      `/uploads/${relativePath}`,
+      row.url.replace(row.path, relativePath),
       row.size,
       row.ext,
       row.mime,
+      row.type ?? classifyFile({ ext: row.ext, mime: row.mime }),
+      row.sha256,
+      row.metadata_json,
       user.id,
       now,
       now,
@@ -375,104 +464,35 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
   return c.json(success(null, "复制成功"));
 });
 
-fileRoutes.post(
-  "/file/list/batch-delete",
-  authRequired(),
-  ability("system.file.delete"),
-  async (c) => {
-    const ids = normalizeIds((await c.req.json()).ids);
-    if (!ids.length) throw new Error("请选择文件");
-    await sqlite
-      .prepare(
-        `UPDATE sys_file SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders(ids)})`,
-      )
-      .run(nowIso(), nowIso(), ...ids);
-    return c.json(success(null, "删除成功"));
-  },
-);
-
-fileRoutes.put(
-  "/file/list/restore/:id",
-  authRequired(),
-  ability("system.file.delete"),
-  async (c) => {
-    const id = Number(c.req.param("id"));
-    await sqlite
-      .prepare("UPDATE sys_file SET deleted_at = NULL, updated_at = ? WHERE id = ?")
-      .run(nowIso(), id);
-    return c.json(success(null, "恢复成功"));
-  },
-);
-
-fileRoutes.post(
-  "/file/list/batch-restore",
-  authRequired(),
-  ability("system.file.delete"),
-  async (c) => {
-    const ids = normalizeIds((await c.req.json()).ids);
-    if (!ids.length) throw new Error("请选择文件");
-    await sqlite
-      .prepare(
-        `UPDATE sys_file SET deleted_at = NULL, updated_at = ? WHERE id IN (${placeholders(ids)})`,
-      )
-      .run(nowIso(), ...ids);
-    return c.json(success(null, "恢复成功"));
-  },
-);
-
-fileRoutes.delete(
-  "/file/list/force/:id",
-  authRequired(),
-  ability("system.file.delete"),
-  async (c) => {
-    const id = Number(c.req.param("id"));
-    const row = (await sqlite.prepare("SELECT path FROM sys_file WHERE id = ?").get(id)) as
-      | { path: string }
-      | undefined;
-    if (row) {
-      await fs.rm(path.join(uploadRoot(), row.path), { force: true });
-    }
-    await sqlite.prepare("DELETE FROM sys_file WHERE id = ?").run(id);
-    return c.json(success(null, "彻底删除成功"));
-  },
-);
-
-fileRoutes.post(
-  "/file/list/batch-force",
-  authRequired(),
-  ability("system.file.delete"),
-  async (c) => {
-    const ids = normalizeIds((await c.req.json()).ids);
-    if (!ids.length) throw new Error("请选择文件");
-    const rows = (await sqlite
-      .prepare(`SELECT path FROM sys_file WHERE id IN (${placeholders(ids)})`)
-      .all(...ids)) as Array<{ path: string }>;
-    await Promise.all(rows.map((row) => fs.rm(path.join(uploadRoot(), row.path), { force: true })));
-    await sqlite.prepare(`DELETE FROM sys_file WHERE id IN (${placeholders(ids)})`).run(...ids);
-    return c.json(success(null, "彻底删除成功"));
-  },
-);
-
 fileRoutes.delete(
   "/file/list/clean-trash",
   authRequired(),
   ability("system.file.delete"),
   async (c) => {
     const rows = (await sqlite
-      .prepare("SELECT path FROM sys_file WHERE deleted_at IS NOT NULL")
-      .all()) as Array<{
-      path: string;
-    }>;
-    await Promise.all(rows.map((row) => fs.rm(path.join(uploadRoot(), row.path), { force: true })));
+      .prepare(
+        `SELECT
+          f.id,
+          f.filename,
+          f.path,
+          f.mime,
+          f.storage_id AS storageId,
+          COALESCE(s.type, 'local') AS storageType,
+          s.endpoint,
+          s.region,
+          s.bucket,
+          s.access_key AS accessKey,
+          s.secret_key_encrypted AS secretKeyEncrypted,
+          s.root_path AS rootPath
+         FROM sys_file f
+         LEFT JOIN sys_storage s ON s.id = f.storage_id
+         WHERE f.deleted_at IS NOT NULL`,
+      )
+      .all()) as FileObjectRow[];
+    await Promise.all(rows.map((row) => deleteStoredObject(row)));
     await sqlite.prepare("DELETE FROM sys_file WHERE deleted_at IS NOT NULL").run();
     return c.json(success({ count: rows.length }, "清空成功"));
   },
 );
 
-fileRoutes.delete("/file/list/:id", authRequired(), ability("system.file.delete"), async (c) => {
-  const id = Number(c.req.param("id"));
-  await sqlite
-    .prepare("UPDATE sys_file SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), id);
-  return c.json(success(null, "删除成功"));
-});
+fileRoutes.route("/", fileCrud.routes);

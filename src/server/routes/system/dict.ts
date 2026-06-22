@@ -6,6 +6,7 @@ import { sqlite } from "@/server/db";
 import { sysDict, sysDictItem } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { authRequired } from "@/server/middleware/auth";
+import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 
 const dictSchema = z.object({
   name: z.string().min(1),
@@ -38,6 +39,7 @@ const dictCrud = createCrudRoutes({
       remark: sysDict.remark,
       status: sysDict.status,
       sort: sysDict.sort,
+      isSystem: sysDict.isSystem,
       createdAt: sysDict.createdAt,
     },
     searchable: {
@@ -49,6 +51,21 @@ const dictCrud = createCrudRoutes({
     quickSearchFields: ["name", "code"],
     sortableFields: ["id", "sort", "status", "createdAt"],
     defaultSort: { field: "sort", order: "asc" },
+  },
+  hooks: {
+    beforeUpdate: async (ctx, id, values) => {
+      if ((await getSystemFlag(ctx.sql, "sys_dict", id)) && values.code !== undefined) {
+        throw new Error("系统内置字典不能修改编码");
+      }
+      return values;
+    },
+    beforeDelete: (ctx, ids) =>
+      assertNotSystemRecords({
+        db: ctx.sql,
+        table: "sys_dict",
+        ids,
+        message: "系统内置字典不能删除",
+      }),
   },
 });
 

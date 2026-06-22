@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   pgTable,
@@ -41,6 +42,7 @@ export const sysUser = pgTable(
     loginIp: text("login_ip"),
     loginTime: timestamp("login_time", { withTimezone: true }),
     status: integer("status").notNull().default(1),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -63,6 +65,12 @@ export const sysRole = pgTable(
     remark: text("remark"),
     sort: integer("sort").notNull().default(0),
     status: integer("status").notNull().default(1),
+    dataScope: text("data_scope", {
+      enum: ["all", "custom_dept", "current_dept", "current_dept_tree", "self"],
+    })
+      .notNull()
+      .default("all"),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -102,6 +110,7 @@ export const sysDept = pgTable(
     leader: text("leader"),
     phone: text("phone"),
     status: integer("status").notNull().default(1),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -111,6 +120,22 @@ export const sysDept = pgTable(
     uniqueIndex("sys_dept_code_active_unique")
       .on(table.code)
       .where(sql`${table.deletedAt} IS NULL AND ${table.code} IS NOT NULL`),
+  ],
+);
+
+export const sysRoleDept = pgTable(
+  "sys_role_dept",
+  {
+    roleId: integer("role_id")
+      .notNull()
+      .references(() => sysRole.id, { onDelete: "cascade" }),
+    deptId: integer("dept_id")
+      .notNull()
+      .references(() => sysDept.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roleId, table.deptId] }),
+    index("sys_role_dept_dept_id_idx").on(table.deptId),
   ],
 );
 
@@ -132,6 +157,7 @@ export const sysRule = pgTable(
     hidden: integer("hidden").notNull().default(1),
     link: integer("link").notNull().default(0),
     defaultAuth: integer("default_auth").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -205,6 +231,7 @@ export const sysDict = pgTable(
     remark: text("remark"),
     status: integer("status").notNull().default(1),
     sort: integer("sort").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -248,6 +275,7 @@ export const sysConfigGroup = pgTable(
     code: text("code").notNull(),
     sort: integer("sort").notNull().default(0),
     status: integer("status").notNull().default(1),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -275,6 +303,7 @@ export const sysConfigItems = pgTable(
     propsJson: text("props_json"),
     sort: integer("sort").notNull().default(0),
     status: integer("status").notNull().default(1),
+    isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -284,6 +313,40 @@ export const sysConfigItems = pgTable(
       .on(table.key)
       .where(sql`${table.deletedAt} IS NULL`),
     index("sys_config_items_group_id_idx").on(table.groupId),
+  ],
+);
+
+export const sysStorage = pgTable(
+  "sys_storage",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    type: text("type", { enum: ["local", "s3"] }).notNull(),
+    endpoint: text("endpoint"),
+    region: text("region"),
+    bucket: text("bucket"),
+    accessKey: text("access_key"),
+    secretKeyEncrypted: text("secret_key_encrypted"),
+    baseUrl: text("base_url"),
+    rootPath: text("root_path"),
+    isDefault: boolean("is_default").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    optionsJson: text("options_json"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_storage_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("sys_storage_default_active_unique")
+      .on(table.isDefault)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
+    index("sys_storage_type_status_idx").on(table.type, table.status),
   ],
 );
 
@@ -307,6 +370,7 @@ export const sysFile = pgTable(
   {
     id: serial("id").primaryKey(),
     groupId: integer("group_id").references(() => sysFileGroup.id, { onDelete: "set null" }),
+    storageId: integer("storage_id").references(() => sysStorage.id, { onDelete: "set null" }),
     originalName: text("original_name").notNull(),
     filename: text("filename").notNull(),
     path: text("path").notNull(),
@@ -314,6 +378,11 @@ export const sysFile = pgTable(
     size: integer("size").notNull(),
     ext: text("ext"),
     mime: text("mime"),
+    type: text("type").notNull().default("other"),
+    sha256: text("sha256"),
+    metadataJson: text("metadata_json"),
+    thumbnailPath: text("thumbnail_path"),
+    thumbnailUrl: text("thumbnail_url"),
     uploaderId: integer("uploader_id").references(() => sysUser.id, { onDelete: "set null" }),
     ...timestamps,
     ...softDelete,
@@ -321,8 +390,44 @@ export const sysFile = pgTable(
   },
   (table) => [
     index("sys_file_group_id_idx").on(table.groupId),
+    index("sys_file_storage_id_idx").on(table.storageId),
     index("sys_file_uploader_id_idx").on(table.uploaderId),
+    index("sys_file_type_idx").on(table.type),
+    index("sys_file_sha256_idx").on(table.sha256),
     index("sys_file_deleted_at_idx").on(table.deletedAt),
     index("sys_file_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const sysMailAccount = pgTable(
+  "sys_mail_account",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    host: text("host").notNull(),
+    port: integer("port").notNull(),
+    secure: boolean("secure").notNull().default(false),
+    username: text("username"),
+    passwordEncrypted: text("password_encrypted"),
+    fromName: text("from_name"),
+    fromEmail: text("from_email").notNull(),
+    replyTo: text("reply_to"),
+    isDefault: boolean("is_default").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_mail_account_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("sys_mail_account_default_active_unique")
+      .on(table.isDefault)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
+    index("sys_mail_account_status_sort_idx").on(table.status, table.sort),
   ],
 );

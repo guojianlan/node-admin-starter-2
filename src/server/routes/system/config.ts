@@ -8,6 +8,7 @@ import { sysConfigGroup, sysConfigItems } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 
 const groupSchema = z.object({
   name: z.string().min(1),
@@ -43,12 +44,28 @@ const configGroupCrud = createCrudRoutes({
       code: sysConfigGroup.code,
       sort: sysConfigGroup.sort,
       status: sysConfigGroup.status,
+      isSystem: sysConfigGroup.isSystem,
       createdAt: sysConfigGroup.createdAt,
     },
     searchable: { name: "like", code: "like", status: "=" },
     quickSearchFields: ["name", "code"],
     sortableFields: ["id", "sort", "status", "createdAt"],
     defaultSort: { field: "sort", order: "asc" },
+  },
+  hooks: {
+    beforeUpdate: async (ctx, id, values) => {
+      if ((await getSystemFlag(ctx.sql, "sys_config_group", id)) && values.code !== undefined) {
+        throw new Error("系统内置配置组不能修改编码");
+      }
+      return values;
+    },
+    beforeDelete: (ctx, ids) =>
+      assertNotSystemRecords({
+        db: ctx.sql,
+        table: "sys_config_group",
+        ids,
+        message: "系统内置配置组不能删除",
+      }),
   },
 });
 
@@ -73,6 +90,7 @@ const configItemCrud = createCrudRoutes({
       propsJson: sysConfigItems.propsJson,
       sort: sysConfigItems.sort,
       status: sysConfigItems.status,
+      isSystem: sysConfigItems.isSystem,
       createdAt: sysConfigItems.createdAt,
     },
     joins: [
@@ -92,6 +110,21 @@ const configItemCrud = createCrudRoutes({
     quickSearchFields: ["key", "title"],
     sortableFields: ["id", "sort", "status", "createdAt"],
     defaultSort: { field: "sort", order: "asc" },
+  },
+  hooks: {
+    beforeUpdate: async (ctx, id, values) => {
+      if ((await getSystemFlag(ctx.sql, "sys_config_items", id)) && values.key !== undefined) {
+        throw new Error("系统内置配置项不能修改键名");
+      }
+      return values;
+    },
+    beforeDelete: (ctx, ids) =>
+      assertNotSystemRecords({
+        db: ctx.sql,
+        table: "sys_config_items",
+        ids,
+        message: "系统内置配置项不能删除",
+      }),
   },
 });
 

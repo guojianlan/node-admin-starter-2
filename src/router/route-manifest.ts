@@ -5,8 +5,10 @@ import { DictItemPage } from "@/features/system/dict/DictItemPage";
 import { DeptPage } from "@/features/system/dept/DeptPage";
 import { DictPage } from "@/features/system/dict/DictPage";
 import { FilePage } from "@/features/system/file/FilePage";
+import { MailAccountPage } from "@/features/system/mail/MailAccountPage";
 import { RolePage } from "@/features/system/role/RolePage";
 import { RulePage } from "@/features/system/rule/RulePage";
+import { StoragePage } from "@/features/system/storage/StoragePage";
 import { UserPage } from "@/features/system/user/UserPage";
 
 export type AdminRouteRecord = {
@@ -81,6 +83,20 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "文件管理",
     auth: "system.file.query",
     component: FilePage,
+  },
+  {
+    path: "/system/storage",
+    key: "system.storage",
+    title: "存储配置",
+    auth: "system.storage.query",
+    component: StoragePage,
+  },
+  {
+    path: "/system/mail/account",
+    key: "system.mail",
+    title: "邮件配置",
+    auth: "system.mail.query",
+    component: MailAccountPage,
   },
 ];
 

@@ -16,8 +16,10 @@ const triggerTables = [
   "sys_dict_item",
   "sys_config_group",
   "sys_config_items",
+  "sys_storage",
   "sys_file_group",
   "sys_file",
+  "sys_mail_account",
 ];
 
 const updatedAtTriggers = triggerTables
@@ -246,6 +248,76 @@ CREATE TABLE IF NOT EXISTS sys_file (
   deleted_by INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS sys_storage (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  type TEXT NOT NULL,
+  endpoint TEXT,
+  region TEXT,
+  bucket TEXT,
+  access_key TEXT,
+  secret_key_encrypted TEXT,
+  base_url TEXT,
+  root_path TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  options_json TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS sys_mail_account (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  secure BOOLEAN NOT NULL DEFAULT false,
+  username TEXT,
+  password_encrypted TEXT,
+  from_name TEXT,
+  from_email TEXT NOT NULL,
+  reply_to TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS sys_role_dept (
+  role_id INTEGER NOT NULL REFERENCES sys_role(id) ON DELETE CASCADE,
+  dept_id INTEGER NOT NULL REFERENCES sys_dept(id) ON DELETE CASCADE,
+  PRIMARY KEY (role_id, dept_id)
+);
+
+ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_dept ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_rule ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_dict ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_config_group ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_config_items ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS storage_id INTEGER REFERENCES sys_storage(id) ON DELETE SET NULL;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'other';
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS sha256 TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS metadata_json TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+
 CREATE UNIQUE INDEX IF NOT EXISTS sys_user_username_active_unique ON sys_user(username) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS sys_user_dept_id_idx ON sys_user(dept_id);
 CREATE INDEX IF NOT EXISTS sys_user_status_created_at_idx ON sys_user(status, created_at);
@@ -254,6 +326,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS sys_role_code_active_unique ON sys_role(code) 
 CREATE INDEX IF NOT EXISTS sys_role_status_sort_idx ON sys_role(status, sort);
 
 CREATE INDEX IF NOT EXISTS sys_user_role_role_id_idx ON sys_user_role(role_id);
+CREATE INDEX IF NOT EXISTS sys_role_dept_dept_id_idx ON sys_role_dept(dept_id);
 
 CREATE INDEX IF NOT EXISTS sys_dept_parent_id_idx ON sys_dept(parent_id);
 CREATE UNIQUE INDEX IF NOT EXISTS sys_dept_code_active_unique ON sys_dept(code) WHERE deleted_at IS NULL AND code IS NOT NULL;
@@ -280,12 +353,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS sys_config_group_code_active_unique ON sys_con
 CREATE UNIQUE INDEX IF NOT EXISTS sys_config_items_key_active_unique ON sys_config_items(key) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS sys_config_items_group_id_idx ON sys_config_items(group_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS sys_storage_code_active_unique ON sys_storage(code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_storage_default_active_unique ON sys_storage(is_default) WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_storage_type_status_idx ON sys_storage(type, status);
+
 CREATE INDEX IF NOT EXISTS sys_file_group_parent_id_idx ON sys_file_group(parent_id);
 
 CREATE INDEX IF NOT EXISTS sys_file_group_id_idx ON sys_file(group_id);
+CREATE INDEX IF NOT EXISTS sys_file_storage_id_idx ON sys_file(storage_id);
 CREATE INDEX IF NOT EXISTS sys_file_uploader_id_idx ON sys_file(uploader_id);
+CREATE INDEX IF NOT EXISTS sys_file_type_idx ON sys_file(type);
+CREATE INDEX IF NOT EXISTS sys_file_sha256_idx ON sys_file(sha256);
 CREATE INDEX IF NOT EXISTS sys_file_deleted_at_idx ON sys_file(deleted_at);
 CREATE INDEX IF NOT EXISTS sys_file_created_at_idx ON sys_file(created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_mail_account_code_active_unique ON sys_mail_account(code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_mail_account_default_active_unique ON sys_mail_account(is_default) WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_mail_account_status_sort_idx ON sys_mail_account(status, sort);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -296,6 +380,109 @@ END;
 $$ LANGUAGE plpgsql;
 
 ${updatedAtTriggers}
+`,
+  },
+  {
+    id: "0002_admin_base_completion",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_storage (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  type TEXT NOT NULL,
+  endpoint TEXT,
+  region TEXT,
+  bucket TEXT,
+  access_key TEXT,
+  secret_key_encrypted TEXT,
+  base_url TEXT,
+  root_path TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  options_json TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS sys_mail_account (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  secure BOOLEAN NOT NULL DEFAULT false,
+  username TEXT,
+  password_encrypted TEXT,
+  from_name TEXT,
+  from_email TEXT NOT NULL,
+  reply_to TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS sys_role_dept (
+  role_id INTEGER NOT NULL REFERENCES sys_role(id) ON DELETE CASCADE,
+  dept_id INTEGER NOT NULL REFERENCES sys_dept(id) ON DELETE CASCADE,
+  PRIMARY KEY (role_id, dept_id)
+);
+
+ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_dept ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_rule ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_dict ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_config_group ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_config_items ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS storage_id INTEGER REFERENCES sys_storage(id) ON DELETE SET NULL;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'other';
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS sha256 TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS metadata_json TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS thumbnail_path TEXT;
+ALTER TABLE sys_file ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+
+CREATE INDEX IF NOT EXISTS sys_role_dept_dept_id_idx ON sys_role_dept(dept_id);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_storage_code_active_unique ON sys_storage(code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_storage_default_active_unique ON sys_storage(is_default) WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_storage_type_status_idx ON sys_storage(type, status);
+CREATE INDEX IF NOT EXISTS sys_file_storage_id_idx ON sys_file(storage_id);
+CREATE INDEX IF NOT EXISTS sys_file_type_idx ON sys_file(type);
+CREATE INDEX IF NOT EXISTS sys_file_sha256_idx ON sys_file(sha256);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_mail_account_code_active_unique ON sys_mail_account(code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_mail_account_default_active_unique ON sys_mail_account(is_default) WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_mail_account_status_sort_idx ON sys_mail_account(status, sort);
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+${updatedAtTriggers}
+`,
+  },
+  {
+    id: "0003_file_policy_cleanup",
+    sql: `
+UPDATE sys_rule SET name = '用户管理' WHERE id = 10 AND key = 'system.user';
+UPDATE sys_config_group SET name = '文件策略' WHERE code = 'file';
+DELETE FROM sys_config_items WHERE key = 'file.default_storage';
 `,
   },
 ];

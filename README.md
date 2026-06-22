@@ -2,6 +2,22 @@
 
 Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` 的产品结构和权限模型实现，但不复用 Xin 的封装组件。
 
+## 起手式完成状态
+
+当前起手式完成范围与验收记录见 [`docs/admin-base-starter-completion-plan.md`](docs/admin-base-starter-completion-plan.md)。
+
+已进入核心起手式：
+
+- 用户、角色、菜单权限、部门、字典、配置、文件、存储、邮件。
+- `is_system` 内置数据保护。
+- 角色 `data_scope` 数据权限和部门范围过滤。
+- 本地存储 + S3-compatible 存储配置，文件上传写入存储和 sha256 元数据。
+- SMTP 邮件账号配置、默认账号、测试发送和密钥脱敏。
+
+后置范围：
+
+- 用户导入/导出、代码生成器、AI、SMS、定时任务、租户。
+
 ## 技术栈
 
 - Next.js App Router
@@ -42,7 +58,7 @@ admin / 123456
 ```bash
 pnpm dev                 # 启动 Next + Hono
 pnpm db:migrate          # 执行 PostgreSQL 迁移
-pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置
+pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置、存储、邮件
 pnpm db:reset            # 重置 PostgreSQL public schema 并重新 seed
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
 pnpm lint                # ESLint

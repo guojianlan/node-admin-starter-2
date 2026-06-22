@@ -1,0 +1,426 @@
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { nowIso, sqlite } from "@/server/db";
+import { decryptSecret } from "./secret";
+
+export type StorageType = "local" | "s3";
+
+export type StorageRow = {
+  id: number;
+  name: string;
+  code: string;
+  type: StorageType;
+  endpoint: string | null;
+  region: string | null;
+  bucket: string | null;
+  accessKey: string | null;
+  secretKeyEncrypted: string | null;
+  baseUrl: string | null;
+  rootPath: string | null;
+  isDefault: boolean;
+  status: number;
+  optionsJson: string | null;
+};
+
+export type FileObjectRow = {
+  id?: number;
+  originalName?: string;
+  filename: string;
+  path: string;
+  url?: string;
+  mime?: string | null;
+  storageId?: number | null;
+  storageType?: StorageType | null;
+  endpoint?: string | null;
+  region?: string | null;
+  bucket?: string | null;
+  accessKey?: string | null;
+  secretKeyEncrypted?: string | null;
+  rootPath?: string | null;
+};
+
+type UploadConfig = {
+  maxSizeBytes: number;
+  allowedExtensions: string[];
+  deniedExtensions: string[];
+  enableSha256Dedupe: boolean;
+};
+
+const defaultAllowedExtensions = [
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "svg",
+  "pdf",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "txt",
+  "csv",
+  "zip",
+  "mp3",
+  "mp4",
+  "webm",
+];
+
+const defaultDeniedExtensions = ["exe", "bat", "cmd", "sh", "php"];
+
+function splitExtensions(value?: string | null) {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim().replace(/^\./, "").toLowerCase())
+    .filter(Boolean);
+}
+
+function booleanConfig(value?: string | null) {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+function localRoot(rootPath?: string | null) {
+  const configured = rootPath?.trim() || path.join("storage", "uploads");
+  return path.isAbsolute(configured)
+    ? configured
+    : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
+}
+
+function joinPublicUrl(baseUrl: string | null | undefined, relativePath: string) {
+  const cleanPath = relativePath.split(path.sep).join("/");
+  if (!baseUrl) return `/uploads/${cleanPath}`;
+  return `${baseUrl.replace(/\/$/, "")}/${cleanPath.replace(/^\//, "")}`;
+}
+
+function createS3Client(storage: Pick<StorageRow, "endpoint" | "region" | "accessKey" | "secretKeyEncrypted">) {
+  const secretAccessKey = decryptSecret(storage.secretKeyEncrypted);
+  if (!storage.accessKey || !secretAccessKey) {
+    throw new Error("S3 存储缺少 Access Key 或 Secret Key");
+  }
+  return new S3Client({
+    region: storage.region || "auto",
+    endpoint: storage.endpoint || undefined,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: storage.accessKey,
+      secretAccessKey,
+    },
+  });
+}
+
+async function streamToBuffer(body: unknown) {
+  if (!body) return Buffer.alloc(0);
+  if (typeof (body as { transformToByteArray?: unknown }).transformToByteArray === "function") {
+    const bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+    return Buffer.from(bytes);
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as Readable) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+export function safeExt(filename: string) {
+  return path
+    .extname(filename)
+    .replace(/[^a-zA-Z0-9.]/g, "")
+    .toLowerCase();
+}
+
+export function classifyFile(input: { ext?: string | null; mime?: string | null }) {
+  const ext = input.ext?.replace(/^\./, "").toLowerCase() ?? "";
+  const mime = input.mime ?? "";
+  if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext))
+    return "image";
+  if (mime.startsWith("video/") || ["mp4", "webm", "mov", "m4v"].includes(ext)) return "video";
+  if (mime.startsWith("audio/") || ["mp3", "wav", "ogg", "m4a", "flac"].includes(ext)) return "audio";
+  if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "md"].includes(ext))
+    return "document";
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "archive";
+  return "other";
+}
+
+export async function getDefaultStorage() {
+  const row = (await sqlite
+    .prepare(
+      `SELECT
+        id,
+        name,
+        code,
+        type,
+        endpoint,
+        region,
+        bucket,
+        access_key AS accessKey,
+        secret_key_encrypted AS secretKeyEncrypted,
+        base_url AS baseUrl,
+        root_path AS rootPath,
+        is_default AS isDefault,
+        status,
+        options_json AS optionsJson
+       FROM sys_storage
+       WHERE deleted_at IS NULL AND is_default = true AND status = 1
+       ORDER BY id ASC
+       LIMIT 1`,
+    )
+    .get()) as StorageRow | undefined;
+
+  if (row) return row;
+  throw new Error("未配置可用的默认存储");
+}
+
+export async function getStorageById(storageId: number) {
+  return (await sqlite
+    .prepare(
+      `SELECT
+        id,
+        name,
+        code,
+        type,
+        endpoint,
+        region,
+        bucket,
+        access_key AS accessKey,
+        secret_key_encrypted AS secretKeyEncrypted,
+        base_url AS baseUrl,
+        root_path AS rootPath,
+        is_default AS isDefault,
+        status,
+        options_json AS optionsJson
+       FROM sys_storage
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .get(storageId)) as StorageRow | undefined;
+}
+
+export async function getUploadConfig(): Promise<UploadConfig> {
+  const rows = (await sqlite
+    .prepare(
+      `SELECT key, "values" AS values
+       FROM sys_config_items
+       WHERE deleted_at IS NULL
+         AND key IN (
+           'file.max_upload_size_mb',
+           'file.allowed_extensions',
+           'file.denied_extensions',
+           'file.enable_sha256_dedupe'
+         )`,
+    )
+    .all()) as Array<{ key: string; values: string | null }>;
+  const map = new Map(rows.map((row) => [row.key, row.values]));
+  const maxMb = Number(map.get("file.max_upload_size_mb") ?? 50);
+
+  return {
+    maxSizeBytes: Math.max(Number.isFinite(maxMb) ? maxMb : 50, 1) * 1024 * 1024,
+    allowedExtensions: splitExtensions(map.get("file.allowed_extensions")).length
+      ? splitExtensions(map.get("file.allowed_extensions"))
+      : defaultAllowedExtensions,
+    deniedExtensions: splitExtensions(map.get("file.denied_extensions")).length
+      ? splitExtensions(map.get("file.denied_extensions"))
+      : defaultDeniedExtensions,
+    enableSha256Dedupe: booleanConfig(map.get("file.enable_sha256_dedupe")),
+  };
+}
+
+export async function assertUploadAllowed(file: File, ext: string) {
+  const config = await getUploadConfig();
+  const normalizedExt = ext.replace(/^\./, "").toLowerCase();
+  if (file.size > config.maxSizeBytes) {
+    throw new Error(`文件大小不能超过 ${Math.floor(config.maxSizeBytes / 1024 / 1024)} MB`);
+  }
+  if (config.deniedExtensions.includes(normalizedExt)) {
+    throw new Error("当前文件类型不允许上传");
+  }
+  if (config.allowedExtensions.length && !config.allowedExtensions.includes(normalizedExt)) {
+    throw new Error("当前文件类型不在允许上传范围内");
+  }
+  return config;
+}
+
+export async function testStorageConnection(storage: {
+  type: StorageType;
+  endpoint?: string | null;
+  region?: string | null;
+  bucket?: string | null;
+  accessKey?: string | null;
+  secretKeyEncrypted?: string | null;
+  rootPath?: string | null;
+}) {
+  if (storage.type === "local") {
+    const root = localRoot(storage.rootPath);
+    await fs.mkdir(root, { recursive: true });
+    const probe = path.join(root, `.probe-${crypto.randomUUID()}`);
+    await fs.writeFile(probe, "ok");
+    await fs.rm(probe, { force: true });
+    return;
+  }
+
+  if (!storage.bucket) throw new Error("S3 存储缺少 bucket");
+  const client = createS3Client({
+    endpoint: storage.endpoint ?? null,
+    region: storage.region ?? null,
+    accessKey: storage.accessKey ?? null,
+    secretKeyEncrypted: storage.secretKeyEncrypted ?? null,
+  });
+  await client.send(new HeadBucketCommand({ Bucket: storage.bucket }));
+}
+
+export async function uploadFileToDefaultStorage(input: {
+  file: File;
+  groupId: number | null;
+  userId: number;
+}) {
+  const storage = await getDefaultStorage();
+  const extWithDot = safeExt(input.file.name);
+  const ext = extWithDot.replace(".", "");
+  const uploadConfig = await assertUploadAllowed(input.file, ext);
+  const buffer = Buffer.from(await input.file.arrayBuffer());
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+
+  if (uploadConfig.enableSha256Dedupe) {
+    const existing = (await sqlite
+      .prepare(
+        `SELECT id, url
+         FROM sys_file
+         WHERE storage_id = ?
+           AND sha256 = ?
+           AND deleted_at IS NULL
+         ORDER BY id ASC
+         LIMIT 1`,
+      )
+      .get(storage.id, sha256)) as { id: number; url: string } | undefined;
+    if (existing) return { ...existing, deduped: true };
+  }
+
+  const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const filename = `${crypto.randomUUID()}${extWithDot}`;
+  const relativePath = `${dateDir}/${filename}`;
+
+  if (storage.type === "local") {
+    const absoluteDir = path.join(localRoot(storage.rootPath), dateDir);
+    await fs.mkdir(absoluteDir, { recursive: true });
+    await fs.writeFile(path.join(absoluteDir, filename), buffer);
+  } else {
+    if (!storage.bucket) throw new Error("S3 存储缺少 bucket");
+    const client = createS3Client(storage);
+    await client.send(
+      new PutObjectCommand({
+        Bucket: storage.bucket,
+        Key: relativePath,
+        Body: buffer,
+        ContentType: input.file.type || "application/octet-stream",
+      }),
+    );
+  }
+
+  const now = nowIso();
+  const fileType = classifyFile({ ext, mime: input.file.type });
+  const url = joinPublicUrl(storage.baseUrl, relativePath);
+  const result = await sqlite
+    .prepare(
+      `INSERT INTO sys_file
+        (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type, sha256, metadata_json, uploader_id, created_at, updated_at)
+       VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
+    )
+    .run(
+      input.groupId ?? 1,
+      storage.id,
+      input.file.name,
+      filename,
+      relativePath,
+      url,
+      input.file.size,
+      ext,
+      input.file.type || null,
+      fileType,
+      sha256,
+      JSON.stringify({ storageType: storage.type }),
+      input.userId,
+      now,
+      now,
+    );
+
+  return {
+    id: Number(result.lastInsertRowid),
+    url,
+    deduped: false,
+  };
+}
+
+export async function readStoredObject(row: FileObjectRow) {
+  if ((row.storageType ?? "local") === "local") {
+    return fs.readFile(path.join(localRoot(row.rootPath), row.path));
+  }
+
+  if (!row.bucket) throw new Error("S3 文件缺少 bucket");
+  const client = createS3Client({
+    endpoint: row.endpoint ?? null,
+    region: row.region ?? null,
+    accessKey: row.accessKey ?? null,
+    secretKeyEncrypted: row.secretKeyEncrypted ?? null,
+  });
+  const result = await client.send(new GetObjectCommand({ Bucket: row.bucket, Key: row.path }));
+  return streamToBuffer(result.Body);
+}
+
+export async function deleteStoredObject(row: FileObjectRow) {
+  if ((row.storageType ?? "local") === "local") {
+    await fs.rm(path.join(localRoot(row.rootPath), row.path), { force: true });
+    return;
+  }
+
+  if (!row.bucket) throw new Error("S3 文件缺少 bucket");
+  const client = createS3Client({
+    endpoint: row.endpoint ?? null,
+    region: row.region ?? null,
+    accessKey: row.accessKey ?? null,
+    secretKeyEncrypted: row.secretKeyEncrypted ?? null,
+  });
+  await client.send(new DeleteObjectCommand({ Bucket: row.bucket, Key: row.path }));
+}
+
+export async function copyStoredObject(input: {
+  source: FileObjectRow;
+  targetPath: string;
+  contentType?: string | null;
+}) {
+  if ((input.source.storageType ?? "local") === "local") {
+    const root = localRoot(input.source.rootPath);
+    await fs.mkdir(path.dirname(path.join(root, input.targetPath)), { recursive: true });
+    await fs.copyFile(path.join(root, input.source.path), path.join(root, input.targetPath));
+    return;
+  }
+
+  if (!input.source.bucket) throw new Error("S3 文件缺少 bucket");
+  const client = createS3Client({
+    endpoint: input.source.endpoint ?? null,
+    region: input.source.region ?? null,
+    accessKey: input.source.accessKey ?? null,
+    secretKeyEncrypted: input.source.secretKeyEncrypted ?? null,
+  });
+  const copySource = `${input.source.bucket}/${input.source.path
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: input.source.bucket,
+      Key: input.targetPath,
+      CopySource: copySource,
+      ContentType: input.contentType ?? undefined,
+    }),
+  );
+}

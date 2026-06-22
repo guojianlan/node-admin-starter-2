@@ -7,6 +7,8 @@ import {
   FileOutlined,
   FolderOutlined,
   FormOutlined,
+  CloudServerOutlined,
+  MailOutlined,
   SafetyOutlined,
   SettingOutlined,
   TableOutlined,
@@ -29,6 +31,8 @@ const iconMap: Record<string, React.ReactNode> = {
   dict: <TagsOutlined />,
   config: <DatabaseOutlined />,
   file: <FileOutlined />,
+  storage: <CloudServerOutlined />,
+  mail: <MailOutlined />,
 };
 
 export function renderMenuIcon(icon?: string | null) {
