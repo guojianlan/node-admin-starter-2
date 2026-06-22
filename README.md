@@ -6,6 +6,8 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 当前起手式完成范围与验收记录见 [`docs/admin-base-starter-completion-plan.md`](docs/admin-base-starter-completion-plan.md)。
 
+快速开发框架的启动体验、最小配置项和后续缺口见 [`docs/admin-base-quick-start-framework-plan.md`](docs/admin-base-quick-start-framework-plan.md)。
+
 已进入核心起手式：
 
 - 用户、角色、菜单权限、部门、字典、配置、文件、存储、邮件。
