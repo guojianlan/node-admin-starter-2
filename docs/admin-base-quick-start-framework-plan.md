@@ -27,6 +27,8 @@ Docker 可以作为可选能力，用来启动 PostgreSQL、Mailpit 这类本地
 
 当前已经新增源码启动说明：`docs/admin-base-startup-guide.md`。
 
+启动脚手架维护规则、待办池和新增项模板见：`docs/admin-base-startup-scaffold-maintenance.md`。
+
 ## 2. 最小配置契约
 
 面向普通项目接入者，只暴露这些必填或高频配置：
