@@ -6,6 +6,8 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 当前起手式完成范围与验收记录见 [`docs/admin-base-starter-completion-plan.md`](docs/admin-base-starter-completion-plan.md)。
 
+源码启动、环境变量、数据库初始化和常见问题见 [`docs/admin-base-startup-guide.md`](docs/admin-base-startup-guide.md)。
+
 快速开发框架的启动体验、最小配置项和后续缺口见 [`docs/admin-base-quick-start-framework-plan.md`](docs/admin-base-quick-start-framework-plan.md)。
 
 已进入核心起手式：
@@ -39,7 +41,9 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 ```bash
 pnpm install
-pnpm db:reset
+cp .env.example .env.local
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 ```
 
@@ -61,7 +65,7 @@ admin / 123456
 pnpm dev                 # 启动 Next + Hono
 pnpm db:migrate          # 执行 PostgreSQL 迁移
 pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置、存储、邮件
-pnpm db:reset            # 重置 PostgreSQL public schema 并重新 seed
+pnpm db:reset            # 危险：清空 PostgreSQL public schema 并重新 seed，仅开发重置使用
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
 pnpm lint                # ESLint
 pnpm typecheck           # TypeScript

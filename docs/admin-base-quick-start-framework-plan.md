@@ -13,35 +13,32 @@
 - `is_system` 内置数据保护、角色 `data_scope`、多存储、SMTP 测试发送、文件策略已经进入代码。
 - UI/UX 已按运营后台工作台方向统一，表格 URL 状态和请求缓存已落地。
 
-但作为“快速开发框架”还缺一层交付能力：新项目拿到代码后，不应该先阅读长文档、手动建库、手动判断是否 seed、手动检查密钥和默认账号。目标应收敛为：
+但作为“快速开发框架”还缺一层交付能力：新项目拿到代码后，不应该先阅读长文档、手动判断是否 seed、手动检查密钥和默认账号。主启动路径应以源码直接启动为准：
 
 ```bash
 pnpm install
 cp .env.example .env.local
-pnpm setup
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 ```
 
-或者在需要本地依赖编排时：
+Docker 可以作为可选能力，用来启动 PostgreSQL、Mailpit 这类本地依赖，但不作为唯一入口。如果后续补 `docker-compose.yml`，它只负责依赖编排，不替代源码启动流程。
 
-```bash
-docker compose up -d
-pnpm setup
-pnpm dev
-```
+当前已经新增源码启动说明：`docs/admin-base-startup-guide.md`。
 
 ## 2. 最小配置契约
 
 面向普通项目接入者，只暴露这些必填或高频配置：
 
-| 配置项                  | 必填 | 当前状态 | 目标说明 |
-| ----------------------- | ---- | -------- | -------- |
-| `DATABASE_URL`          | 是   | 已有     | PostgreSQL 连接串，开发和生产统一入口 |
-| `ADMIN_BASE_SECRET_KEY` | 是   | 代码有默认值 | 用于邮件密码、S3 Secret 等敏感配置加密；生产必须强制配置 |
-| 默认管理员密码          | 是   | 固定 `123456` | setup 阶段允许配置或生成，首次启动明确提示 |
-| `NEXT_PUBLIC_API_BASE_URL` | 否 | 已有 | 同源部署留空，前后端拆分时填写 |
-| `DATABASE_POOL_SIZE`    | 否   | 代码支持 | 默认 10，写入 `.env.example` 即可 |
-| `ADMIN_BASE_TOKEN_TTL_DAYS` | 否 | 已有 | 默认 7 天 |
+| 配置项                      | 必填 | 当前状态      | 目标说明                                                 |
+| --------------------------- | ---- | ------------- | -------------------------------------------------------- |
+| `DATABASE_URL`              | 是   | 已有          | PostgreSQL 连接串，开发和生产统一入口                    |
+| `ADMIN_BASE_SECRET_KEY`     | 是   | 代码有默认值  | 用于邮件密码、S3 Secret 等敏感配置加密；生产必须强制配置 |
+| 默认管理员密码              | 是   | 固定 `123456` | setup 阶段允许配置或生成，首次启动明确提示               |
+| `NEXT_PUBLIC_API_BASE_URL`  | 否   | 已有          | 同源部署留空，前后端拆分时填写                           |
+| `DATABASE_POOL_SIZE`        | 否   | 代码支持      | 默认 10，写入 `.env.example` 即可                        |
+| `ADMIN_BASE_TOKEN_TTL_DAYS` | 否   | 已有          | 默认 7 天                                                |
 
 这些能力不应该放在 `.env` 里，而应继续走后台系统配置：
 
@@ -57,34 +54,39 @@ pnpm dev
 
 需要补齐：
 
-1. `docker-compose.yml`
-   - 提供 PostgreSQL。
-   - 提供 Mailpit 或类似本地 SMTP 测试服务。
-   - 默认数据库、用户、端口与 `.env.example` 一致。
-2. `pnpm setup`
+1. 启动文档
+   - 源码直启作为主路径。
+   - 明确 PostgreSQL 创建、`.env.local`、migration、seed、dev 启动。
+   - 明确 `db:reset` 是破坏性开发命令。
+2. `pnpm setup`，可作为后续增强
    - 检查 `.env.local` 是否存在。
    - 检查 `DATABASE_URL` 是否可连接。
    - 执行 migration。
    - 执行 seed。
    - 创建 `storage/uploads`。
    - 输出访问地址和默认账号。
-3. `pnpm doctor`
+3. `pnpm doctor`，可作为后续增强
    - 检查 Node、pnpm、PostgreSQL 连接、migration 状态、默认存储、默认邮件账号、密钥是否仍为默认值。
    - 不修改数据，只输出 ready / warning / failed。
-4. `GET /api/ready`
+4. `GET /api/ready`，可作为后续增强
    - 区分应用进程存活和系统可用。
    - 至少检查 DB、migration、默认存储、默认管理员、默认角色。
-5. README 改成 5 分钟启动路径
+5. `docker-compose.yml`，可选
+   - 提供 PostgreSQL。
+   - 提供 Mailpit 或类似本地 SMTP 测试服务。
+   - 默认数据库、用户、端口与 `.env.example` 一致。
+   - 不作为源码启动的硬依赖。
+6. README 改成 5 分钟启动路径
    - 主路径只保留最少命令。
    - 危险命令如 `pnpm db:reset` 下沉到“重置开发环境”。
 
 验收：
 
 ```bash
-pnpm setup
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 curl http://localhost:3000/api/health
-curl http://localhost:3000/api/ready
 ```
 
 ### P1：配置安全和默认值
@@ -151,10 +153,11 @@ curl http://localhost:3000/api/ready
 
 ## 4. 推荐实施顺序
 
-1. 先做 P0：`docker-compose.yml`、`pnpm setup`、`pnpm doctor`、`/api/ready`、README 快速启动。
+1. 先做 P0：启动文档、README 快速启动、`db:reset` 风险说明。
 2. 再做 P1：密钥、默认管理员密码、生产启动保护。
-3. 然后做 P2：新增业务模块模板和示例模块整理。
-4. 最后做 P3：Dockerfile、部署文档、备份说明。
+3. 再补 P0 增强：`pnpm setup`、`pnpm doctor`、`/api/ready`、可选 `docker-compose.yml`。
+4. 然后做 P2：新增业务模块模板和示例模块整理。
+5. 最后做 P3：Dockerfile、部署文档、备份说明。
 
 ## 5. 完成度估算
 
