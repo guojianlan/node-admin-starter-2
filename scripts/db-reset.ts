@@ -1,3 +1,4 @@
+import "../src/server/load-dotenv";
 import { closeDb, sql } from "../src/server/db";
 import { seedDatabase } from "../src/server/db/seed/seed";
 

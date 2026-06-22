@@ -11,7 +11,7 @@
 距离生产级还有五类关键缺口：
 
 1. 安全默认值：生产密钥、管理员初始密码、CORS、上传安全、token/session 策略。
-2. 可诊断性：`pnpm doctor`、`GET /api/ready`、结构化日志、操作日志、错误追踪。
+2. 可诊断性：`pnpm run doctor`、`GET /api/ready`、结构化日志、操作日志、错误追踪。
 3. 发布治理：非破坏性 E2E、CI、迁移策略、备份恢复、部署文档。
 4. 开发效率：业务模块模板、CRUD generator、OpenAPI/API 文档、权限 seed 自动化。
 5. 框架边界：插件/后置模块边界、示例模块整理、未来多租户/任务调度/导入导出的取舍。
@@ -24,7 +24,7 @@
 | 权限         | `sys_rule` + token abilities + `ability()` + `AuthButton`  | 可用，需补操作日志                        |
 | 数据权限     | `data_scope` + `sys_role_dept` + service 过滤              | 可用，需补更多业务模板示例                |
 | CRUD 工程化  | Drizzle table + Zod + CRUD factory + route check           | 可用，需补 generator                      |
-| 启动         | 源码启动文档已完成                                         | 可用，需补 setup/doctor/ready             |
+| 启动         | 源码启动文档、doctor、ready 已完成第一版                   | 可用，需补 setup                          |
 | 数据库       | PostgreSQL-first、migration、seed                          | 可用，需补发布迁移规范和备份恢复          |
 | 安全         | 密码 hash、token hash、密钥加密、系统数据保护              | 基础可用，生产默认值需强化                |
 | 文件         | 本地/S3-compatible、策略、元数据、预览                     | 基础可用，需补病毒扫描/内容安全策略可选项 |
@@ -130,11 +130,11 @@ pnpm test
    - 检查 migration 表。
    - 检查默认管理员、默认角色、默认存储。
    - 返回 ready/warning/failed 明细。
-2. `pnpm doctor`
+2. `pnpm run doctor` / `pnpm admin:doctor`
    - 不修改数据。
    - 检查 Node、pnpm、DATABASE_URL、migration、seed、默认存储、默认邮件账号、密钥风险。
 3. 结构化日志
-   - 引入 Pino 或同等级结构化日志库。
+   - Pino 已引入。
    - request id、user id、path、status、duration。
    - 生产环境输出 JSON。
 4. 操作日志
@@ -148,11 +148,14 @@ pnpm test
 验收：
 
 ```bash
-pnpm doctor
+pnpm run doctor
+pnpm admin:doctor
 curl http://localhost:3000/api/health
 curl http://localhost:3000/api/ready
 pnpm test
 ```
+
+说明：`pnpm doctor` 是 pnpm 内置命令，不会执行项目脚本，因此本项目使用 `pnpm run doctor` 和 `pnpm admin:doctor`。
 
 ### P2：发布和验证治理
 
@@ -255,8 +258,8 @@ CI 必须能在干净环境跑通。
 
 | 能力               | 建议                                            |
 | ------------------ | ----------------------------------------------- |
-| 结构化日志         | Pino                                            |
-| readiness          | Hono `/api/ready`                               |
+| 结构化日志         | Pino 已完成第一版                               |
+| readiness          | Hono `/api/ready` 已完成第一版                  |
 | 环境校验           | Zod env schema                                  |
 | API 文档           | OpenAPI，优先从 Zod/route manifest 生成         |
 | CI                 | GitHub Actions + PostgreSQL service             |

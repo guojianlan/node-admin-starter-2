@@ -1,11 +1,12 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getAdminBaseEnv } from "@/server/env";
 import * as schema from "./schema";
 
-const defaultDatabaseUrl = "postgres://admin_base:admin_base@localhost:5432/admin_base";
+const env = getAdminBaseEnv();
 
-export const sql = postgres(process.env.DATABASE_URL ?? defaultDatabaseUrl, {
-  max: Number(process.env.DATABASE_POOL_SIZE ?? 10),
+export const sql = postgres(env.databaseUrl, {
+  max: env.databasePoolSize,
   onnotice: () => {},
   prepare: false,
 });

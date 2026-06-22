@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { type DbClient, sqlite } from "@/server/db";
+import { getAdminBaseEnv } from "@/server/env";
 import { runMigrations } from "../migrations";
 import { seedDicts, seedRules } from "./default-data";
 
@@ -40,7 +41,8 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
   await runMigrations();
 
   const now = nowIso();
-  const passwordHash = await bcrypt.hash("123456", 10);
+  const adminPasswordHash = await bcrypt.hash(getAdminBaseEnv().adminBaseAdminPassword, 10);
+  const demoPasswordHash = await bcrypt.hash("123456", 10);
 
   await dbClient
     .prepare(
@@ -62,9 +64,7 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
     )
     .run(now, now);
 
-  await dbClient
-    .prepare("UPDATE sys_dept SET is_system = true WHERE id = 1")
-    .run();
+  await dbClient.prepare("UPDATE sys_dept SET is_system = true WHERE id = 1").run();
 
   await dbClient
     .prepare(
@@ -74,7 +74,7 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
         (1, 'admin', ?, '超级管理员', 2, 'admin@xinadmin.test', '13800000000', 1, 1, true, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(passwordHash, now, now);
+    .run(adminPasswordHash, now, now);
 
   await dbClient
     .prepare(
@@ -84,11 +84,9 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
         (2, 'demo', ?, '演示用户', 1, 'demo@xinadmin.test', '13900000000', 2, 1, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(passwordHash, now, now);
+    .run(demoPasswordHash, now, now);
 
-  await dbClient
-    .prepare("UPDATE sys_user SET is_system = true WHERE id = 1")
-    .run();
+  await dbClient.prepare("UPDATE sys_user SET is_system = true WHERE id = 1").run();
 
   await dbClient
     .prepare(
@@ -149,7 +147,9 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
   }
   const seedRuleIds = seedRules.map((rule) => rule.id);
   await dbClient
-    .prepare(`UPDATE sys_rule SET is_system = true WHERE id IN (${seedRuleIds.map(() => "?").join(", ")})`)
+    .prepare(
+      `UPDATE sys_rule SET is_system = true WHERE id IN (${seedRuleIds.map(() => "?").join(", ")})`,
+    )
     .run(...seedRuleIds);
 
   const insertRoleRule = dbClient.prepare(
@@ -200,12 +200,8 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
        ON CONFLICT DO NOTHING`,
     )
     .run(now, now);
-  await dbClient
-    .prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2)")
-    .run();
-  await dbClient
-    .prepare("UPDATE sys_config_group SET name = '文件策略' WHERE code = 'file'")
-    .run();
+  await dbClient.prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2)").run();
+  await dbClient.prepare("UPDATE sys_config_group SET name = '文件策略' WHERE code = 'file'").run();
 
   const insertConfig = dbClient.prepare(
     `INSERT INTO sys_config_items
@@ -309,7 +305,9 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       now,
       now,
     );
-    await dbClient.prepare("UPDATE sys_config_items SET is_system = true WHERE key = ?").run(item.key);
+    await dbClient
+      .prepare("UPDATE sys_config_items SET is_system = true WHERE key = ?")
+      .run(item.key);
   }
 
   await dbClient
@@ -339,9 +337,7 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
        WHERE id = 1`,
     )
     .run();
-  await dbClient
-    .prepare("DELETE FROM sys_config_items WHERE key = 'file.default_storage'")
-    .run();
+  await dbClient.prepare("DELETE FROM sys_config_items WHERE key = 'file.default_storage'").run();
 
   await dbClient
     .prepare(

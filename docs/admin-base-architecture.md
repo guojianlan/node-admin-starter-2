@@ -20,6 +20,7 @@
 | 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                      |
 | 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                   |
 | 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                      |
+| 日志          | Pino                                        | 结构化请求日志、错误日志、request id                     |
 | 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                 |
 | 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                     |
 | 单测          | Vitest 4                                    | API、service、CRUD、权限测试                             |
@@ -30,7 +31,6 @@
 
 - Redis、队列、定时任务。
 - OpenAPI/Swagger 文档生成。
-- Pino 或其他结构化日志库。
 - Dockerfile、docker-compose、CI 配置。
 - 多租户和完整代码生成器。
 
@@ -84,7 +84,7 @@ flowchart TD
 | `src/platform/**`              | 平台适配层，例如 navigation                            |
 | `src/router/route-manifest.ts` | 前端可渲染页面清单和路由权限声明                       |
 | `src/stores/**`                | Zustand 全局状态                                       |
-| `src/server/app.ts`            | Hono app 入口、全局 middleware、health                 |
+| `src/server/app.ts`            | Hono app 入口、全局 middleware、health、ready          |
 | `src/server/routes/**`         | API route，系统模块入口                                |
 | `src/server/crud/**`           | CRUD factory、typed list query、权限 meta registry     |
 | `src/server/services/**`       | 认证、数据权限、存储、邮件、保护记录等业务服务         |
@@ -252,6 +252,7 @@ CRUD factory 当前能力：
 常规检查：
 
 ```bash
+pnpm run doctor
 pnpm typecheck
 pnpm lint
 pnpm test
@@ -266,6 +267,7 @@ pnpm db:migrate
 pnpm db:seed
 pnpm dev
 curl http://localhost:3000/api/health
+curl http://localhost:3000/api/ready
 ```
 
 注意：

@@ -72,6 +72,8 @@ pnpm dev                 # 启动 Next + Hono
 pnpm db:migrate          # 执行 PostgreSQL 迁移
 pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置、存储、邮件
 pnpm db:reset            # 危险：清空 PostgreSQL public schema 并重新 seed，仅开发重置使用
+pnpm run doctor          # 环境和基础数据自检；pnpm doctor 是 pnpm 内置命令，不会执行项目脚本
+pnpm admin:doctor        # 同上，提供一个不与 pnpm 内置命令冲突的别名
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
 pnpm lint                # ESLint
 pnpm typecheck           # TypeScript
@@ -197,6 +199,8 @@ postgres://admin_base:admin_base@localhost:5432/admin_base_test
 
 ```text
 DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
+ADMIN_BASE_SECRET_KEY=change-me-admin-base-secret
+ADMIN_BASE_ADMIN_PASSWORD=123456
 ```
 
 本地上传文件：

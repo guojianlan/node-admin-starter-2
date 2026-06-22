@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { buildTree } from "@/lib/tree";
 import { nowIso, sqlite } from "@/server/db";
 import type { AdminUserContext } from "@/server/context";
+import { getAdminBaseEnv } from "@/server/env";
 
 type UserRow = {
   id: number;
@@ -234,7 +235,7 @@ export async function login(input: LoginInput) {
   const tokenHash = hashToken(token);
   const access = await getUserAccess(user.id);
   const now = nowIso();
-  const ttlDays = Number(process.env.ADMIN_BASE_TOKEN_TTL_DAYS ?? 7);
+  const ttlDays = getAdminBaseEnv().adminBaseTokenTtlDays;
   const expiresAt = input.remember
     ? null
     : new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString();

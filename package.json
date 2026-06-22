@@ -12,6 +12,8 @@
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:seed": "tsx scripts/db-seed.ts",
     "db:reset": "tsx scripts/db-reset.ts",
+    "doctor": "tsx scripts/doctor.ts",
+    "admin:doctor": "tsx scripts/doctor.ts",
     "admin:check-routes": "tsx scripts/admin-check-routes.ts",
     "test": "vitest run",
     "e2e": "playwright test"
@@ -30,6 +32,7 @@
     "hono": "^4.10.8",
     "next": "^16.0.7",
     "nodemailer": "^9.0.1",
+    "pino": "^10.3.1",
     "postgres": "^3.4.9",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",

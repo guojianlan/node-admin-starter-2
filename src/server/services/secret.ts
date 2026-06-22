@@ -1,12 +1,10 @@
 import crypto from "node:crypto";
+import { getAdminBaseEnv } from "@/server/env";
 
 const ALGORITHM = "aes-256-gcm";
 
 function getKey() {
-  return crypto
-    .createHash("sha256")
-    .update(process.env.ADMIN_BASE_SECRET_KEY ?? "admin-base-development-secret")
-    .digest();
+  return crypto.createHash("sha256").update(getAdminBaseEnv().adminBaseSecretKey).digest();
 }
 
 export function encryptSecret(value?: string | null) {

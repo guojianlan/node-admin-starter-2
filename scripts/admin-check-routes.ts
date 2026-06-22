@@ -1,3 +1,4 @@
+import "../src/server/load-dotenv";
 import { adminRoutes } from "../src/router/route-manifest";
 import "../src/server/routes/system/index";
 import { closeDb, sqlite } from "../src/server/db";

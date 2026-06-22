@@ -43,14 +43,18 @@ cp .env.example .env.local
 ```env
 DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
 ADMIN_BASE_SECRET_KEY=change-me-admin-base-secret
+ADMIN_BASE_ADMIN_PASSWORD=123456
 ADMIN_BASE_TOKEN_TTL_DAYS=7
+LOG_LEVEL=info
 ```
 
 说明：
 
 - `DATABASE_URL` 是后台连接 PostgreSQL 的唯一入口。
 - `ADMIN_BASE_SECRET_KEY` 用于加密邮件密码、S3 Secret 等敏感配置；生产环境必须改成随机长密钥。
+- `ADMIN_BASE_ADMIN_PASSWORD` 只在首次 seed 创建 `admin` 时生效，重复执行 seed 不会覆盖已存在管理员密码；生产环境必须显式配置，不能使用 `123456`。
 - `NEXT_PUBLIC_API_BASE_URL` 同源部署时保持空值即可。
+- `LOG_LEVEL` 控制 Pino 结构化日志级别，支持 `fatal`、`error`、`warn`、`info`、`debug`、`trace`、`silent`。
 - 邮件 SMTP、存储配置、文件策略不建议写死到 `.env`，它们已经有后台配置页面。
 
 ## 4. 初始化并启动
@@ -94,6 +98,8 @@ admin / 123456
 pnpm dev                 # 启动 Next + Hono
 pnpm db:migrate          # 执行 PostgreSQL 迁移，不清空数据
 pnpm db:seed             # 写入或补齐默认数据，保留已有业务配置
+pnpm run doctor          # 环境和基础数据自检；pnpm doctor 是 pnpm 内置命令，不会执行项目脚本
+pnpm admin:doctor        # 同上，提供一个不与 pnpm 内置命令冲突的别名
 pnpm admin:check-routes  # 检查前端路由、数据库菜单权限、CRUD 权限配置是否一致
 pnpm typecheck           # TypeScript 检查
 pnpm lint                # ESLint
@@ -141,6 +147,13 @@ pnpm dev
 - 确认执行过 `pnpm db:seed`。
 - 默认账号是 `admin / 123456`。
 - 如果修改过密码但忘记了，可以在开发环境重置数据库，或后续补专门的管理员密码重置脚本。
+
+自检失败：
+
+- 使用 `pnpm run doctor` 或 `pnpm admin:doctor`，不要使用 `pnpm doctor`。
+- `pnpm doctor` 是 pnpm 自己的内置命令，不会执行本项目的自检脚本。
+- `GET /api/health` 只说明进程存活。
+- `GET /api/ready` 会检查 DB、migration、默认管理员、超级管理员角色和默认存储。
 
 上传失败：
 

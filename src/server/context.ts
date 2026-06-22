@@ -12,4 +12,5 @@ export type HonoVariables = {
   user: AdminUserContext;
   abilities: string[];
   tokenHash: string;
+  requestId: string;
 };

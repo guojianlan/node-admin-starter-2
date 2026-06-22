@@ -67,10 +67,10 @@ Docker 可以作为可选能力，用来启动 PostgreSQL、Mailpit 这类本地
    - 执行 seed。
    - 创建 `storage/uploads`。
    - 输出访问地址和默认账号。
-3. `pnpm doctor`，可作为后续增强
+3. `pnpm run doctor` / `pnpm admin:doctor`，已完成
    - 检查 Node、pnpm、PostgreSQL 连接、migration 状态、默认存储、默认邮件账号、密钥是否仍为默认值。
    - 不修改数据，只输出 ready / warning / failed。
-4. `GET /api/ready`，可作为后续增强
+4. `GET /api/ready`，已完成
    - 区分应用进程存活和系统可用。
    - 至少检查 DB、migration、默认存储、默认管理员、默认角色。
 5. `docker-compose.yml`，可选
@@ -157,7 +157,7 @@ curl http://localhost:3000/api/health
 
 1. 先做 P0：启动文档、README 快速启动、`db:reset` 风险说明。
 2. 再做 P1：密钥、默认管理员密码、生产启动保护。
-3. 再补 P0 增强：`pnpm setup`、`pnpm doctor`、`/api/ready`、可选 `docker-compose.yml`。
+3. 再补 P0 增强：`pnpm setup`、可选 `docker-compose.yml`。
 4. 然后做 P2：新增业务模块模板和示例模块整理。
 5. 最后做 P3：Dockerfile、部署文档、备份说明。
 
@@ -171,7 +171,7 @@ curl http://localhost:3000/api/health
 按“快速开发框架交付体验”看，当前大约完成 55%：
 
 - 核心代码和功能完成度高。
-- 启动交付、依赖编排、配置校验、readiness、生产安全默认值还没完成。
+- 启动交付和依赖编排还没完成；配置校验、readiness、生产安全默认值已经完成第一版。
 
 下一轮如果完成 P0 + P1，就可以把“只配置几样东西即可启动”的体验推进到 75%-80%。再补 P2 之后，才算真正适合拿去快速开新业务模块。
 
