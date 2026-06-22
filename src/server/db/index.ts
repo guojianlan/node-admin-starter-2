@@ -49,6 +49,7 @@ const aliasMap: Record<string, string> = {
   optionsjson: "optionsJson",
   replyto: "replyTo",
   roleids: "roleIds",
+  rolenames: "roleNames",
   ruleids: "ruleIds",
   secretkeyencrypted: "secretKeyEncrypted",
   storageid: "storageId",

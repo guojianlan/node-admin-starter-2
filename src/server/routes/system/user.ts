@@ -51,6 +51,14 @@ function parseRoleIds(value: unknown) {
     .filter((item) => Number.isFinite(item));
 }
 
+function parseRoleNames(value: unknown) {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 async function assertUsernameAvailable(dbClient: DbClient, username: string, currentId?: number) {
   const row = (await dbClient
     .prepare(
@@ -89,6 +97,13 @@ const userCrud = createCrudRoutes({
       roleIds: drizzleSql<string | null>`(SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = ${sysUser.id})`.as(
         "roleIds",
       ),
+      roleNames: drizzleSql<string | null>`(
+        SELECT STRING_AGG(r.name, ',')
+        FROM sys_user_role ur
+        LEFT JOIN sys_role r ON r.id = ur.role_id
+        WHERE ur.user_id = ${sysUser.id}
+          AND r.deleted_at IS NULL
+      )`.as("roleNames"),
     },
     joins: [
       {
@@ -121,6 +136,7 @@ const userCrud = createCrudRoutes({
       data: page.data.map((item) => ({
         ...item,
         roleIds: parseRoleIds(item.roleIds),
+        roleNames: parseRoleNames(item.roleNames),
       })),
     }),
     beforeCreate: async (ctx, values) => {

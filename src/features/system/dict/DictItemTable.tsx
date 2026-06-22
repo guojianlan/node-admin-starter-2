@@ -142,6 +142,7 @@ export function DictItemTable({ dict, showTitle = true, urlStatePrefix }: DictIt
       urlStatePrefix={urlStatePrefix}
       tableProps={{ size: "small", bordered: true }}
       beforeSubmit={(values) => ({ ...values, dictId: dict.id })}
+      queryKeyDeps={[dict.id]}
       handleRequest={async (params) =>
         request<PageResult<DictItemRecord>>(
           `/api/system/dict/item${buildQueryString({ ...params, dictId: dict.id })}`,

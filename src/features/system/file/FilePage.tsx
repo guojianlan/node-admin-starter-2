@@ -818,6 +818,7 @@ export function FilePage() {
               </Dropdown>
             )}
             handleRequest={loadFileList}
+            queryKeyDeps={[selectedGroupId]}
           />
         </Col>
       </Row>

@@ -1,10 +1,11 @@
 "use client";
 
 import { Avatar, Tag } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
 import { request } from "@/lib/request";
@@ -28,20 +29,64 @@ type UserRecord = {
   status: number;
   isSystem?: boolean;
   roleIds?: number[];
+  roleNames?: string[];
   createdAt: string;
   updatedAt: string;
 };
 
 export function UserPage() {
-  const [roleOptions, setRoleOptions] = useState<FieldOption[]>([]);
-  const [deptOptions, setDeptOptions] = useState<FieldOption[]>([]);
+  const roleOptionsQuery = useQuery({
+    queryKey: ["system-user", "role-options"],
+    queryFn: () => request<FieldOption[]>("/api/system/user/role", { silent: true }),
+    enabled: false,
+    staleTime: 5 * 60_000,
+  });
+  const deptOptionsQuery = useQuery({
+    queryKey: ["system-user", "dept-options"],
+    queryFn: () =>
+      request<Array<FieldOption & { parentId?: number }>>("/api/system/user/dept", {
+        silent: true,
+      }),
+    enabled: false,
+    staleTime: 5 * 60_000,
+  });
 
-  useEffect(() => {
-    void request<FieldOption[]>("/api/system/user/role", { silent: true }).then(setRoleOptions);
-    void request<Array<FieldOption & { parentId?: number }>>("/api/system/user/dept", {
-      silent: true,
-    }).then(setDeptOptions);
-  }, []);
+  const roleOptions = roleOptionsQuery.data ?? [];
+  const deptOptions = deptOptionsQuery.data ?? [];
+
+  const ensureRoleOptions = useCallback(() => {
+    if (!roleOptionsQuery.data && !roleOptionsQuery.isFetching) void roleOptionsQuery.refetch();
+  }, [roleOptionsQuery]);
+
+  const ensureDeptOptions = useCallback(() => {
+    if (!deptOptionsQuery.data && !deptOptionsQuery.isFetching) void deptOptionsQuery.refetch();
+  }, [deptOptionsQuery]);
+
+  const ensureFormOptions = useCallback(() => {
+    ensureRoleOptions();
+    ensureDeptOptions();
+  }, [ensureDeptOptions, ensureRoleOptions]);
+
+  const roleFieldProps = {
+    loading: roleOptionsQuery.isFetching,
+    onOpenChange: (open: boolean) => {
+      if (open) ensureRoleOptions();
+    },
+  };
+  const deptFieldProps = {
+    loading: deptOptionsQuery.isFetching,
+    onOpenChange: (open: boolean) => {
+      if (open) ensureDeptOptions();
+    },
+  };
+
+  function getRoleLabel(record: UserRecord, roleId: number, index: number) {
+    return (
+      roleOptions.find((item) => item.value === roleId)?.label ??
+      record.roleNames?.[index] ??
+      roleId
+    );
+  }
 
   const columns: AdminDataTableColumn<UserRecord>[] = [
     {
@@ -82,13 +127,13 @@ export function UserPage() {
       align: "center",
       width: 112,
       hideInSearch: true,
-      fieldProps: { mode: "multiple" },
-      render: (value) => {
+      fieldProps: { mode: "multiple", ...roleFieldProps },
+      render: (value, record) => {
         const ids = Array.isArray(value) ? value : [];
         if (!ids.length) return "-";
-        return ids.map((roleId) => (
+        return ids.map((roleId, index) => (
           <Tag color="magenta" key={roleId}>
-            {roleOptions.find((item) => item.value === roleId)?.label ?? roleId}
+            {getRoleLabel(record, Number(roleId), index)}
           </Tag>
         ));
       },
@@ -98,6 +143,7 @@ export function UserPage() {
       dataIndex: "deptId",
       valueType: "select",
       options: deptOptions,
+      fieldProps: deptFieldProps,
       align: "center",
       width: 100,
       render: (_, record) => <Tag color="volcano">{record.deptName ?? "-"}</Tag>,
@@ -160,6 +206,9 @@ export function UserPage() {
         createTitle="新增用户"
         updateTitle="编辑用户"
         canDelete={(record) => !record.isSystem}
+        onFormOpenChange={(open) => {
+          if (open) ensureFormOptions();
+        }}
       />
     </PageScaffold>
   );

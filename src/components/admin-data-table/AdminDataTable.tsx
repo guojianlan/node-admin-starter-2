@@ -11,11 +11,17 @@ import {
   SearchOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Button, Checkbox, Divider, Dropdown, Input, Popover, Space, Table, Tooltip } from "antd";
 import type { TableProps } from "antd";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import type { SorterResult, TableCurrentDataSource } from "antd/es/table/interface";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AuthButton } from "@/components/auth-button/AuthButton";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
 import { AdminSearchForm } from "@/components/admin-search-form/AdminSearchForm";
@@ -61,7 +67,14 @@ type AdminDataTableProps<T extends object> = {
     mode: "create" | "update",
   ) => Record<string, unknown>;
   handleRequest?: (params: Record<string, unknown>) => Promise<PageResult<T>>;
+  queryKeyDeps?: readonly unknown[];
+  onFormOpenChange?: (
+    open: boolean,
+    context: { mode: "create" | "update"; record: T | null },
+  ) => void;
 };
+
+const emptyQueryKeyDeps: readonly unknown[] = [];
 
 function getRowId<T extends object>(record: T, rowKey: keyof T & string) {
   return String(record[rowKey]);
@@ -115,12 +128,10 @@ export function AdminDataTable<T extends object>({
   operateRender,
   beforeSubmit,
   handleRequest,
+  queryKeyDeps = emptyQueryKeyDeps,
+  onFormOpenChange,
 }: AdminDataTableProps<T>) {
-  const [data, setData] = useState<T[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
+  const queryClient = useQueryClient();
   const [editingRecord, setEditingRecord] = useState<T | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "update">("create");
@@ -145,26 +156,73 @@ export function AdminDataTable<T extends object>({
   const keywordText = draftKeyword ?? state.keyword ?? "";
   const shouldShowSearch = showSearchForm && (searchOpen || hasActiveSearch);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const page = handleRequest
-        ? await handleRequest(state.query)
-        : await request<PageResult<T>>(`${api}${buildQueryString(state.query)}`);
-      setData(page.data);
-      setTotal(page.total);
-    } finally {
-      setLoading(false);
-    }
-  }, [api, handleRequest, state.query]);
+  const tableQueryKey = useMemo(
+    () => ["admin-data-table", api, state.query, ...queryKeyDeps] as const,
+    [api, queryKeyDeps, state.query],
+  );
 
-  useEffect(() => {
-    void Promise.resolve().then(loadData);
-  }, [loadData, reloadKey]);
+  const tableQuery = useQuery({
+    queryKey: tableQueryKey,
+    queryFn: () =>
+      handleRequest
+        ? handleRequest(state.query)
+        : request<PageResult<T>>(`${api}${buildQueryString(state.query)}`),
+    placeholderData: keepPreviousData,
+  });
+
+  const data = tableQuery.data?.data ?? [];
+  const total = tableQuery.data?.total ?? 0;
+  const loading = tableQuery.isLoading || tableQuery.isFetching;
 
   const reload = useCallback(() => {
-    setReloadKey((value) => value + 1);
-  }, []);
+    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
+  }, [api, queryClient]);
+
+  const closeForm = useCallback(() => {
+    setFormOpen(false);
+    setEditingRecord(null);
+    onFormOpenChange?.(false, { mode: formMode, record: editingRecord });
+  }, [editingRecord, formMode, onFormOpenChange]);
+
+  const openForm = useCallback(
+    (mode: "create" | "update", record: T | null) => {
+      setEditingRecord(record);
+      setFormMode(mode);
+      setFormOpen(true);
+      onFormOpenChange?.(true, { mode, record });
+    },
+    [onFormOpenChange],
+  );
+
+  const deleteMutation = useMutation({
+    mutationFn: (record: T) => request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      feedback.success("删除成功");
+      void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (values: Record<string, unknown>) => {
+      const payload = beforeSubmit ? beforeSubmit(values, formMode) : values;
+      if (formMode === "create") {
+        await request(api, { method: "POST", body: payload });
+        return "创建成功";
+      }
+      if (editingRecord) {
+        await request(`${api}/${getRowId(editingRecord, rowKey)}`, {
+          method: "PUT",
+          body: payload,
+        });
+      }
+      return "更新成功";
+    },
+    onSuccess: (message) => {
+      feedback.success(message);
+      closeForm();
+      void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
+    },
+  });
 
   const tableColumns = useMemo(() => {
     const visibleColumns: ColumnsType<T> = columns
@@ -194,11 +252,7 @@ export function AdminDataTable<T extends object>({
                   type="primary"
                   size="small"
                   icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditingRecord(record);
-                    setFormMode("update");
-                    setFormOpen(true);
-                  }}
+                  onClick={() => openForm("update", record)}
                 />
               </Tooltip>
             </AuthButton>
@@ -214,12 +268,7 @@ export function AdminDataTable<T extends object>({
                   icon={<DeleteOutlined />}
                   onClick={() => {
                     if (!window.confirm("确认删除当前记录？")) return;
-                    void request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }).then(
-                      () => {
-                        feedback.success("删除成功");
-                        reload();
-                      },
-                    );
+                    deleteMutation.mutate(record);
                   }}
                 />
               </Tooltip>
@@ -232,39 +281,21 @@ export function AdminDataTable<T extends object>({
     return visibleColumns;
   }, [
     accessName,
-    api,
     activeColumnKeys,
     columns,
     canDelete,
     canUpdate,
+    deleteMutation,
     enableActions,
     enableDelete,
     enableUpdate,
+    openForm,
     operateRender,
     reload,
-    rowKey,
   ]);
 
   async function handleFinish(values: Record<string, unknown>) {
-    setFormLoading(true);
-    try {
-      const payload = beforeSubmit ? beforeSubmit(values, formMode) : values;
-      if (formMode === "create") {
-        await request(api, { method: "POST", body: payload });
-        feedback.success("创建成功");
-      } else if (editingRecord) {
-        await request(`${api}/${getRowId(editingRecord, rowKey)}`, {
-          method: "PUT",
-          body: payload,
-        });
-        feedback.success("更新成功");
-      }
-      setFormOpen(false);
-      setEditingRecord(null);
-      reload();
-    } finally {
-      setFormLoading(false);
-    }
+    await saveMutation.mutateAsync(values);
   }
 
   function handleTableChange(
@@ -356,11 +387,7 @@ export function AdminDataTable<T extends object>({
                 data-testid="admin-create-button"
                 type="primary"
                 icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditingRecord(null);
-                  setFormMode("create");
-                  setFormOpen(true);
-                }}
+                onClick={() => openForm("create", null)}
               >
                 新增
               </Button>
@@ -454,11 +481,8 @@ export function AdminDataTable<T extends object>({
         title={formMode === "create" ? createTitle : updateTitle}
         columns={columns}
         initialValues={editingRecord}
-        loading={formLoading}
-        onCancel={() => {
-          setFormOpen(false);
-          setEditingRecord(null);
-        }}
+        loading={saveMutation.isPending}
+        onCancel={closeForm}
         onFinish={handleFinish}
       />
     </div>
