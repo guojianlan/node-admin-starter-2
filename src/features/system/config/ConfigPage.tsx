@@ -23,10 +23,12 @@ import {
   Space,
   Spin,
   Switch,
+  Tag,
   Typography,
   type FormInstance,
 } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
 import { AdminFieldRenderer } from "@/components/admin-fields/AdminFieldRenderer";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
@@ -68,6 +70,9 @@ type ConfigOption = {
   value: ConfigOptionValue;
   disabled?: boolean;
 };
+
+const emptyConfigGroups: ConfigGroupRecord[] = [];
+const emptyConfigItems: ConfigItemRecord[] = [];
 
 const OPTION_JSON_EXAMPLE = `[
   { "label": "启用", "value": "1" },
@@ -333,79 +338,135 @@ function ConfigPropsJsonField({
 }
 
 export function ConfigPage() {
+  const queryClient = useQueryClient();
   const [form] = Form.useForm();
-  const [groups, setGroups] = useState<ConfigGroupRecord[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number>();
-  const [items, setItems] = useState<ConfigItemRecord[]>([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
-  const [itemsLoading, setItemsLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupModalMode, setGroupModalMode] = useState<"create" | "update">("create");
-  const [groupModalLoading, setGroupModalLoading] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ConfigGroupRecord | null>(null);
   const [itemModalOpen, setItemModalOpen] = useState(false);
   const [itemModalMode, setItemModalMode] = useState<"create" | "update">("create");
-  const [itemModalLoading, setItemModalLoading] = useState(false);
   const [editingItem, setEditingItem] = useState<ConfigItemRecord | null>(null);
 
+  const groupsQuery = useQuery({
+    queryKey: ["system-config-groups"],
+    queryFn: () =>
+      request<PageResult<ConfigGroupRecord>>("/api/system/config/group?pageSize=200", {
+        silent: true,
+      }),
+  });
+  const groups = groupsQuery.data?.data ?? emptyConfigGroups;
+  const activeGroupId =
+    selectedGroupId && groups.some((group) => group.id === selectedGroupId)
+      ? selectedGroupId
+      : groups[0]?.id;
+
   const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId),
-    [groups, selectedGroupId],
+    () => groups.find((group) => group.id === activeGroupId),
+    [activeGroupId, groups],
   );
 
-  const loadGroups = useCallback(async (preferredGroupId?: number) => {
-    setGroupsLoading(true);
-    try {
-      const result = await request<PageResult<ConfigGroupRecord>>(
-        "/api/system/config/group?pageSize=200",
-        {
-          silent: true,
-        },
-      );
-      setGroups(result.data);
-      const activeGroupId =
-        preferredGroupId && result.data.some((group) => group.id === preferredGroupId)
-          ? preferredGroupId
-          : result.data[0]?.id;
-      setSelectedGroupId(activeGroupId);
-    } finally {
-      setGroupsLoading(false);
-    }
-  }, []);
+  const itemsQuery = useQuery({
+    queryKey: ["system-config-items", activeGroupId],
+    enabled: Boolean(activeGroupId),
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      request<PageResult<ConfigItemRecord>>(
+        `/api/system/config/items?groupId=${activeGroupId}&pageSize=200`,
+        { silent: true },
+      ),
+  });
+  const items = itemsQuery.data?.data ?? emptyConfigItems;
 
-  const loadItems = useCallback(
-    async (groupId?: number) => {
-      if (!groupId) {
-        setItems([]);
-        return;
+  useEffect(() => {
+    const initialValues: Record<string, unknown> = {};
+    items.forEach((item) => {
+      initialValues[`item_${item.id}`] = normalizeInitialValue(item);
+    });
+    form.setFieldsValue(initialValues);
+  }, [form, items]);
+
+  const saveGroupMutation = useMutation({
+    mutationFn: (values: Record<string, unknown>) => {
+      if (groupModalMode === "create") {
+        return request("/api/system/config/group", { method: "POST", body: values });
       }
-      setItemsLoading(true);
-      try {
-        const result = await request<PageResult<ConfigItemRecord>>(
-          `/api/system/config/items?groupId=${groupId}&pageSize=200`,
-          { silent: true },
-        );
-        setItems(result.data);
-        const initialValues: Record<string, unknown> = {};
-        result.data.forEach((item) => {
-          initialValues[`item_${item.id}`] = normalizeInitialValue(item);
-        });
-        form.setFieldsValue(initialValues);
-      } finally {
-        setItemsLoading(false);
-      }
+      if (!editingGroup) throw new Error("配置分组不存在");
+      return request(`/api/system/config/group/${editingGroup.id}`, {
+        method: "PUT",
+        body: values,
+      });
     },
-    [form],
-  );
+    onSuccess: () => {
+      feedback.success(groupModalMode === "create" ? "创建成功" : "更新成功");
+      setGroupModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["system-config-groups"] });
+    },
+  });
 
-  useEffect(() => {
-    void Promise.resolve().then(() => loadGroups());
-  }, [loadGroups]);
+  const deleteGroupMutation = useMutation({
+    mutationFn: (groupId: number) =>
+      request(`/api/system/config/group/${groupId}`, { method: "DELETE" }),
+    onSuccess: (_, groupId) => {
+      feedback.success("删除成功");
+      if (activeGroupId === groupId) setSelectedGroupId(undefined);
+      void queryClient.invalidateQueries({ queryKey: ["system-config-groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-config-items"] });
+    },
+  });
 
-  useEffect(() => {
-    void Promise.resolve().then(() => loadItems(selectedGroupId));
-  }, [loadItems, selectedGroupId]);
+  const saveItemMutation = useMutation({
+    mutationFn: (values: Record<string, unknown>) => {
+      if (!activeGroupId) throw new Error("请先选择配置分组");
+      const type = String(values.type || "text");
+      const payload = {
+        ...values,
+        groupId: activeGroupId,
+        values: stringifyConfigValue(type, values.values),
+        optionsJson: typeof values.optionsJson === "string" ? values.optionsJson.trim() : null,
+        propsJson: typeof values.propsJson === "string" ? values.propsJson.trim() : null,
+      };
+      if (itemModalMode === "create") {
+        return request("/api/system/config/items", { method: "POST", body: payload });
+      }
+      if (!editingItem) throw new Error("配置项不存在");
+      return request(`/api/system/config/items/${editingItem.id}`, {
+        method: "PUT",
+        body: payload,
+      });
+    },
+    onSuccess: () => {
+      feedback.success(itemModalMode === "create" ? "创建成功" : "更新成功");
+      setItemModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+    },
+  });
+
+  const deleteItemMutation = useMutation({
+    mutationFn: (itemId: number) =>
+      request(`/api/system/config/items/${itemId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      feedback.success("删除成功");
+      void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+    },
+  });
+
+  const saveValuesMutation = useMutation({
+    mutationFn: () => {
+      const values = form.getFieldsValue();
+      const payload = Object.fromEntries(
+        items.map((item) => [item.key, stringifyConfigValue(item, values[`item_${item.id}`])]),
+      );
+      return request("/api/system/config/items/save", {
+        method: "PUT",
+        body: payload,
+      });
+    },
+    onSuccess: () => {
+      feedback.success("保存成功");
+      void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+    },
+  });
 
   const groupColumns: AdminDataTableColumn<ConfigGroupRecord>[] = [
     { title: "分组名称", dataIndex: "name", required: true },
@@ -476,33 +537,15 @@ export function ConfigPage() {
   }
 
   async function saveGroup(values: Record<string, unknown>) {
-    setGroupModalLoading(true);
-    try {
-      if (groupModalMode === "create") {
-        await request("/api/system/config/group", { method: "POST", body: values });
-        feedback.success("创建成功");
-      } else if (editingGroup) {
-        await request(`/api/system/config/group/${editingGroup.id}`, {
-          method: "PUT",
-          body: values,
-        });
-        feedback.success("更新成功");
-      }
-      setGroupModalOpen(false);
-      await loadGroups(editingGroup?.id);
-    } finally {
-      setGroupModalLoading(false);
-    }
+    await saveGroupMutation.mutateAsync(values);
   }
 
   async function deleteGroup(groupId: number) {
-    await request(`/api/system/config/group/${groupId}`, { method: "DELETE" });
-    feedback.success("删除成功");
-    await loadGroups();
+    await deleteGroupMutation.mutateAsync(groupId);
   }
 
   function openCreateItem() {
-    if (!selectedGroupId) {
+    if (!activeGroupId) {
       feedback.warning("请先选择配置分组");
       return;
     }
@@ -577,57 +620,17 @@ export function ConfigPage() {
   }
 
   async function saveItem(values: Record<string, unknown>) {
-    if (!selectedGroupId) return;
+    if (!activeGroupId) return;
     if (!validateItemFormValues(values)) return;
-    setItemModalLoading(true);
-    try {
-      const type = String(values.type || "text");
-      const payload = {
-        ...values,
-        groupId: selectedGroupId,
-        values: stringifyConfigValue(type, values.values),
-        optionsJson: typeof values.optionsJson === "string" ? values.optionsJson.trim() : null,
-        propsJson: typeof values.propsJson === "string" ? values.propsJson.trim() : null,
-      };
-      if (itemModalMode === "create") {
-        await request("/api/system/config/items", { method: "POST", body: payload });
-        feedback.success("创建成功");
-      } else if (editingItem) {
-        await request(`/api/system/config/items/${editingItem.id}`, {
-          method: "PUT",
-          body: payload,
-        });
-        feedback.success("更新成功");
-      }
-      setItemModalOpen(false);
-      await loadItems(selectedGroupId);
-    } finally {
-      setItemModalLoading(false);
-    }
+    await saveItemMutation.mutateAsync(values);
   }
 
   async function deleteItem(itemId: number) {
-    await request(`/api/system/config/items/${itemId}`, { method: "DELETE" });
-    feedback.success("删除成功");
-    await loadItems(selectedGroupId);
+    await deleteItemMutation.mutateAsync(itemId);
   }
 
   async function saveValues() {
-    setSaving(true);
-    try {
-      const values = form.getFieldsValue();
-      const payload = Object.fromEntries(
-        items.map((item) => [item.key, stringifyConfigValue(item, values[`item_${item.id}`])]),
-      );
-      await request("/api/system/config/items/save", {
-        method: "PUT",
-        body: payload,
-      });
-      feedback.success("保存成功");
-      await loadItems(selectedGroupId);
-    } finally {
-      setSaving(false);
-    }
+    await saveValuesMutation.mutateAsync();
   }
 
   function renderConfigControl(item: ConfigItemRecord) {
@@ -665,10 +668,10 @@ export function ConfigPage() {
       title="系统配置"
       description="管理系统配置分组与配置项，保存后用于后台基础能力读取"
     >
-      <Row gutter={[16, 16]}>
+      <Row className="system-workbench system-config-workbench" gutter={[16, 16]}>
         <Col xs={24} lg={5} xl={4}>
           <Card
-            className="system-side-card"
+            className="system-side-card system-workbench-panel"
             title={
               <Space>
                 <SettingOutlined />
@@ -680,11 +683,15 @@ export function ConfigPage() {
                 新增
               </Button>
             }
-            loading={groupsLoading}
+            loading={groupsQuery.isLoading}
           >
+            <div className="system-panel-summary">
+              <span>配置分组</span>
+              <strong>{groups.length}</strong>
+            </div>
             <Menu
               mode="inline"
-              selectedKeys={selectedGroupId ? [String(selectedGroupId)] : []}
+              selectedKeys={activeGroupId ? [String(activeGroupId)] : []}
               items={groups.map((group) => ({
                 key: String(group.id),
                 label: (
@@ -713,6 +720,7 @@ export function ConfigPage() {
                           danger
                           type="text"
                           size="small"
+                          loading={deleteGroupMutation.isPending}
                           icon={<DeleteOutlined />}
                           onClick={(event) => event.stopPropagation()}
                         />
@@ -727,15 +735,21 @@ export function ConfigPage() {
         </Col>
         <Col xs={24} lg={19} xl={20}>
           <Card
-            className="system-side-card"
-            title={selectedGroup ? `${selectedGroup.name} - 配置项` : "配置项"}
+            className="system-side-card system-workbench-panel"
+            title={
+              <div className="system-panel-title">
+                <span>{selectedGroup ? selectedGroup.name : "配置项"}</span>
+                {selectedGroup ? <Tag color="blue">{selectedGroup.code}</Tag> : null}
+              </div>
+            }
             extra={
-              selectedGroupId ? (
-                <Space>
+              activeGroupId ? (
+                <Space wrap>
                   <Button
                     type="primary"
                     icon={<SaveOutlined />}
-                    loading={saving}
+                    loading={saveValuesMutation.isPending}
+                    disabled={!items.length}
                     onClick={() => void saveValues()}
                   >
                     保存配置
@@ -747,10 +761,21 @@ export function ConfigPage() {
               ) : null
             }
           >
-            {!selectedGroupId ? (
+            {!activeGroupId ? (
               <div className="system-empty-tip">请选择左侧配置分组</div>
             ) : (
-              <Spin spinning={itemsLoading}>
+              <Spin spinning={itemsQuery.isLoading || itemsQuery.isFetching}>
+                {selectedGroup ? (
+                  <div className="system-config-context">
+                    <div>
+                      <strong>{selectedGroup.name}</strong>
+                      <span>配置项用于运行时读取，分组编码为 {selectedGroup.code}</span>
+                    </div>
+                    {selectedGroup.code === "file" ? (
+                      <Tag color="gold">文件策略，不是存储通道</Tag>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Form form={form} layout="vertical">
                   {items.length ? (
                     items.map((item, index) => (
@@ -777,6 +802,7 @@ export function ConfigPage() {
                                     danger
                                     type="text"
                                     size="small"
+                                    loading={deleteItemMutation.isPending}
                                     icon={<DeleteOutlined />}
                                   />
                                 </Popconfirm>
@@ -812,7 +838,7 @@ export function ConfigPage() {
         title={groupModalMode === "create" ? "新增配置分组" : "编辑配置分组"}
         columns={groupColumns}
         initialValues={editingGroup}
-        loading={groupModalLoading}
+        loading={saveGroupMutation.isPending}
         onCancel={() => setGroupModalOpen(false)}
         onFinish={saveGroup}
       />
@@ -822,9 +848,9 @@ export function ConfigPage() {
         title={itemModalMode === "create" ? "新增配置项" : "编辑配置项"}
         columns={itemColumns}
         initialValues={normalizeConfigItemFormValues(
-          editingItem ?? { groupId: selectedGroupId, type: "text", sort: 0, status: 1 },
+          editingItem ?? { groupId: activeGroupId, type: "text", sort: 0, status: 1 },
         )}
-        loading={itemModalLoading}
+        loading={saveItemMutation.isPending}
         onCancel={() => setItemModalOpen(false)}
         onFinish={saveItem}
       />

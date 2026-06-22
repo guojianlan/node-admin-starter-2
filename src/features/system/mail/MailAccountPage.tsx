@@ -1,7 +1,9 @@
 "use client";
 
 import { CheckCircleOutlined, MailOutlined, SendOutlined } from "@ant-design/icons";
-import { Button, Switch, Tag, Tooltip } from "antd";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button, Input, Modal, Space, Switch, Tag, Tooltip } from "antd";
+import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { request } from "@/lib/request";
@@ -34,6 +36,47 @@ const secureOptions = [
 ];
 
 export function MailAccountPage() {
+  const queryClient = useQueryClient();
+  const [testAccount, setTestAccount] = useState<MailAccountRecord | null>(null);
+  const [testTo, setTestTo] = useState("");
+
+  const invalidateMail = () => {
+    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/mail/account"] });
+  };
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: number }) =>
+      request(`/api/system/mail/account/status/${id}`, {
+        method: "PUT",
+        body: { status },
+      }),
+    onSuccess: () => {
+      feedback.success("状态更新成功");
+      invalidateMail();
+    },
+  });
+
+  const defaultMutation = useMutation({
+    mutationFn: (id: number) => request(`/api/system/mail/account/default/${id}`, { method: "PUT" }),
+    onSuccess: () => {
+      feedback.success("设置成功");
+      invalidateMail();
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: ({ id, to }: { id: number; to: string }) =>
+      request("/api/system/mail/account/test", {
+        method: "POST",
+        body: { id, to },
+      }),
+    onSuccess: () => {
+      feedback.success("发送成功");
+      setTestAccount(null);
+      setTestTo("");
+    },
+  });
+
   const columns: AdminDataTableColumn<MailAccountRecord>[] = [
     { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
     { title: "名称", dataIndex: "name", required: true, width: 140 },
@@ -84,15 +127,12 @@ export function MailAccountPage() {
       render: (value, record) => (
         <Switch
           checked={Number(value) === 1}
+          loading={statusMutation.isPending}
           checkedChildren="启用"
           unCheckedChildren="停用"
           disabled={record.isDefault}
           onChange={async (checked) => {
-            await request(`/api/system/mail/account/status/${record.id}`, {
-              method: "PUT",
-              body: { status: checked ? 1 : 0 },
-            });
-            feedback.success("状态更新成功");
+            await statusMutation.mutateAsync({ id: record.id, status: checked ? 1 : 0 });
           }}
         />
       ),
@@ -116,14 +156,10 @@ export function MailAccountPage() {
               <Button
                 size="small"
                 icon={<SendOutlined />}
-                onClick={async () => {
-                  const to = window.prompt("收件邮箱", record.fromEmail);
-                  if (!to) return;
-                  await request("/api/system/mail/account/test", {
-                    method: "POST",
-                    body: { id: record.id, to },
-                  });
-                  feedback.success("发送成功");
+                loading={testMutation.isPending && testAccount?.id === record.id}
+                onClick={() => {
+                  setTestAccount(record);
+                  setTestTo(record.fromEmail);
                 }}
               />
             </Tooltip>
@@ -133,11 +169,9 @@ export function MailAccountPage() {
                   size="small"
                   type="primary"
                   icon={<CheckCircleOutlined />}
+                  loading={defaultMutation.isPending}
                   onClick={async () => {
-                    await request(`/api/system/mail/account/default/${record.id}`, {
-                      method: "PUT",
-                    });
-                    feedback.success("设置成功");
+                    await defaultMutation.mutateAsync(record.id);
                     reload();
                   }}
                 />
@@ -150,6 +184,35 @@ export function MailAccountPage() {
           </>
         )}
       />
+      <Modal
+        title="测试发送"
+        open={Boolean(testAccount)}
+        okText="发送"
+        confirmLoading={testMutation.isPending}
+        onOk={() => {
+          if (!testAccount || !testTo.trim()) {
+            feedback.warning("请输入收件邮箱");
+            return;
+          }
+          void testMutation.mutateAsync({ id: testAccount.id, to: testTo.trim() });
+        }}
+        onCancel={() => {
+          setTestAccount(null);
+          setTestTo("");
+        }}
+      >
+        <Space direction="vertical" className="system-test-panel" size={12}>
+          <div>
+            <strong>{testAccount?.name}</strong>
+            <span>使用当前 SMTP 账号发送一封测试邮件。</span>
+          </div>
+          <Input
+            value={testTo}
+            onChange={(event) => setTestTo(event.target.value)}
+            placeholder="收件邮箱"
+          />
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }

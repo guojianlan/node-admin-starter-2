@@ -1,6 +1,7 @@
 "use client";
 
 import { ApiOutlined, CheckCircleOutlined } from "@ant-design/icons";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Switch, Tag, Tooltip } from "antd";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
@@ -36,6 +37,39 @@ const storageTypeOptions = [
 ];
 
 export function StoragePage() {
+  const queryClient = useQueryClient();
+
+  const invalidateStorage = () => {
+    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/storage"] });
+  };
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: number }) =>
+      request(`/api/system/storage/status/${id}`, {
+        method: "PUT",
+        body: { status },
+      }),
+    onSuccess: () => {
+      feedback.success("状态更新成功");
+      invalidateStorage();
+    },
+  });
+
+  const defaultMutation = useMutation({
+    mutationFn: (id: number) => request(`/api/system/storage/default/${id}`, { method: "PUT" }),
+    onSuccess: () => {
+      feedback.success("设置成功");
+      invalidateStorage();
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (id: number) => request("/api/system/storage/test", { method: "POST", body: { id } }),
+    onSuccess: () => {
+      feedback.success("测试成功");
+    },
+  });
+
   const columns: AdminDataTableColumn<StorageRecord>[] = [
     { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
     { title: "名称", dataIndex: "name", required: true, width: 140 },
@@ -87,15 +121,12 @@ export function StoragePage() {
       render: (value, record) => (
         <Switch
           checked={Number(value) === 1}
+          loading={statusMutation.isPending}
           checkedChildren="启用"
           unCheckedChildren="停用"
           disabled={record.isDefault}
           onChange={async (checked) => {
-            await request(`/api/system/storage/status/${record.id}`, {
-              method: "PUT",
-              body: { status: checked ? 1 : 0 },
-            });
-            feedback.success("状态更新成功");
+            await statusMutation.mutateAsync({ id: record.id, status: checked ? 1 : 0 });
           }}
         />
       ),
@@ -127,9 +158,9 @@ export function StoragePage() {
               <Button
                 size="small"
                 icon={<ApiOutlined />}
+                loading={testMutation.isPending}
                 onClick={async () => {
-                  await request("/api/system/storage/test", { method: "POST", body: { id: record.id } });
-                  feedback.success("测试成功");
+                  await testMutation.mutateAsync(record.id);
                 }}
               />
             </Tooltip>
@@ -139,9 +170,9 @@ export function StoragePage() {
                   size="small"
                   type="primary"
                   icon={<CheckCircleOutlined />}
+                  loading={defaultMutation.isPending}
                   onClick={async () => {
-                    await request(`/api/system/storage/default/${record.id}`, { method: "PUT" });
-                    feedback.success("设置成功");
+                    await defaultMutation.mutateAsync(record.id);
                     reload();
                   }}
                 />

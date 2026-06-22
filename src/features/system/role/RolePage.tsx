@@ -1,9 +1,10 @@
 "use client";
 
 import { KeyOutlined, SaveOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
-import { Button, Card, Col, Row, Switch, Table, Tag, Tooltip, Tree } from "antd";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Col, Row, Spin, Switch, Table, Tag, Tooltip, Tree } from "antd";
 import type { TableProps, TreeProps } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
 import { buildQueryString, request } from "@/lib/request";
@@ -59,6 +60,10 @@ type DeptNode = {
   children?: DeptNode[];
 };
 
+const emptyRuleTree: RuleNode[] = [];
+const emptyRoleUsers: RoleUserRecord[] = [];
+const emptyFieldOptions: FieldOption[] = [];
+
 function getAllNodeKeys(nodes: RuleNode[]): number[] {
   return nodes.flatMap((node) => [node.id, ...getAllNodeKeys(node.children ?? [])]);
 }
@@ -77,52 +82,84 @@ function toTreeData(nodes: RuleNode[]): TreeProps["treeData"] {
 }
 
 export function RolePage() {
-  const [ruleOptions, setRuleOptions] = useState<FieldOption[]>([]);
-  const [deptOptions, setDeptOptions] = useState<FieldOption[]>([]);
-  const [ruleTree, setRuleTree] = useState<RuleNode[]>([]);
+  const queryClient = useQueryClient();
+  const [auxOptionsRequested, setAuxOptionsRequested] = useState(false);
   const [selectedRole, setSelectedRole] = useState<RoleRecord | null>(null);
   const [activeTab, setActiveTab] = useState("users");
   const [checkedRuleKeys, setCheckedRuleKeys] = useState<React.Key[]>([]);
   const [expandedRuleKeys, setExpandedRuleKeys] = useState<React.Key[]>([]);
-  const [roleUsers, setRoleUsers] = useState<RoleUserRecord[]>([]);
-  const [roleUsersTotal, setRoleUsersTotal] = useState(0);
-  const [roleUsersLoading, setRoleUsersLoading] = useState(false);
-  const [savingRules, setSavingRules] = useState(false);
   const [roleUserPage, setRoleUserPage] = useState({ page: 1, pageSize: 10 });
 
-  useEffect(() => {
-    void request<RuleNode[]>("/api/system/role/ruleList", { silent: true }).then((rows) => {
-      setRuleTree(rows);
-      setRuleOptions(toFieldOptions(rows));
-    });
-    void request<DeptNode[]>("/api/system/role/deptTree", { silent: true }).then((rows) => {
-      setDeptOptions(toFieldOptions(rows));
-    });
-  }, []);
-
-  const fetchRoleUsers = useCallback(
-    async (roleId: number, page = roleUserPage.page, pageSize = roleUserPage.pageSize) => {
-      setRoleUsersLoading(true);
-      try {
-        const result = await request<PageResult<RoleUserRecord>>(
-          `/api/system/role/users/${roleId}${buildQueryString({ page, pageSize })}`,
-          { silent: true },
-        );
-        setRoleUsers(result.data);
-        setRoleUsersTotal(result.total);
-        setRoleUserPage({ page, pageSize });
-      } finally {
-        setRoleUsersLoading(false);
-      }
+  const roleMetaQuery = useQuery({
+    queryKey: ["system-role-meta"],
+    enabled: auxOptionsRequested || activeTab === "rules",
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const [ruleRows, deptRows] = await Promise.all([
+        request<RuleNode[]>("/api/system/role/ruleList", { silent: true }),
+        request<DeptNode[]>("/api/system/role/deptTree", { silent: true }),
+      ]);
+      return {
+        ruleTree: ruleRows,
+        deptTree: deptRows,
+        ruleOptions: toFieldOptions(ruleRows),
+        deptOptions: toFieldOptions(deptRows),
+      };
     },
-    [roleUserPage.page, roleUserPage.pageSize],
-  );
+  });
+
+  const roleUsersQuery = useQuery({
+    queryKey: ["system-role-users", selectedRole?.id, roleUserPage.page, roleUserPage.pageSize],
+    enabled: Boolean(selectedRole && activeTab === "users"),
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      request<PageResult<RoleUserRecord>>(
+        `/api/system/role/users/${selectedRole?.id}${buildQueryString(roleUserPage)}`,
+        { silent: true },
+      ),
+  });
+
+  const roleStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: number }) =>
+      request(`/api/system/role/status/${id}`, {
+        method: "PUT",
+        body: { status },
+      }),
+    onSuccess: () => {
+      feedback.success("状态更新成功");
+      void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/role"] });
+    },
+  });
+
+  const saveRulesMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedRole) throw new Error("请先选择角色");
+      return request("/api/system/role/setRule", {
+        method: "POST",
+        body: {
+          id: selectedRole.id,
+          ruleIds: checkedRuleKeys.map(Number),
+        },
+      });
+    },
+    onSuccess: () => {
+      feedback.success("权限保存成功");
+      setSelectedRole((role) => (role ? { ...role, ruleIds: checkedRuleKeys.map(Number) } : role));
+      void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/role"] });
+    },
+  });
+
+  const ruleTree = roleMetaQuery.data?.ruleTree ?? emptyRuleTree;
+  const ruleOptions = roleMetaQuery.data?.ruleOptions ?? emptyFieldOptions;
+  const deptOptions = roleMetaQuery.data?.deptOptions ?? emptyFieldOptions;
+  const roleUsers = roleUsersQuery.data?.data ?? emptyRoleUsers;
+  const roleUsersTotal = roleUsersQuery.data?.total ?? 0;
 
   function handleRoleSelect(record?: RoleRecord) {
     if (!record) return;
     setSelectedRole(record);
     setCheckedRuleKeys(record.ruleIds ?? []);
-    void fetchRoleUsers(record.id, 1, roleUserPage.pageSize);
+    setRoleUserPage((value) => ({ page: 1, pageSize: value.pageSize }));
   }
 
   const roleColumns: AdminDataTableColumn<RoleRecord>[] = [
@@ -232,16 +269,13 @@ export function RolePage() {
       render: (value, record) => (
         <Switch
           disabled={record.isSystem}
-          defaultChecked={Number(value) === 1}
+          checked={Number(value) === 1}
+          loading={roleStatusMutation.isPending}
           checkedChildren="启用"
           unCheckedChildren="停用"
           onChange={async (checked, event) => {
             event.stopPropagation();
-            await request(`/api/system/role/status/${record.id}`, {
-              method: "PUT",
-              body: { status: checked ? 1 : 0 },
-            });
-            feedback.success("状态更新成功");
+            await roleStatusMutation.mutateAsync({ id: record.id, status: checked ? 1 : 0 });
           }}
         />
       ),
@@ -282,19 +316,7 @@ export function RolePage() {
       feedback.warning("请先选择角色");
       return;
     }
-    setSavingRules(true);
-    try {
-      await request("/api/system/role/setRule", {
-        method: "POST",
-        body: {
-          id: selectedRole.id,
-          ruleIds: checkedRuleKeys.map(Number),
-        },
-      });
-      feedback.success("权限保存成功");
-    } finally {
-      setSavingRules(false);
-    }
+    await saveRulesMutation.mutateAsync();
   }
 
   return (
@@ -302,7 +324,7 @@ export function RolePage() {
       title="角色管理"
       description="通过角色配置管理员权限，可查看角色用户并维护菜单权限"
     >
-      <Row gutter={[20, 20]}>
+      <Row className="system-workbench system-role-workbench" gutter={[20, 20]}>
         <Col xxl={14} lg={12} xs={24}>
           <AdminDataTable
             api="/api/system/role"
@@ -311,6 +333,9 @@ export function RolePage() {
             columns={roleColumns}
             createTitle="新增角色"
             updateTitle="编辑角色"
+            onFormOpenChange={(open) => {
+              if (open) setAuxOptionsRequested(true);
+            }}
             canUpdate={(record) => !record.isSystem}
             canDelete={(record) => !record.isSystem}
             tableProps={{
@@ -333,38 +358,55 @@ export function RolePage() {
         </Col>
         <Col xxl={10} lg={12} xs={24}>
           <Card
-            className="system-side-card"
+            className="system-side-card system-workbench-panel"
+            title={
+              <div className="system-panel-title">
+                <span>{selectedRole ? selectedRole.name : "角色工作区"}</span>
+                {selectedRole ? (
+                  <Tag color={selectedRole.isSystem ? "gold" : "blue"}>{selectedRole.code}</Tag>
+                ) : null}
+              </div>
+            }
             tabList={[
               { key: "users", icon: <TeamOutlined />, label: "用户列表" },
               { key: "rules", icon: <KeyOutlined />, label: "权限管理" },
             ]}
             activeTabKey={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={(key) => {
+              setActiveTab(key);
+              if (key === "rules") setAuxOptionsRequested(true);
+            }}
             styles={{ body: { minHeight: "70vh" } }}
           >
             {selectedRole ? (
               activeTab === "users" ? (
-                <Table<RoleUserRecord>
-                  rowKey="id"
-                  loading={roleUsersLoading}
-                  dataSource={roleUsers}
-                  columns={userColumns}
-                  bordered
-                  size="small"
-                  pagination={{
-                    current: roleUserPage.page,
-                    pageSize: roleUserPage.pageSize,
-                    total: roleUsersTotal,
-                    showSizeChanger: true,
-                    showTotal: (total) => `共 ${total} 条`,
-                    onChange: (page, pageSize) =>
-                      selectedRole && void fetchRoleUsers(selectedRole.id, page, pageSize),
-                  }}
-                  scroll={{ x: 600 }}
-                />
+                <>
+                  <div className="system-panel-summary">
+                    <span>已分配用户</span>
+                    <strong>{roleUsersTotal}</strong>
+                  </div>
+                  <Table<RoleUserRecord>
+                    rowKey="id"
+                    loading={roleUsersQuery.isLoading || roleUsersQuery.isFetching}
+                    dataSource={roleUsers}
+                    columns={userColumns}
+                    bordered
+                    size="small"
+                    pagination={{
+                      current: roleUserPage.page,
+                      pageSize: roleUserPage.pageSize,
+                      total: roleUsersTotal,
+                      showSizeChanger: true,
+                      showTotal: (total) => `共 ${total} 条`,
+                      onChange: (page, pageSize) => setRoleUserPage({ page, pageSize }),
+                    }}
+                    scroll={{ x: 600 }}
+                  />
+                </>
               ) : (
                 <>
-                  <div className="system-tree-scroll">
+                  <Spin spinning={roleMetaQuery.isLoading || roleMetaQuery.isFetching}>
+                    <div className="system-tree-scroll">
                     <Tree
                       checkable
                       checkStrictly
@@ -376,7 +418,8 @@ export function RolePage() {
                       }}
                       onExpand={setExpandedRuleKeys}
                     />
-                  </div>
+                    </div>
+                  </Spin>
                   <div className="system-tree-actions">
                     <span className="system-tree-count">已选 {checkedRuleKeys.length} 项</span>
                     <Button size="small" onClick={() => setExpandedRuleKeys(allRuleKeys)}>
@@ -404,8 +447,8 @@ export function RolePage() {
                       type="primary"
                       size="small"
                       icon={<SaveOutlined />}
-                      loading={savingRules}
-                      disabled={selectedRole.isSystem}
+                      loading={saveRulesMutation.isPending}
+                      disabled={selectedRole.isSystem || roleMetaQuery.isLoading}
                       onClick={() => void saveRules()}
                     >
                       保存权限

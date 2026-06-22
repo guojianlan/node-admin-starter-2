@@ -12,7 +12,7 @@
 
 - `codex/admin-base-migration-plan` 已包含基础能力完成和 React Query 请求层试点。
 - `codex/product-design-admin-ux-redesign` 从该基础提交切出，只承载 Product Design UI/UX 调整。
-- 本分支不再扩大请求层重构范围；后续页面的 React Query 迁移回到基础/优化分支推进。
+- 2026-06-22 追加要求为“完成文档里所有项目”，因此本分支在 UI/UX 迁移之外，也完成了文档中列出的后续请求层迁移项。
 
 ## First Pass Scope
 
@@ -39,7 +39,9 @@
 - 服务端数据缓存用 React Query；登录态、权限、菜单、布局偏好继续用 Zustand。
 - URL 继续承载表格搜索、分页和排序状态。
 
-## Later Product Design Migration Order
+## Completed Product Design Migration
+
+已完成：
 
 1. 角色页：权限树、已分配用户和保存反馈统一为右侧工作区模式。
 2. 部门页：部门树、部门信息和成员列表的选中态、空态、加载态统一。
@@ -47,15 +49,23 @@
 4. 文件页：文件夹、文件列表、预览、回收站和批量操作统一为资源管理器式工作台。
 5. 邮件/存储页：测试连接、测试发送、默认项和状态切换统一为清晰的操作反馈。
 
-## Later Request-Layer Migration Order
+## Completed Request-Layer Migration
 
-这部分属于基础/优化分支，不属于 Product Design 分支本身：
+已完成：
 
 1. 角色页：权限树、部门树、角色用户列表按 tab/选中项懒加载并缓存。
 2. 部门页：部门用户列表只在选择部门后加载，部门树做缓存失效。
 3. 配置页：分组和配置项拆分 query key，保存后局部失效。
 4. 文件页：分组树、文件列表、回收站、移动/复制目标列表拆分 query key。
 5. 邮件/存储页：测试连接、测试发送用 mutation 状态替代局部 loading。
+
+## Completion Notes
+
+- 角色页：`ruleList` 和 `deptTree` 只在打开角色表单或进入权限 tab 时请求；角色用户列表只在已选角色且位于用户 tab 时请求。
+- 部门页：部门树独立缓存；部门用户列表只在已选部门且位于用户 tab 时请求。
+- 配置页：配置分组和配置项拆成独立 query key；保存分组、配置项或配置值后只失效对应缓存。
+- 文件页：文件夹树、文件列表、回收站拆成独立 query key；上传、移动、复制、重命名、删除、恢复后按相关缓存局部失效。
+- 邮件/存储页：测试发送、测试连接、设为默认、状态切换均使用 mutation loading 和局部缓存失效。
 
 ## Acceptance
 

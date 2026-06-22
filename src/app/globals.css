@@ -776,6 +776,60 @@ a {
   padding: 16px;
 }
 
+.system-workbench {
+  align-items: stretch;
+}
+
+.system-workbench-panel {
+  height: 100%;
+}
+
+.system-workbench-panel .ant-card-head {
+  border-bottom-color: var(--admin-border-soft);
+}
+
+.system-panel-title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.35;
+}
+
+.system-panel-title > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--admin-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.system-panel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-card-radius);
+  background: var(--admin-surface-muted);
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
+.system-panel-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--admin-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 650;
+}
+
 .system-tree-scroll {
   height: 600px;
   margin-bottom: 12px;
@@ -809,6 +863,10 @@ a {
 .system-empty-tip .anticon {
   margin-bottom: 12px;
   font-size: 40px;
+}
+
+.system-workbench .ant-table-wrapper {
+  min-width: 0;
 }
 
 .system-dict-workbench {
@@ -1295,6 +1353,37 @@ a {
   position: relative;
 }
 
+.system-config-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: var(--admin-card-radius);
+  background: var(--admin-surface-muted);
+}
+
+.system-config-context > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.system-config-context strong {
+  color: var(--admin-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.system-config-context span {
+  color: var(--admin-muted);
+  font-size: 13px;
+}
+
 .system-config-label {
   display: flex;
   flex-direction: column;
@@ -1315,6 +1404,10 @@ a {
 
 .system-file-table-card .admin-toolbar-left {
   gap: 8px;
+}
+
+.system-file-folder-card .ant-card-body {
+  overflow: hidden;
 }
 
 .system-file-folder-icon {
@@ -1399,6 +1492,26 @@ a {
 
 .system-file-detail-actions {
   margin-bottom: 16px;
+}
+
+.system-test-panel {
+  width: 100%;
+}
+
+.system-test-panel strong,
+.system-test-panel span {
+  display: block;
+}
+
+.system-test-panel strong {
+  color: var(--admin-text);
+  font-weight: 650;
+}
+
+.system-test-panel span {
+  margin-top: 4px;
+  color: var(--admin-muted);
+  line-height: 1.5;
 }
 
 .system-file-preview-modal .ant-modal-body {

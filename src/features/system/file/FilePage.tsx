@@ -37,8 +37,9 @@ import {
   TreeSelect,
   Upload,
 } from "antd";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TableProps, TreeDataNode, TreeProps, UploadFile } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AuthButton } from "@/components/auth-button/AuthButton";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
@@ -81,6 +82,9 @@ type FileRecord = {
   deletedAt?: string | null;
   createdAt: string;
 };
+
+const emptyFileGroups: FileGroup[] = [];
+const emptyTrashFiles: FileRecord[] = [];
 
 function formatSize(size: number) {
   if (size < 1024) return `${size} B`;
@@ -158,15 +162,13 @@ async function downloadFile(record: Pick<FileRecord, "id" | "originalName">) {
 }
 
 export function FilePage() {
+  const queryClient = useQueryClient();
   const navigation = useNavigationAdapter();
-  const [groups, setGroups] = useState<FileGroup[]>([]);
   const [groupKeyword, setGroupKeyword] = useState("");
-  const [groupsLoading, setGroupsLoading] = useState(false);
   const selectedGroupId = useMemo(() => readGroupId(navigation.search), [navigation.search]);
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<React.Key[]>([]);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupModalMode, setGroupModalMode] = useState<"create" | "update">("create");
-  const [groupModalLoading, setGroupModalLoading] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FileGroup | null>(null);
   const [groupInitialValues, setGroupInitialValues] = useState<Partial<FileGroup>>({
     parentId: 0,
@@ -186,8 +188,6 @@ export function FilePage() {
   const [targetIds, setTargetIds] = useState<number[]>([]);
   const [targetGroupId, setTargetGroupId] = useState<number>(1);
   const [trashOpen, setTrashOpen] = useState(false);
-  const [trashFiles, setTrashFiles] = useState<FileRecord[]>([]);
-  const [trashLoading, setTrashLoading] = useState(false);
   const [trashPagination, setTrashPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailFile, setDetailFile] = useState<FileRecord | null>(null);
@@ -195,19 +195,37 @@ export function FilePage() {
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null);
   const [audioFile, setAudioFile] = useState<FileRecord | null>(null);
 
-  const loadGroups = useCallback(async () => {
-    setGroupsLoading(true);
-    try {
-      const rows = await request<FileGroup[]>("/api/system/file/group/tree", { silent: true });
-      setGroups(rows);
-    } finally {
-      setGroupsLoading(false);
-    }
-  }, []);
+  const groupsQuery = useQuery({
+    queryKey: ["system-file-groups"],
+    queryFn: () => request<FileGroup[]>("/api/system/file/group/tree", { silent: true }),
+  });
+  const groups = groupsQuery.data ?? emptyFileGroups;
 
-  useEffect(() => {
-    void Promise.resolve().then(() => loadGroups());
-  }, [loadGroups]);
+  const trashQuery = useQuery({
+    queryKey: ["system-file-trash", trashPagination.current, trashPagination.pageSize],
+    enabled: trashOpen,
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      request<PageResult<FileRecord>>(
+        `/api/system/file/list/trash${buildQueryString({
+          page: trashPagination.current,
+          pageSize: trashPagination.pageSize,
+        })}`,
+        { silent: true },
+      ),
+  });
+  const trashFiles = trashQuery.data?.data ?? emptyTrashFiles;
+  const trashTotal = trashQuery.data?.total ?? trashPagination.total;
+
+  const invalidateFiles = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/file/list"] });
+  }, [queryClient]);
+
+  const invalidateFileWorkspace = useCallback(() => {
+    invalidateFiles();
+    void queryClient.invalidateQueries({ queryKey: ["system-file-groups"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-file-trash"] });
+  }, [invalidateFiles, queryClient]);
 
   const groupTreeData = useMemo(() => {
     const filterTree = (nodes: FileGroup[]): FileGroup[] => {
@@ -244,6 +262,116 @@ export function FilePage() {
     },
     [selectedGroupId],
   );
+
+  const saveGroupMutation = useMutation({
+    mutationFn: (values: Record<string, unknown>) => {
+      if (groupModalMode === "create") {
+        return request("/api/system/file/group", { method: "POST", body: values });
+      }
+      if (!editingGroup) throw new Error("文件夹不存在");
+      return request(`/api/system/file/group/${editingGroup.id}`, { method: "PUT", body: values });
+    },
+    onSuccess: () => {
+      feedback.success(groupModalMode === "create" ? "创建成功" : "更新成功");
+      setGroupModalOpen(false);
+      invalidateFileWorkspace();
+    },
+  });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: (groupId: number) =>
+      request(`/api/system/file/group/${groupId}`, { method: "DELETE" }),
+    onSuccess: (_, groupId) => {
+      feedback.success("删除成功");
+      if (selectedGroupId === groupId) selectGroup(0);
+      invalidateFileWorkspace();
+    },
+  });
+
+  const deleteFileMutation = useMutation({
+    mutationFn: (id: number) => request(`/api/system/file/list/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      feedback.success("删除成功");
+      touchReload();
+      invalidateFileWorkspace();
+    },
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids: number[]) =>
+      request("/api/system/file/list/batch-delete", {
+        method: "POST",
+        body: { ids },
+      }),
+    onSuccess: () => {
+      feedback.success("删除成功");
+      touchReload();
+      invalidateFileWorkspace();
+    },
+  });
+
+  const renameFileMutation = useMutation({
+    mutationFn: ({ id, originalName }: { id: number; originalName: string }) =>
+      request(`/api/system/file/list/rename/${id}`, {
+        method: "PUT",
+        body: { originalName },
+      }),
+    onSuccess: () => {
+      feedback.success("重命名成功");
+      setRenameOpen(false);
+      touchReload();
+      invalidateFiles();
+    },
+  });
+
+  const targetMutation = useMutation({
+    mutationFn: ({
+      type,
+      ids,
+      groupId,
+    }: {
+      type: "copy" | "move";
+      ids: number[];
+      groupId: number;
+    }) =>
+      request(type === "copy" ? "/api/system/file/list/copy" : "/api/system/file/list/move", {
+        method: type === "copy" ? "POST" : "PUT",
+        body: { ids, groupId },
+      }),
+    onSuccess: (_, variables) => {
+      feedback.success(variables.type === "copy" ? "复制成功" : "移动成功");
+      setTargetOpen(false);
+      touchReload();
+      invalidateFiles();
+    },
+  });
+
+  const restoreFileMutation = useMutation({
+    mutationFn: (id: number) => request(`/api/system/file/list/restore/${id}`, { method: "PUT" }),
+    onSuccess: () => {
+      feedback.success("恢复成功");
+      touchReload();
+      invalidateFileWorkspace();
+    },
+  });
+
+  const forceDeleteMutation = useMutation({
+    mutationFn: (id: number) => request(`/api/system/file/list/force/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      feedback.success("彻底删除成功");
+      void queryClient.invalidateQueries({ queryKey: ["system-file-trash"] });
+    },
+  });
+
+  const cleanTrashMutation = useMutation({
+    mutationFn: () => request<{ count: number }>("/api/system/file/list/clean-trash", {
+      method: "DELETE",
+    }),
+    onSuccess: (result) => {
+      feedback.success(`已清空 ${result.count} 个文件`);
+      void queryClient.invalidateQueries({ queryKey: ["system-file-trash"] });
+    },
+  });
 
   function selectGroup(groupId: React.Key) {
     const nextGroupId = Number(groupId || 0);
@@ -487,43 +615,25 @@ export function FilePage() {
       setUploadFiles([]);
       setUploadProgress(0);
       touchReload();
+      invalidateFiles();
     } finally {
       setUploading(false);
     }
   }
 
   async function saveGroup(values: Record<string, unknown>) {
-    setGroupModalLoading(true);
-    try {
-      if (groupModalMode === "create") {
-        await request("/api/system/file/group", { method: "POST", body: values });
-        feedback.success("创建成功");
-      } else if (editingGroup) {
-        await request(`/api/system/file/group/${editingGroup.id}`, { method: "PUT", body: values });
-        feedback.success("更新成功");
-      }
-      setGroupModalOpen(false);
-      await loadGroups();
-    } finally {
-      setGroupModalLoading(false);
-    }
+    await saveGroupMutation.mutateAsync(values);
   }
 
   async function deleteGroup(groupId: number) {
     if (groupId === 0 || !window.confirm("确认删除当前文件夹？请先删除文件夹下的文件和子文件夹。"))
       return;
-    await request(`/api/system/file/group/${groupId}`, { method: "DELETE" });
-    feedback.success("删除成功");
-    if (selectedGroupId === groupId) selectGroup(0);
-    await loadGroups();
-    touchReload();
+    await deleteGroupMutation.mutateAsync(groupId);
   }
 
   async function deleteFile(id: number) {
     if (!window.confirm("确认删除当前文件？")) return;
-    await request(`/api/system/file/list/${id}`, { method: "DELETE" });
-    feedback.success("删除成功");
-    touchReload();
+    await deleteFileMutation.mutateAsync(id);
   }
 
   async function batchDelete() {
@@ -531,72 +641,34 @@ export function FilePage() {
       feedback.warning("请选择文件");
       return;
     }
-    await request("/api/system/file/list/batch-delete", {
-      method: "POST",
-      body: { ids: selectedRowKeys.map(Number) },
-    });
-    feedback.success("删除成功");
-    touchReload();
+    await batchDeleteMutation.mutateAsync(selectedRowKeys.map(Number));
   }
 
   async function renameFile() {
     if (!renamingFile || !newFileName.trim()) return;
-    await request(`/api/system/file/list/rename/${renamingFile.id}`, {
-      method: "PUT",
-      body: { originalName: newFileName.trim() },
-    });
-    feedback.success("重命名成功");
-    setRenameOpen(false);
-    touchReload();
+    await renameFileMutation.mutateAsync({ id: renamingFile.id, originalName: newFileName.trim() });
   }
 
   async function submitTarget() {
     if (!targetIds.length) return;
-    await request(
-      targetType === "copy" ? "/api/system/file/list/copy" : "/api/system/file/list/move",
-      {
-        method: targetType === "copy" ? "POST" : "PUT",
-        body: { ids: targetIds, groupId: targetGroupId },
-      },
-    );
-    feedback.success(targetType === "copy" ? "复制成功" : "移动成功");
-    setTargetOpen(false);
-    touchReload();
+    await targetMutation.mutateAsync({ type: targetType, ids: targetIds, groupId: targetGroupId });
   }
 
   async function loadTrash(page = trashPagination.current, pageSize = trashPagination.pageSize) {
-    setTrashLoading(true);
-    try {
-      const result = await request<PageResult<FileRecord>>(
-        `/api/system/file/list/trash${buildQueryString({ page, pageSize })}`,
-        { silent: true },
-      );
-      setTrashFiles(result.data);
-      setTrashPagination({ current: page, pageSize, total: result.total });
-    } finally {
-      setTrashLoading(false);
-    }
+    setTrashPagination((value) => ({ ...value, current: page, pageSize }));
+    await queryClient.invalidateQueries({ queryKey: ["system-file-trash"] });
   }
 
   async function restoreFile(id: number) {
-    await request(`/api/system/file/list/restore/${id}`, { method: "PUT" });
-    feedback.success("恢复成功");
-    await loadTrash();
-    touchReload();
+    await restoreFileMutation.mutateAsync(id);
   }
 
   async function forceDeleteFile(id: number) {
-    await request(`/api/system/file/list/force/${id}`, { method: "DELETE" });
-    feedback.success("彻底删除成功");
-    await loadTrash();
+    await forceDeleteMutation.mutateAsync(id);
   }
 
   async function cleanTrash() {
-    const result = await request<{ count: number }>("/api/system/file/list/clean-trash", {
-      method: "DELETE",
-    });
-    feedback.success(`已清空 ${result.count} 个文件`);
-    await loadTrash();
+    await cleanTrashMutation.mutateAsync();
   }
 
   const treeTitleRender: TreeProps["titleRender"] = (node) => (
@@ -653,18 +725,22 @@ export function FilePage() {
       title="文件管理"
       description="管理本地上传文件，按文件分组查看、上传、移动与回收站处理"
     >
-      <Row gutter={[16, 16]}>
+      <Row className="system-workbench system-file-workbench" gutter={[16, 16]}>
         <Col xs={24} lg={4}>
           <Card
-            className="system-side-card"
+            className="system-side-card system-workbench-panel system-file-folder-card"
             title={
               <Space>
                 <FolderOpenOutlined className="system-file-folder-icon" />
                 文件夹
               </Space>
             }
-            loading={groupsLoading}
+            loading={groupsQuery.isLoading}
           >
+            <div className="system-panel-summary">
+              <span>文件夹</span>
+              <strong>{Math.max(flattenGroups(groups).length - 1, 0)}</strong>
+            </div>
             <Input.Search
               allowClear
               placeholder="搜索文件夹"
@@ -696,6 +772,12 @@ export function FilePage() {
             rowKey="id"
             columns={columns}
             cardClassName="system-file-table-card"
+            toolbarTitle={
+              <div className="system-panel-title">
+                <span>{groupMap.get(selectedGroupId)?.name || "全部文件"}</span>
+                {selectedGroupId ? <Tag color="blue">当前文件夹</Tag> : <Tag>全量资源</Tag>}
+              </div>
+            }
             enableCreate={false}
             enableUpdate={false}
             enableDelete={false}
@@ -718,6 +800,7 @@ export function FilePage() {
                   <Button
                     type="primary"
                     icon={<UploadOutlined />}
+                    loading={uploading}
                     onClick={() => setUploadOpen(true)}
                   >
                     上传文件
@@ -725,17 +808,24 @@ export function FilePage() {
                 </AuthButton>
                 {selectedRowKeys.length > 0 ? (
                   <>
-                    <Button danger icon={<DeleteOutlined />} onClick={() => void batchDelete()}>
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
+                      loading={batchDeleteMutation.isPending}
+                      onClick={() => void batchDelete()}
+                    >
                       批量删除
                     </Button>
                     <Button
                       icon={<ScissorOutlined />}
+                      loading={targetMutation.isPending && targetType === "move"}
                       onClick={() => openTarget(selectedRowKeys.map(Number), "move")}
                     >
                       批量移动
                     </Button>
                     <Button
                       icon={<CopyOutlined />}
+                      loading={targetMutation.isPending && targetType === "copy"}
                       onClick={() => openTarget(selectedRowKeys.map(Number), "copy")}
                     >
                       批量复制
@@ -854,6 +944,7 @@ export function FilePage() {
         open={renameOpen}
         onOk={() => void renameFile()}
         onCancel={() => setRenameOpen(false)}
+        confirmLoading={renameFileMutation.isPending}
       >
         <div className="system-modal-copy">请输入新的文件名称。</div>
         <Input
@@ -867,6 +958,7 @@ export function FilePage() {
         open={targetOpen}
         onOk={() => void submitTarget()}
         onCancel={() => setTargetOpen(false)}
+        confirmLoading={targetMutation.isPending}
       >
         <div className="system-modal-copy">请选择目标文件夹。</div>
         <TreeSelect
@@ -888,7 +980,13 @@ export function FilePage() {
         }}
       >
         <Space className="system-trash-toolbar">
-          <Button danger type="primary" icon={<DeleteOutlined />} onClick={() => void cleanTrash()}>
+          <Button
+            danger
+            type="primary"
+            icon={<DeleteOutlined />}
+            loading={cleanTrashMutation.isPending}
+            onClick={() => void cleanTrash()}
+          >
             清空回收站
           </Button>
         </Space>
@@ -896,11 +994,12 @@ export function FilePage() {
           rowKey="id"
           size="small"
           bordered
-          loading={trashLoading}
+          loading={trashQuery.isLoading || trashQuery.isFetching}
           columns={trashColumns}
           dataSource={trashFiles}
           pagination={{
             ...trashPagination,
+            total: trashTotal,
             showSizeChanger: true,
             showTotal: (total) => `共 ${total} 条`,
             onChange: (page, pageSize) => void loadTrash(page, pageSize),
@@ -969,7 +1068,7 @@ export function FilePage() {
         title={groupModalMode === "create" ? "新增文件夹" : "编辑文件夹"}
         columns={groupColumns}
         initialValues={groupInitialValues}
-        loading={groupModalLoading}
+        loading={saveGroupMutation.isPending}
         onCancel={() => setGroupModalOpen(false)}
         onFinish={saveGroup}
       />

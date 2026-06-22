@@ -18,8 +18,9 @@ import {
   Tree,
   TreeSelect,
 } from "antd";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TableProps, TreeDataNode, TreeProps } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { buildQueryString, request } from "@/lib/request";
@@ -57,6 +58,9 @@ type DeptSelectNode = {
   children?: DeptSelectNode[];
 };
 
+const emptyDeptTree: DeptRecord[] = [];
+const emptyDeptUsers: DeptUserRecord[] = [];
+
 function flattenDept(nodes: DeptRecord[]): DeptRecord[] {
   return nodes.flatMap((node) => [node, ...flattenDept(node.children ?? [])]);
 }
@@ -79,28 +83,35 @@ function buildDeptSelectTree(nodes: DeptRecord[]): DeptSelectNode[] {
 }
 
 export function DeptPage() {
+  const queryClient = useQueryClient();
   const [form] = Form.useForm<DeptRecord>();
-  const [deptTree, setDeptTree] = useState<DeptRecord[]>([]);
   const [selectedKey, setSelectedKey] = useState<string>();
   const [checkedKeys, setCheckedKeys] = useState<React.Key[]>([]);
   const [tabKey, setTabKey] = useState("info");
-  const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
   const [modalInitialValues, setModalInitialValues] = useState<Partial<DeptRecord>>({
     parentId: 0,
     sort: 0,
     status: 1,
   });
-  const [deptUsers, setDeptUsers] = useState<DeptUserRecord[]>([]);
-  const [deptUsersTotal, setDeptUsersTotal] = useState(0);
-  const [deptUsersLoading, setDeptUsersLoading] = useState(false);
   const [deptUserPage, setDeptUserPage] = useState({ page: 1, pageSize: 10 });
 
+  const deptTreeQuery = useQuery({
+    queryKey: ["system-dept-tree"],
+    queryFn: () => request<DeptRecord[]>("/api/system/dept/tree", { silent: true }),
+  });
+
+  const deptTree = deptTreeQuery.data ?? emptyDeptTree;
   const deptList = useMemo(() => flattenDept(deptTree), [deptTree]);
+  const activeSelectedKey =
+    selectedKey && deptList.some((dept) => String(dept.id) === selectedKey)
+      ? selectedKey
+      : deptList[0]
+        ? String(deptList[0].id)
+        : undefined;
   const selectedDept = useMemo(
-    () => deptList.find((dept) => String(dept.id) === selectedKey) ?? null,
-    [deptList, selectedKey],
+    () => deptList.find((dept) => String(dept.id) === activeSelectedKey) ?? null,
+    [activeSelectedKey, deptList],
   );
   const treeData = useMemo(() => buildDeptTree(deptTree), [deptTree]);
   const parentOptions = useMemo(
@@ -112,53 +123,56 @@ export function DeptPage() {
     [deptTree],
   );
 
-  const fetchDeptUsers = useCallback(
-    async (deptId: number, page = deptUserPage.page, pageSize = deptUserPage.pageSize) => {
-      setDeptUsersLoading(true);
-      try {
-        const result = await request<PageResult<DeptUserRecord>>(
-          `/api/system/dept/users/${deptId}${buildQueryString({ page, pageSize })}`,
-          { silent: true },
-        );
-        setDeptUsers(result.data);
-        setDeptUsersTotal(result.total);
-        setDeptUserPage({ page, pageSize });
-      } finally {
-        setDeptUsersLoading(false);
-      }
-    },
-    [deptUserPage.page, deptUserPage.pageSize],
-  );
+  const deptUsersQuery = useQuery({
+    queryKey: ["system-dept-users", selectedDept?.id, deptUserPage.page, deptUserPage.pageSize],
+    enabled: Boolean(selectedDept && tabKey === "users"),
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      request<PageResult<DeptUserRecord>>(
+        `/api/system/dept/users/${selectedDept?.id}${buildQueryString(deptUserPage)}`,
+        { silent: true },
+      ),
+  });
 
-  const refreshDept = useCallback(
-    async (preferredKey?: string) => {
-      setLoading(true);
-      try {
-        const rows = await request<DeptRecord[]>("/api/system/dept/tree", { silent: true });
-        setDeptTree(rows);
-        const flatRows = flattenDept(rows);
-        const activeKey =
-          preferredKey && flatRows.some((item) => String(item.id) === preferredKey)
-            ? preferredKey
-            : flatRows[0]
-              ? String(flatRows[0].id)
-              : undefined;
-        setSelectedKey(activeKey);
-        const activeDept = flatRows.find((dept) => String(dept.id) === activeKey);
-        if (activeDept) {
-          form.setFieldsValue(activeDept);
-          void fetchDeptUsers(activeDept.id, 1, deptUserPage.pageSize);
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [deptUserPage.pageSize, fetchDeptUsers, form],
-  );
+  const deptUsers = deptUsersQuery.data?.data ?? emptyDeptUsers;
+  const deptUsersTotal = deptUsersQuery.data?.total ?? 0;
 
-  useEffect(() => {
-    void Promise.resolve().then(() => refreshDept());
-  }, [refreshDept]);
+  const createDeptMutation = useMutation({
+    mutationFn: (values: Record<string, unknown>) =>
+      request("/api/system/dept", { method: "POST", body: values }),
+    onSuccess: () => {
+      feedback.success("创建成功");
+      setModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["system-dept-tree"] });
+    },
+  });
+
+  const updateDeptMutation = useMutation({
+    mutationFn: (values: DeptRecord) => {
+      if (!selectedDept) throw new Error("请先选择部门");
+      return request(`/api/system/dept/${selectedDept.id}`, {
+        method: "PUT",
+        body: values,
+      });
+    },
+    onSuccess: () => {
+      feedback.success("保存成功");
+      void queryClient.invalidateQueries({ queryKey: ["system-dept-tree"] });
+    },
+  });
+
+  const deleteDeptMutation = useMutation({
+    mutationFn: (keys: React.Key[]) =>
+      Promise.all(
+        keys.map((key) => request(`/api/system/dept/${String(key)}`, { method: "DELETE" })),
+      ),
+    onSuccess: () => {
+      setCheckedKeys([]);
+      feedback.success("删除成功");
+      void queryClient.invalidateQueries({ queryKey: ["system-dept-tree"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-dept-users"] });
+    },
+  });
 
   useEffect(() => {
     if (!selectedDept) return;
@@ -216,44 +230,16 @@ export function DeptPage() {
   }
 
   async function submitCreate(values: Record<string, unknown>) {
-    setModalLoading(true);
-    try {
-      await request("/api/system/dept", { method: "POST", body: values });
-      feedback.success("创建成功");
-      setModalOpen(false);
-      await refreshDept();
-    } finally {
-      setModalLoading(false);
-    }
+    await createDeptMutation.mutateAsync(values);
   }
 
   async function submitUpdate(values: DeptRecord) {
     if (!selectedDept) return;
-    setLoading(true);
-    try {
-      await request(`/api/system/dept/${selectedDept.id}`, {
-        method: "PUT",
-        body: values,
-      });
-      feedback.success("保存成功");
-      await refreshDept(String(selectedDept.id));
-    } finally {
-      setLoading(false);
-    }
+    await updateDeptMutation.mutateAsync(values);
   }
 
   async function deleteChecked() {
-    setLoading(true);
-    try {
-      await Promise.all(
-        checkedKeys.map((key) => request(`/api/system/dept/${String(key)}`, { method: "DELETE" })),
-      );
-      setCheckedKeys([]);
-      feedback.success("删除成功");
-      await refreshDept(selectedKey);
-    } finally {
-      setLoading(false);
-    }
+    await deleteDeptMutation.mutateAsync(checkedKeys);
   }
 
   const onSelect: TreeProps["onSelect"] = (keys) => {
@@ -263,20 +249,20 @@ export function DeptPage() {
     const dept = deptList.find((item) => String(item.id) === nextKey);
     if (dept) {
       form.setFieldsValue(dept);
-      void fetchDeptUsers(dept.id, 1, deptUserPage.pageSize);
+      setDeptUserPage((value) => ({ page: 1, pageSize: value.pageSize }));
     }
   };
 
   return (
     <PageScaffold title="部门管理" description="维护组织部门树，并查看部门信息与部门用户">
-      <Row gutter={[20, 20]}>
+      <Row className="system-workbench system-dept-workbench" gutter={[20, 20]}>
         <Col xxl={12} lg={12} xs={24}>
           <Card
-            className="system-side-card"
+            className="system-side-card system-workbench-panel"
             title={
-              <Space>
+              <Space wrap>
                 <Button
-                  loading={loading}
+                  loading={deptTreeQuery.isFetching}
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => openCreateModal()}
@@ -284,7 +270,7 @@ export function DeptPage() {
                   新增部门
                 </Button>
                 <Button
-                  loading={loading}
+                  loading={deptTreeQuery.isFetching}
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => openCreateModal(true)}
@@ -294,7 +280,7 @@ export function DeptPage() {
                 </Button>
               </Space>
             }
-            loading={loading}
+            loading={deptTreeQuery.isLoading}
             styles={{ body: { minHeight: "70vh" } }}
           >
             {checkedKeys.length > 0 ? (
@@ -308,18 +294,30 @@ export function DeptPage() {
                       取消选择
                     </Button>
                     <Popconfirm title="确认删除选中的部门？" onConfirm={() => void deleteChecked()}>
-                      <Button danger size="small" type="primary" icon={<DeleteOutlined />} />
+                      <Button
+                        danger
+                        size="small"
+                        type="primary"
+                        loading={deleteDeptMutation.isPending}
+                        icon={<DeleteOutlined />}
+                      />
                     </Popconfirm>
                   </Space>
                 }
               />
+            ) : null}
+            {selectedDept ? (
+              <div className="system-panel-summary">
+                <span>当前部门</span>
+                <strong>{selectedDept.name}</strong>
+              </div>
             ) : null}
             <Tree
               checkable
               showIcon
               checkStrictly
               treeData={treeData}
-              selectedKeys={selectedKey ? [selectedKey] : []}
+              selectedKeys={activeSelectedKey ? [activeSelectedKey] : []}
               checkedKeys={checkedKeys}
               defaultExpandAll
               onSelect={onSelect}
@@ -329,21 +327,30 @@ export function DeptPage() {
         </Col>
         <Col xxl={12} lg={12} xs={24}>
           <Card
-            className="system-side-card"
+            className="system-side-card system-workbench-panel"
+            title={
+              <div className="system-panel-title">
+                <span>{selectedDept ? selectedDept.name : "部门工作区"}</span>
+                {selectedDept?.code ? <Tag color="blue">{selectedDept.code}</Tag> : null}
+              </div>
+            }
             tabList={[
               { key: "info", label: "部门信息" },
               { key: "users", label: "用户列表" },
             ]}
             activeTabKey={tabKey}
-            onTabChange={setTabKey}
+            onTabChange={(key) => {
+              setTabKey(key);
+              setDeptUserPage((value) => ({ page: 1, pageSize: value.pageSize }));
+            }}
             styles={{ body: { minHeight: "70vh" } }}
           >
             {tabKey === "info" ? (
               <Form
                 form={form}
                 layout="horizontal"
-                labelCol={{ span: 5 }}
-                wrapperCol={{ span: 16 }}
+                labelCol={{ xs: { span: 24 }, sm: { span: 5 } }}
+                wrapperCol={{ xs: { span: 24 }, sm: { span: 16 } }}
                 onFinish={submitUpdate}
               >
                 <Form.Item name="parentId" label="父级部门" rules={[{ required: true }]}>
@@ -371,11 +378,11 @@ export function DeptPage() {
                 <Form.Item name="status" label="状态" rules={[{ required: true }]}>
                   <Select options={statusOptions} />
                 </Form.Item>
-                <Form.Item wrapperCol={{ offset: 5, span: 16 }}>
+                <Form.Item wrapperCol={{ xs: { offset: 0, span: 24 }, sm: { offset: 5, span: 16 } }}>
                   <Button
                     type="primary"
                     htmlType="submit"
-                    loading={loading}
+                    loading={updateDeptMutation.isPending}
                     disabled={!selectedDept}
                   >
                     保存信息
@@ -388,7 +395,7 @@ export function DeptPage() {
                 dataSource={deptUsers}
                 bordered
                 columns={userColumns}
-                loading={deptUsersLoading}
+                loading={deptUsersQuery.isLoading || deptUsersQuery.isFetching}
                 size="small"
                 pagination={{
                   current: deptUserPage.page,
@@ -397,7 +404,7 @@ export function DeptPage() {
                   showSizeChanger: true,
                   showTotal: (total) => `共 ${total} 条`,
                   onChange: (page, pageSize) => {
-                    if (selectedDept) void fetchDeptUsers(selectedDept.id, page, pageSize);
+                    setDeptUserPage({ page, pageSize });
                   },
                 }}
                 scroll={{ x: 600 }}
@@ -412,7 +419,7 @@ export function DeptPage() {
         title="新增部门"
         columns={deptColumns}
         initialValues={modalInitialValues}
-        loading={modalLoading}
+        loading={createDeptMutation.isPending}
         onCancel={() => setModalOpen(false)}
         onFinish={submitCreate}
       />
