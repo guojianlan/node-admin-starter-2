@@ -62,7 +62,6 @@ const defaultAllowedExtensions = [
   "png",
   "gif",
   "webp",
-  "svg",
   "pdf",
   "doc",
   "docx",
@@ -76,7 +75,22 @@ const defaultAllowedExtensions = [
   "webm",
 ];
 
-const defaultDeniedExtensions = ["exe", "bat", "cmd", "sh", "php"];
+const defaultDeniedExtensions = ["exe", "bat", "cmd", "sh", "php", "html", "htm", "js", "mjs", "svg"];
+
+const mimeRules: Record<string, string[]> = {
+  jpg: ["image/jpeg"],
+  jpeg: ["image/jpeg"],
+  png: ["image/png"],
+  gif: ["image/gif"],
+  webp: ["image/webp"],
+  pdf: ["application/pdf"],
+  txt: ["text/plain"],
+  csv: ["text/csv", "application/vnd.ms-excel"],
+  zip: ["application/zip", "application/x-zip-compressed"],
+  mp3: ["audio/"],
+  mp4: ["video/mp4"],
+  webm: ["video/webm"],
+};
 
 function splitExtensions(value?: string | null) {
   return (value ?? "")
@@ -244,6 +258,13 @@ export async function assertUploadAllowed(file: File, ext: string) {
   }
   if (config.allowedExtensions.length && !config.allowedExtensions.includes(normalizedExt)) {
     throw new Error("当前文件类型不在允许上传范围内");
+  }
+  const expectedMimes = mimeRules[normalizedExt];
+  if (file.type && expectedMimes?.length) {
+    const matched = expectedMimes.some((mime) =>
+      mime.endsWith("/") ? file.type.startsWith(mime) : file.type === mime,
+    );
+    if (!matched) throw new Error("文件扩展名与 MIME 类型不匹配");
   }
   return config;
 }

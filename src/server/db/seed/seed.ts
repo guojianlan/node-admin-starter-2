@@ -16,6 +16,9 @@ async function syncSequences(dbClient: DbClient) {
     "sys_rule",
     "sys_access_token",
     "sys_login_record",
+    "sys_operation_log",
+    "sys_user_password_history",
+    "sys_password_reset_token",
     "sys_dict",
     "sys_dict_item",
     "sys_config_group",
@@ -24,6 +27,7 @@ async function syncSequences(dbClient: DbClient) {
     "sys_file_group",
     "sys_file",
     "sys_mail_account",
+    "sys_notice",
   ];
 
   for (const table of tables) {
@@ -69,22 +73,22 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
   await dbClient
     .prepare(
       `INSERT INTO sys_user
-        (id, username, password_hash, nickname, sex, email, mobile, dept_id, status, is_system, created_at, updated_at)
+        (id, username, password_hash, nickname, sex, email, mobile, dept_id, status, is_system, password_updated_at, created_at, updated_at)
        VALUES
-        (1, 'admin', ?, '超级管理员', 2, 'admin@xinadmin.test', '13800000000', 1, 1, true, ?, ?)
+        (1, 'admin', ?, '超级管理员', 2, 'admin@xinadmin.test', '13800000000', 1, 1, true, ?, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(adminPasswordHash, now, now);
+    .run(adminPasswordHash, now, now, now);
 
   await dbClient
     .prepare(
       `INSERT INTO sys_user
-        (id, username, password_hash, nickname, sex, email, mobile, dept_id, status, created_at, updated_at)
+        (id, username, password_hash, nickname, sex, email, mobile, dept_id, status, password_updated_at, created_at, updated_at)
        VALUES
-        (2, 'demo', ?, '演示用户', 1, 'demo@xinadmin.test', '13900000000', 2, 1, ?, ?)
+        (2, 'demo', ?, '演示用户', 1, 'demo@xinadmin.test', '13900000000', 2, 1, ?, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(demoPasswordHash, now, now);
+    .run(demoPasswordHash, now, now, now);
 
   await dbClient.prepare("UPDATE sys_user SET is_system = true WHERE id = 1").run();
 
@@ -200,7 +204,22 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
        ON CONFLICT DO NOTHING`,
     )
     .run(now, now);
-  await dbClient.prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2)").run();
+  for (const group of [
+    { id: 3, name: "安全策略", code: "security", sort: 3 },
+    { id: 4, name: "登录策略", code: "login", sort: 4 },
+    { id: 5, name: "Token 策略", code: "token", sort: 5 },
+  ]) {
+    await dbClient
+      .prepare(
+        `INSERT INTO sys_config_group
+          (id, name, code, sort, status, is_system, created_at, updated_at)
+         VALUES
+          (?, ?, ?, ?, 1, true, ?, ?)
+         ON CONFLICT DO NOTHING`,
+      )
+      .run(group.id, group.name, group.code, group.sort, now, now);
+  }
+  await dbClient.prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2, 3, 4, 5)").run();
   await dbClient.prepare("UPDATE sys_config_group SET name = '文件策略' WHERE code = 'file'").run();
 
   const insertConfig = dbClient.prepare(
@@ -244,7 +263,7 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       key: "file.allowed_extensions",
       title: "允许扩展名",
       describe: "英文逗号分隔，留空时使用系统默认白名单",
-      values: "jpg,jpeg,png,gif,webp,svg,pdf,doc,docx,xls,xlsx,txt,csv,zip,mp3,mp4,webm",
+      values: "jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv,zip,mp3,mp4,webm",
       type: "textarea",
       sort: 2,
     },
@@ -253,7 +272,7 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       key: "file.denied_extensions",
       title: "禁止扩展名",
       describe: "英文逗号分隔，优先级高于允许扩展名",
-      values: "exe,bat,cmd,sh,php",
+      values: "exe,bat,cmd,sh,php,html,htm,js,mjs,svg",
       type: "textarea",
       sort: 3,
     },
@@ -292,6 +311,169 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       values: "false",
       type: "switch",
       sort: 7,
+    },
+    {
+      groupId: 3,
+      key: "security.password_min_length",
+      title: "密码最小长度",
+      describe: "新密码和重置密码的最小长度",
+      values: "6",
+      type: "digit",
+      sort: 1,
+    },
+    {
+      groupId: 3,
+      key: "security.password_require_uppercase",
+      title: "要求大写字母",
+      describe: "开启后密码必须包含大写字母",
+      values: "false",
+      type: "switch",
+      sort: 2,
+    },
+    {
+      groupId: 3,
+      key: "security.password_require_lowercase",
+      title: "要求小写字母",
+      describe: "开启后密码必须包含小写字母",
+      values: "false",
+      type: "switch",
+      sort: 3,
+    },
+    {
+      groupId: 3,
+      key: "security.password_require_number",
+      title: "要求数字",
+      describe: "开启后密码必须包含数字",
+      values: "false",
+      type: "switch",
+      sort: 4,
+    },
+    {
+      groupId: 3,
+      key: "security.password_require_symbol",
+      title: "要求特殊字符",
+      describe: "开启后密码必须包含特殊字符",
+      values: "false",
+      type: "switch",
+      sort: 5,
+    },
+    {
+      groupId: 3,
+      key: "security.password_history_count",
+      title: "密码历史数量",
+      describe: "禁止复用最近 N 次密码，0 表示不检查",
+      values: "3",
+      type: "digit",
+      sort: 6,
+    },
+    {
+      groupId: 3,
+      key: "security.password_expire_days",
+      title: "密码有效天数",
+      describe: "0 表示不过期",
+      values: "0",
+      type: "digit",
+      sort: 7,
+    },
+    {
+      groupId: 3,
+      key: "security.force_change_on_first_login",
+      title: "首次登录强制改密",
+      describe: "预留策略项",
+      values: "false",
+      type: "switch",
+      sort: 8,
+    },
+    {
+      groupId: 4,
+      key: "login.max_failed_attempts",
+      title: "失败锁定次数",
+      describe: "连续失败达到次数后锁定账号，0 表示不锁定",
+      values: "5",
+      type: "digit",
+      sort: 1,
+    },
+    {
+      groupId: 4,
+      key: "login.lock_minutes",
+      title: "锁定分钟数",
+      describe: "失败锁定持续时间",
+      values: "15",
+      type: "digit",
+      sort: 2,
+    },
+    {
+      groupId: 4,
+      key: "login.captcha_enabled",
+      title: "启用验证码",
+      describe: "开启后登录页显示验证码，并要求登录接口校验验证码",
+      values: "false",
+      type: "switch",
+      sort: 3,
+    },
+    {
+      groupId: 4,
+      key: "login.allow_multi_session",
+      title: "允许多端登录",
+      describe: "关闭后登录会撤销该用户其他会话",
+      values: "true",
+      type: "switch",
+      sort: 4,
+    },
+    {
+      groupId: 4,
+      key: "login.max_online_tokens",
+      title: "最大在线会话数",
+      describe: "每个用户最多保留的有效会话数，0 表示不限制",
+      values: "0",
+      type: "digit",
+      sort: 5,
+    },
+    {
+      groupId: 4,
+      key: "login.oauth_providers_json",
+      title: "第三方登录配置",
+      describe:
+        'JSON 数组；仅 enabled=true 且 authUrl 为 http(s) 的 provider 会显示在登录页，例如 [{"key":"github","name":"GitHub","enabled":true,"authUrl":"https://github.com/login/oauth/authorize?..."}]',
+      values: "[]",
+      type: "textarea",
+      sort: 6,
+    },
+    {
+      groupId: 5,
+      key: "token.access_token_ttl_days",
+      title: "Token 有效天数",
+      describe: "未勾选记住登录时的 token 有效期",
+      values: "7",
+      type: "digit",
+      sort: 1,
+    },
+    {
+      groupId: 5,
+      key: "token.remember_ttl_days",
+      title: "记住登录有效天数",
+      describe: "勾选记住登录时的 token 有效期，0 表示不过期",
+      values: "30",
+      type: "digit",
+      sort: 2,
+    },
+    {
+      groupId: 5,
+      key: "token.refresh_last_used",
+      title: "刷新最近活跃时间",
+      describe: "请求时刷新 token 最近活跃时间",
+      values: "true",
+      type: "switch",
+      sort: 3,
+    },
+    {
+      groupId: 5,
+      key: "token.cleanup_expired_days",
+      title: "过期会话清理窗口",
+      describe: "清理早于 N 天前过期的 token",
+      values: "30",
+      type: "digit",
+      sort: 4,
     },
   ]) {
     await insertConfig.run(

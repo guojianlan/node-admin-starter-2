@@ -2,17 +2,20 @@
 
 import { Drawer, Grid, Layout } from "antd";
 import { useState } from "react";
+import { useAdminPreferences } from "@/ui/preferences";
 import { AdminHeader } from "./AdminHeader";
 import { AdminMenu } from "./AdminMenu";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
+  const { layoutMode } = useAdminPreferences();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
+  const useTopMenu = layoutMode === "top";
 
   return (
-    <Layout className="xin-shell">
+    <Layout className={`xin-shell xin-layout-${layoutMode}`}>
       <AdminHeader
         collapsed={isMobile ? false : collapsed}
         onToggleCollapsed={() => {
@@ -23,7 +26,18 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           setCollapsed((value) => !value);
         }}
       />
-      {!isMobile ? (
+      {!isMobile && useTopMenu ? (
+        <>
+          <div className="xin-top-menu-bar">
+            <AdminMenu mode="horizontal" />
+          </div>
+          <Layout className="xin-main-layout">
+            <Layout.Content className="xin-content">{children}</Layout.Content>
+            <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
+          </Layout>
+        </>
+      ) : null}
+      {!isMobile && !useTopMenu ? (
         <Layout className="xin-shell-body">
           <Layout.Sider
             className="xin-sider"

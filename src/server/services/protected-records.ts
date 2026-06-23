@@ -38,3 +38,24 @@ export async function getSystemFlag(db: DbClient, table: string, id: number) {
     .get(id)) as { isSystem?: boolean | null; is_system?: boolean | null } | undefined;
   return Boolean(row?.isSystem ?? row?.is_system);
 }
+
+export async function assertSystemCodeUnchanged(input: {
+  db: DbClient;
+  table: string;
+  id: number;
+  nextCode: unknown;
+  message: string;
+}) {
+  if (input.nextCode === undefined) return;
+
+  const row = (await input.db
+    .prepare(`SELECT is_system AS isSystem, code FROM ${input.table} WHERE id = ?`)
+    .get(input.id)) as
+    | { isSystem?: boolean | null; is_system?: boolean | null; code?: string | null }
+    | undefined;
+
+  if (!row || !Boolean(row.isSystem ?? row.is_system)) return;
+  if (String(row.code ?? "") !== String(input.nextCode ?? "")) {
+    throw new Error(input.message);
+  }
+}

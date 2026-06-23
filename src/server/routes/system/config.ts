@@ -8,7 +8,12 @@ import { sysConfigGroup, sysConfigItems } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
-import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
+import {
+  assertNotSystemRecords,
+  assertSystemCodeUnchanged,
+  getSystemFlag,
+} from "@/server/services/protected-records";
 
 const groupSchema = z.object({
   name: z.string().min(1),
@@ -54,9 +59,13 @@ const configGroupCrud = createCrudRoutes({
   },
   hooks: {
     beforeUpdate: async (ctx, id, values) => {
-      if ((await getSystemFlag(ctx.sql, "sys_config_group", id)) && values.code !== undefined) {
-        throw new Error("系统内置配置组不能修改编码");
-      }
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_config_group",
+        id,
+        nextCode: values.code,
+        message: "系统内置配置组不能修改编码",
+      });
       return values;
     },
     beforeDelete: (ctx, ids) =>
@@ -132,12 +141,23 @@ export const configRoutes = new Hono<{ Variables: HonoVariables }>();
 
 configRoutes.put("/config/items/save", authRequired(), ability("system.config.save"), async (c) => {
   const payload = z.record(z.string(), z.unknown()).parse(await c.req.json());
-  const update = sqlite.prepare(
-    `UPDATE sys_config_items SET "values" = ?, updated_at = ? WHERE key = ?`,
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.config",
+      action: "save",
+      resource: "/config/items",
+      details: { keys: Object.keys(payload) },
+    },
+    async () => {
+      const update = sqlite.prepare(
+        `UPDATE sys_config_items SET "values" = ?, updated_at = ? WHERE key = ?`,
+      );
+      for (const [key, value] of Object.entries(payload)) {
+        await update.run(typeof value === "string" ? value : JSON.stringify(value), nowIso(), key);
+      }
+    },
   );
-  for (const [key, value] of Object.entries(payload)) {
-    await update.run(typeof value === "string" ? value : JSON.stringify(value), nowIso(), key);
-  }
   return c.json(success(null, "保存成功"));
 });
 

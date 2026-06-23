@@ -62,9 +62,10 @@ function toMenuItems(nodes: MenuNode[], onNavigate?: () => void): MenuProps["ite
 
 type AdminMenuProps = {
   onNavigate?: () => void;
+  mode?: "inline" | "horizontal";
 };
 
-export function AdminMenu({ onNavigate }: AdminMenuProps) {
+export function AdminMenu({ onNavigate, mode = "inline" }: AdminMenuProps) {
   const pathname = usePathname();
   const navigation = useNavigationAdapter();
   const menus = useAuthStore((state) => state.menus);
@@ -98,11 +99,11 @@ export function AdminMenu({ onNavigate }: AdminMenuProps) {
   return (
     <Menu
       className="xin-menu"
-      mode="inline"
+      mode={mode}
       items={items}
       selectedKeys={[...selectedKeys, ...parentSelectedKeys]}
-      openKeys={openKeys}
-      onOpenChange={handleOpenChange}
+      openKeys={mode === "inline" ? openKeys : undefined}
+      onOpenChange={mode === "inline" ? handleOpenChange : undefined}
       onClick={(info) => {
         const key = String(info.key);
         const menu = findMenuByKey(menus, key);

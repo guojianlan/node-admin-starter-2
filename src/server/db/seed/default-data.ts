@@ -176,6 +176,69 @@ const moduleRules = [
       ["test", "测试发送"],
     ],
   },
+  {
+    route: {
+      id: 100,
+      parentId: 2,
+      key: "system.operationLog",
+      name: "操作日志",
+      path: "/system/operation/log",
+      icon: "operationLog",
+      order: 100,
+    },
+    actions: [["query", "查询操作日志"]],
+  },
+  {
+    route: {
+      id: 110,
+      parentId: 2,
+      key: "system.loginLog",
+      name: "登录日志",
+      path: "/system/login/log",
+      icon: "loginLog",
+      order: 110,
+    },
+    actions: [
+      ["query", "查询登录日志"],
+      ["delete", "删除登录日志"],
+      ["clean", "清理登录日志"],
+    ],
+  },
+  {
+    route: {
+      id: 120,
+      parentId: 2,
+      key: "system.onlineUser",
+      name: "在线用户",
+      path: "/system/online/user",
+      icon: "onlineUser",
+      order: 120,
+    },
+    actions: [
+      ["query", "查询在线用户"],
+      ["kick", "强制下线"],
+      ["clean", "清理过期会话"],
+    ],
+  },
+  {
+    route: {
+      id: 130,
+      parentId: 2,
+      key: "system.notice",
+      name: "通知公告",
+      path: "/system/notice",
+      icon: "notice",
+      order: 130,
+    },
+    actions: [
+      ["query", "查询公告"],
+      ["create", "新增公告"],
+      ["update", "编辑公告"],
+      ["delete", "删除公告"],
+      ["publish", "发布公告"],
+      ["revoke", "撤回公告"],
+    ],
+  },
 ] as const;
 
 export const seedRules: SeedRule[] = [
@@ -233,6 +296,35 @@ export const seedRules: SeedRule[] = [
     name: "系统管理",
     icon: "system",
     order: 10,
+  },
+  {
+    id: 140,
+    parentId: 0,
+    type: "route",
+    key: "profile",
+    name: "个人中心",
+    path: "/profile",
+    icon: "profile",
+    order: 30,
+    hidden: 0,
+  },
+  {
+    id: 141,
+    parentId: 140,
+    type: "action",
+    key: "profile.query",
+    name: "查看个人中心",
+    order: 1,
+    hidden: 0,
+  },
+  {
+    id: 142,
+    parentId: 140,
+    type: "action",
+    key: "profile.update",
+    name: "更新个人资料",
+    order: 2,
+    hidden: 0,
   },
   ...moduleRules.flatMap((moduleItem) => {
     const route: SeedRule = {

@@ -15,6 +15,12 @@ import {
   resolveDataScope,
 } from "@/server/services/data-scope";
 import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
+import {
+  assertPasswordPolicy,
+  recordPasswordHistory,
+  revokeUserTokens,
+} from "@/server/services/security-policy-service";
 
 const userCreateSchema = z.object({
   username: z.string().min(2),
@@ -216,10 +222,32 @@ userRoutes.put(
       })
       .parse(await c.req.json());
 
-    const passwordHash = await bcrypt.hash(payload.password, 10);
-    await sqlite
-      .prepare("UPDATE sys_user SET password_hash = ?, updated_at = now() WHERE id = ?")
-      .run(passwordHash, payload.id);
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.user",
+        action: "resetPassword",
+        resource: "/user",
+        resourceId: payload.id,
+      },
+      async () => {
+        await assertPasswordPolicy({ password: payload.password, userId: payload.id });
+        const passwordHash = await bcrypt.hash(payload.password, 10);
+        await sqlite
+          .prepare(
+            `UPDATE sys_user
+             SET password_hash = ?,
+                 password_updated_at = now(),
+                 failed_login_attempts = 0,
+                 locked_until = NULL,
+                 updated_at = now()
+             WHERE id = ?`,
+          )
+          .run(passwordHash, payload.id);
+        await recordPasswordHistory({ userId: payload.id, passwordHash });
+        await revokeUserTokens({ userId: payload.id });
+      },
+    );
     return c.json(success(null, "重置成功"));
   },
 );

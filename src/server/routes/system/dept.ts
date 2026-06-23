@@ -13,7 +13,7 @@ import {
   buildDataScopeWhereSql,
   resolveDataScope,
 } from "@/server/services/data-scope";
-import { getSystemFlag } from "@/server/services/protected-records";
+import { assertSystemCodeUnchanged, getSystemFlag } from "@/server/services/protected-records";
 import { buildListQuery } from "@/server/services/list-query";
 
 const deptSchema = z.object({
@@ -66,7 +66,13 @@ const deptCrud = createCrudRoutes({
     beforeUpdate: async (ctx, id, values) => {
       const isSystem = await getSystemFlag(ctx.sql, "sys_dept", id);
       if (isSystem && values.status === 0) throw new Error("默认部门不能停用");
-      if (isSystem && values.code !== undefined) throw new Error("默认部门不能修改编码");
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_dept",
+        id,
+        nextCode: values.code,
+        message: "默认部门不能修改编码",
+      });
       return values;
     },
     beforeDelete: async (ctx, ids) => {

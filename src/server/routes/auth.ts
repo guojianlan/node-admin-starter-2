@@ -5,27 +5,150 @@ import type { HonoVariables } from "@/server/context";
 import { authRequired } from "@/server/middleware/auth";
 import { getUserAccess, getUserMenus, login, logout } from "@/server/services/auth-service";
 import { resolveDataScopeForUser } from "@/server/services/data-scope";
+import {
+  confirmPasswordReset,
+  createLoginCaptcha,
+  getPublicOauthProviders,
+  requestPasswordReset,
+  verifyLoginCaptcha,
+} from "@/server/services/login-security-service";
+import { recordOperationLog } from "@/server/services/operation-log-service";
+import { getSecurityPolicy } from "@/server/services/security-policy-service";
 
 const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
   remember: z.boolean().optional(),
+  captchaId: z.string().optional(),
+  captchaCode: z.string().optional(),
+});
+
+const forgotPasswordSchema = z.object({
+  account: z.string().min(1),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(1),
 });
 
 export const authRoutes = new Hono<{ Variables: HonoVariables }>();
 
+authRoutes.get("/login/options", async (c) => {
+  const policy = await getSecurityPolicy();
+  return c.json(
+    success({
+      captchaEnabled: policy.captchaEnabled,
+      oauthProviders: await getPublicOauthProviders(),
+    }),
+  );
+});
+
+authRoutes.get("/login/captcha", async (c) => {
+  return c.json(success(createLoginCaptcha()));
+});
+
 authRoutes.post("/login", async (c) => {
   const payload = loginSchema.parse(await c.req.json());
-  const result = await login({
-    ...payload,
+  try {
+    const policy = await getSecurityPolicy();
+    if (
+      policy.captchaEnabled &&
+      !verifyLoginCaptcha({ captchaId: payload.captchaId, captchaCode: payload.captchaCode })
+    ) {
+      throw new Error("验证码错误或已过期");
+    }
+    const result = await login({
+      ...payload,
+      ip: c.req.header("x-forwarded-for") ?? null,
+      userAgent: c.req.header("user-agent") ?? null,
+    });
+    await recordOperationLog(c, {
+      userId: result.user.id,
+      username: result.user.username,
+      module: "system.auth",
+      action: "login",
+      resource: "/auth",
+      resourceId: result.user.id,
+      status: 200,
+      success: true,
+      details: { username: payload.username, remember: Boolean(payload.remember) },
+    });
+    return c.json(success(result, "登录成功"));
+  } catch (error) {
+    await recordOperationLog(c, {
+      username: payload.username,
+      module: "system.auth",
+      action: "login",
+      resource: "/auth",
+      status: 500,
+      success: false,
+      message: error instanceof Error ? error.message : String(error),
+      details: { username: payload.username, remember: Boolean(payload.remember) },
+    });
+    throw error;
+  }
+});
+
+authRoutes.post("/password-reset/request", async (c) => {
+  const payload = forgotPasswordSchema.parse(await c.req.json());
+  const url = new URL(c.req.url);
+  const origin = c.req.header("origin") || `${url.protocol}//${url.host}`;
+  const result = await requestPasswordReset({
+    account: payload.account,
+    origin,
     ip: c.req.header("x-forwarded-for") ?? null,
     userAgent: c.req.header("user-agent") ?? null,
   });
-  return c.json(success(result, "登录成功"));
+  await recordOperationLog(c, {
+    username: payload.account,
+    module: "system.auth",
+    action: "forgotPassword",
+    resource: "/auth",
+    status: 200,
+    success: true,
+    details: {
+      account: payload.account,
+      requested: result.requested,
+      emailSent: result.emailSent,
+    },
+  });
+  return c.json(
+    success(
+      {
+        debugResetToken: result.debugResetToken,
+      },
+      "如果账号存在且已绑定邮箱，系统会发送密码重置邮件",
+    ),
+  );
+});
+
+authRoutes.post("/password-reset/confirm", async (c) => {
+  const payload = resetPasswordSchema.parse(await c.req.json());
+  await confirmPasswordReset(payload);
+  await recordOperationLog(c, {
+    module: "system.auth",
+    action: "resetPassword",
+    resource: "/auth",
+    status: 200,
+    success: true,
+  });
+  return c.json(success(null, "密码已重置，请重新登录"));
 });
 
 authRoutes.post("/logout", authRequired(), async (c) => {
+  const user = c.get("user");
   await logout(c.get("tokenHash"));
+  await recordOperationLog(c, {
+    userId: user.id,
+    username: user.username,
+    module: "system.auth",
+    action: "logout",
+    resource: "/auth",
+    resourceId: user.id,
+    status: 200,
+    success: true,
+  });
   return c.json(success(null, "退出成功"));
 });
 

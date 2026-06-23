@@ -6,7 +6,10 @@ import { sqlite } from "@/server/db";
 import { sysDict, sysDictItem } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { authRequired } from "@/server/middleware/auth";
-import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
+import {
+  assertNotSystemRecords,
+  assertSystemCodeUnchanged,
+} from "@/server/services/protected-records";
 
 const dictSchema = z.object({
   name: z.string().min(1),
@@ -54,9 +57,13 @@ const dictCrud = createCrudRoutes({
   },
   hooks: {
     beforeUpdate: async (ctx, id, values) => {
-      if ((await getSystemFlag(ctx.sql, "sys_dict", id)) && values.code !== undefined) {
-        throw new Error("系统内置字典不能修改编码");
-      }
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_dict",
+        id,
+        nextCode: values.code,
+        message: "系统内置字典不能修改编码",
+      });
       return values;
     },
     beforeDelete: (ctx, ids) =>

@@ -10,7 +10,12 @@ import { sysRole } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildDataScopeWhereSql, resolveDataScope } from "@/server/services/data-scope";
-import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
+import {
+  assertNotSystemRecords,
+  assertSystemCodeUnchanged,
+  getSystemFlag,
+} from "@/server/services/protected-records";
 import { buildListQuery } from "@/server/services/list-query";
 
 const dataScopeSchema = z.enum(["all", "custom_dept", "current_dept", "current_dept_tree", "self"]);
@@ -82,13 +87,18 @@ const roleCrud = createCrudRoutes({
       dataScope: sysRole.dataScope,
       isSystem: sysRole.isSystem,
       createdAt: sysRole.createdAt,
-      userCount: drizzleSql<number>`(SELECT COUNT(1)::int FROM sys_user_role WHERE role_id = ${sysRole.id})`.as(
-        "userCount",
-      ),
-      ruleIds: drizzleSql<string | null>`(SELECT STRING_AGG(rule_id::text, ',') FROM sys_role_rule WHERE role_id = ${sysRole.id})`.as(
+      userCount:
+        drizzleSql<number>`(SELECT COUNT(1)::int FROM sys_user_role WHERE role_id = ${sysRole.id})`.as(
+          "userCount",
+        ),
+      ruleIds: drizzleSql<
+        string | null
+      >`(SELECT STRING_AGG(rule_id::text, ',') FROM sys_role_rule WHERE role_id = ${sysRole.id})`.as(
         "ruleIds",
       ),
-      deptIds: drizzleSql<string | null>`(SELECT STRING_AGG(dept_id::text, ',') FROM sys_role_dept WHERE role_id = ${sysRole.id})`.as(
+      deptIds: drizzleSql<
+        string | null
+      >`(SELECT STRING_AGG(dept_id::text, ',') FROM sys_role_dept WHERE role_id = ${sysRole.id})`.as(
         "deptIds",
       ),
     },
@@ -115,7 +125,13 @@ const roleCrud = createCrudRoutes({
     beforeUpdate: async (ctx, id, values) => {
       const isSystem = await getSystemFlag(ctx.sql, "sys_role", id);
       if (!isSystem) return values;
-      if (values.code !== undefined) throw new Error("系统内置角色不能修改编码");
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_role",
+        id,
+        nextCode: values.code,
+        message: "系统内置角色不能修改编码",
+      });
       if (values.status === 0) throw new Error("系统内置角色不能停用");
       if (values.dataScope && values.dataScope !== "all") {
         throw new Error("超级管理员角色必须保持全部数据权限");
@@ -233,7 +249,9 @@ roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), 
     quickSearchFields: ["username", "nickname", "email", "mobile"],
     sortableFields: ["id", "username", "status", "createdAt"],
     defaultSort: { field: "id", order: "asc" },
-    baseWhere: [`sur.role_id = ${roleId}`, "u.deleted_at IS NULL", scopeWhere].filter(Boolean) as string[],
+    baseWhere: [`sur.role_id = ${roleId}`, "u.deleted_at IS NULL", scopeWhere].filter(
+      Boolean,
+    ) as string[],
   });
 
   return c.json(success(page));
@@ -242,12 +260,26 @@ roleRoutes.get("/role/users/:id", authRequired(), ability("system.role.query"), 
 roleRoutes.put("/role/status/:id", authRequired(), ability("system.role.status"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
-  if (payload.status === 0 && (await getSystemFlag(sqlite, "sys_role", id))) {
-    throw new Error("系统内置角色不能停用");
-  }
-  await sqlite
-    .prepare("UPDATE sys_role SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL")
-    .run(payload.status, id);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.role",
+      action: "status",
+      resource: "/role",
+      resourceId: id,
+      details: { status: payload.status },
+    },
+    async () => {
+      if (payload.status === 0 && (await getSystemFlag(sqlite, "sys_role", id))) {
+        throw new Error("系统内置角色不能停用");
+      }
+      await sqlite
+        .prepare(
+          "UPDATE sys_role SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(payload.status, id);
+    },
+  );
   return c.json(success(null, "更新成功"));
 });
 
@@ -258,12 +290,24 @@ roleRoutes.post("/role/setRule", authRequired(), ability("system.role.setRule"),
       ruleIds: z.array(z.coerce.number()).default([]),
     })
     .parse(await c.req.json());
-  if (await getSystemFlag(sqlite, "sys_role", payload.id)) {
-    throw new Error("系统内置角色不能通过分配权限接口修改权限");
-  }
-  await sqlite.transaction(async (tx) => {
-    await syncRoleRules(tx, payload.id, payload.ruleIds);
-  });
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.role",
+      action: "setRule",
+      resource: "/role",
+      resourceId: payload.id,
+      details: { ruleCount: payload.ruleIds.length },
+    },
+    async () => {
+      if (await getSystemFlag(sqlite, "sys_role", payload.id)) {
+        throw new Error("系统内置角色不能通过分配权限接口修改权限");
+      }
+      await sqlite.transaction(async (tx) => {
+        await syncRoleRules(tx, payload.id, payload.ruleIds);
+      });
+    },
+  );
   return c.json(success(null, "分配成功"));
 });
 

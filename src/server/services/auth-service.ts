@@ -3,7 +3,11 @@ import crypto from "node:crypto";
 import { buildTree } from "@/lib/tree";
 import { nowIso, sqlite } from "@/server/db";
 import type { AdminUserContext } from "@/server/context";
-import { getAdminBaseEnv } from "@/server/env";
+import {
+  enforceSessionPolicy,
+  getSecurityPolicy,
+  recordPasswordHistory,
+} from "@/server/services/security-policy-service";
 
 type UserRow = {
   id: number;
@@ -13,6 +17,8 @@ type UserRow = {
   email: string | null;
   mobile: string | null;
   deptId: number | null;
+  lockedUntil: string | Date | null;
+  failedLoginAttempts: number;
   status: number;
 };
 
@@ -110,6 +116,8 @@ export async function getUserById(userId: number) {
         email,
         mobile,
         dept_id AS deptId,
+        locked_until AS lockedUntil,
+        failed_login_attempts AS failedLoginAttempts,
         status
        FROM sys_user
        WHERE id = ? AND deleted_at IS NULL`,
@@ -199,6 +207,7 @@ export async function getUserMenus(userId: number) {
 }
 
 export async function login(input: LoginInput) {
+  const policy = await getSecurityPolicy();
   const user = (await sqlite
     .prepare(
       `SELECT
@@ -209,6 +218,8 @@ export async function login(input: LoginInput) {
         email,
         mobile,
         dept_id AS deptId,
+        locked_until AS lockedUntil,
+        failed_login_attempts AS failedLoginAttempts,
         status
        FROM sys_user
        WHERE username = ? AND deleted_at IS NULL`,
@@ -220,8 +231,25 @@ export async function login(input: LoginInput) {
     throw new Error("账号或密码错误");
   }
 
+  if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
+    await recordLogin({ ...input, status: 0, message: "账号已锁定" });
+    throw new Error("账号已锁定，请稍后再试");
+  }
+
   const passwordMatched = await bcrypt.compare(input.password, user.passwordHash);
   if (!passwordMatched) {
+    const nextAttempts = Number(user.failedLoginAttempts ?? 0) + 1;
+    const shouldLock = policy.maxFailedAttempts > 0 && nextAttempts >= policy.maxFailedAttempts;
+    const lockedUntil = shouldLock
+      ? new Date(Date.now() + Math.max(policy.lockMinutes, 1) * 60 * 1000).toISOString()
+      : null;
+    await sqlite
+      .prepare(
+        `UPDATE sys_user
+         SET failed_login_attempts = ?, locked_until = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(nextAttempts, lockedUntil, nowIso(), user.id);
     await recordLogin({ ...input, status: 0, message: "密码错误" });
     throw new Error("账号或密码错误");
   }
@@ -235,23 +263,45 @@ export async function login(input: LoginInput) {
   const tokenHash = hashToken(token);
   const access = await getUserAccess(user.id);
   const now = nowIso();
-  const ttlDays = getAdminBaseEnv().adminBaseTokenTtlDays;
-  const expiresAt = input.remember
-    ? null
-    : new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString();
+  const ttlDays = input.remember ? policy.rememberTtlDays : policy.accessTokenTtlDays;
+  const expiresAt =
+    input.remember && ttlDays <= 0
+      ? null
+      : new Date(Date.now() + Math.max(ttlDays, 1) * 24 * 60 * 60 * 1000).toISOString();
 
   await sqlite
     .prepare(
       `INSERT INTO sys_access_token
-        (user_id, name, token_hash, abilities_json, last_used_at, expires_at, created_at, updated_at)
+        (user_id, name, token_hash, abilities_json, ip, user_agent, last_used_at, expires_at, created_at, updated_at)
        VALUES
-        (?, 'web', ?, ?, ?, ?, ?, ?)`,
+        (?, 'web', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(user.id, tokenHash, JSON.stringify(access), now, expiresAt, now, now);
+    .run(
+      user.id,
+      tokenHash,
+      JSON.stringify(access),
+      input.ip ?? null,
+      input.userAgent ?? null,
+      now,
+      expiresAt,
+      now,
+      now,
+    );
+  await enforceSessionPolicy({ userId: user.id, currentTokenHash: tokenHash });
 
   await sqlite
-    .prepare("UPDATE sys_user SET login_ip = ?, login_time = ?, updated_at = ? WHERE id = ?")
+    .prepare(
+      `UPDATE sys_user
+       SET login_ip = ?,
+           login_time = ?,
+           failed_login_attempts = 0,
+           locked_until = NULL,
+           password_updated_at = COALESCE(password_updated_at, updated_at),
+           updated_at = ?
+       WHERE id = ?`,
+    )
     .run(input.ip ?? null, now, now, user.id);
+  await recordPasswordHistory({ userId: user.id, passwordHash: user.passwordHash });
 
   await recordLogin({ ...input, status: 1, message: "登录成功" });
 
@@ -281,9 +331,12 @@ export async function resolveToken(token: string) {
   const user = await getUserById(tokenRow.userId);
   if (!user || user.status !== 1) return null;
 
-  await sqlite
-    .prepare("UPDATE sys_access_token SET last_used_at = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), nowIso(), tokenRow.id);
+  const policy = await getSecurityPolicy();
+  if (policy.refreshLastUsed) {
+    await sqlite
+      .prepare("UPDATE sys_access_token SET last_used_at = ?, updated_at = ? WHERE id = ?")
+      .run(nowIso(), nowIso(), tokenRow.id);
+  }
 
   return {
     tokenHash,

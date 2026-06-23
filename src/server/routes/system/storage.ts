@@ -8,6 +8,8 @@ import { sqlite } from "@/server/db";
 import { sysStorage } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
+import { assertSystemCodeUnchanged } from "@/server/services/protected-records";
 import { encryptSecret } from "@/server/services/secret";
 import { getStorageById, testStorageConnection } from "@/server/services/storage-service";
 
@@ -62,9 +64,10 @@ const storageCrud = createCrudRoutes({
       region: sysStorage.region,
       bucket: sysStorage.bucket,
       accessKey: sysStorage.accessKey,
-      hasSecretKey: drizzleSql<boolean>`(${sysStorage.secretKeyEncrypted} IS NOT NULL AND ${sysStorage.secretKeyEncrypted} <> '')`.as(
-        "hasSecretKey",
-      ),
+      hasSecretKey:
+        drizzleSql<boolean>`(${sysStorage.secretKeyEncrypted} IS NOT NULL AND ${sysStorage.secretKeyEncrypted} <> '')`.as(
+          "hasSecretKey",
+        ),
       baseUrl: sysStorage.baseUrl,
       rootPath: sysStorage.rootPath,
       isDefault: sysStorage.isDefault,
@@ -87,13 +90,14 @@ const storageCrud = createCrudRoutes({
   },
   hooks: {
     beforeCreate: (_ctx, values) => withEncryptedSecret(values),
-    beforeUpdate: async (_ctx, id, values) => {
-      const row = (await sqlite
-        .prepare("SELECT is_system AS isSystem FROM sys_storage WHERE id = ?")
-        .get(id)) as { isSystem?: boolean } | undefined;
-      if (row?.isSystem && values.code !== undefined) {
-        throw new Error("系统内置存储不能修改编码");
-      }
+    beforeUpdate: async (ctx, id, values) => {
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_storage",
+        id,
+        nextCode: values.code,
+        message: "系统内置存储不能修改编码",
+      });
       return withEncryptedSecret(values);
     },
     beforeDelete: async (_ctx, ids) => {
@@ -104,19 +108,38 @@ const storageCrud = createCrudRoutes({
 
 export const storageRoutes = new Hono<{ Variables: HonoVariables }>();
 
-storageRoutes.put("/storage/status/:id", authRequired(), ability("system.storage.status"), async (c) => {
-  const id = Number(c.req.param("id"));
-  const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
-  const row = (await sqlite
-    .prepare("SELECT is_default AS isDefault FROM sys_storage WHERE id = ? AND deleted_at IS NULL")
-    .get(id)) as { isDefault?: boolean } | undefined;
-  if (!row) throw new Error("存储配置不存在");
-  if (row.isDefault && payload.status === 0) throw new Error("默认存储不能停用");
-  await sqlite
-    .prepare("UPDATE sys_storage SET status = ?, updated_at = now() WHERE id = ?")
-    .run(payload.status, id);
-  return c.json(success(null, "更新成功"));
-});
+storageRoutes.put(
+  "/storage/status/:id",
+  authRequired(),
+  ability("system.storage.status"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.storage",
+        action: "status",
+        resource: "/storage",
+        resourceId: id,
+        details: { status: payload.status },
+      },
+      async () => {
+        const row = (await sqlite
+          .prepare(
+            "SELECT is_default AS isDefault FROM sys_storage WHERE id = ? AND deleted_at IS NULL",
+          )
+          .get(id)) as { isDefault?: boolean } | undefined;
+        if (!row) throw new Error("存储配置不存在");
+        if (row.isDefault && payload.status === 0) throw new Error("默认存储不能停用");
+        await sqlite
+          .prepare("UPDATE sys_storage SET status = ?, updated_at = now() WHERE id = ?")
+          .run(payload.status, id);
+      },
+    );
+    return c.json(success(null, "更新成功"));
+  },
+);
 
 storageRoutes.put(
   "/storage/default/:id",
@@ -124,13 +147,26 @@ storageRoutes.put(
   ability("system.storage.setDefault"),
   async (c) => {
     const id = Number(c.req.param("id"));
-    const row = await getStorageById(id);
-    if (!row) throw new Error("存储配置不存在");
-    if (row.status !== 1) throw new Error("停用的存储不能设为默认");
-    await sqlite.transaction(async (tx) => {
-      await tx.prepare("UPDATE sys_storage SET is_default = false, updated_at = now()").run();
-      await tx.prepare("UPDATE sys_storage SET is_default = true, updated_at = now() WHERE id = ?").run(id);
-    });
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.storage",
+        action: "setDefault",
+        resource: "/storage",
+        resourceId: id,
+      },
+      async () => {
+        const row = await getStorageById(id);
+        if (!row) throw new Error("存储配置不存在");
+        if (row.status !== 1) throw new Error("停用的存储不能设为默认");
+        await sqlite.transaction(async (tx) => {
+          await tx.prepare("UPDATE sys_storage SET is_default = false, updated_at = now()").run();
+          await tx
+            .prepare("UPDATE sys_storage SET is_default = true, updated_at = now() WHERE id = ?")
+            .run(id);
+        });
+      },
+    );
     return c.json(success(null, "设置成功"));
   },
 );
@@ -143,17 +179,29 @@ storageRoutes.post("/storage/test", authRequired(), ability("system.storage.test
     })
     .parse(await c.req.json());
 
-  if (payload.id) {
-    const row = await getStorageById(payload.id);
-    if (!row) throw new Error("存储配置不存在");
-    await testStorageConnection(row);
-  } else {
-    const config = storageSchema.parse(payload.config ?? {});
-    await testStorageConnection({
-      ...config,
-      secretKeyEncrypted: encryptSecret(config.secretKey),
-    });
-  }
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.storage",
+      action: "test",
+      resource: "/storage",
+      resourceId: payload.id ?? null,
+      details: { mode: payload.id ? "saved" : "draft" },
+    },
+    async () => {
+      if (payload.id) {
+        const row = await getStorageById(payload.id);
+        if (!row) throw new Error("存储配置不存在");
+        await testStorageConnection(row);
+      } else {
+        const config = storageSchema.parse(payload.config ?? {});
+        await testStorageConnection({
+          ...config,
+          secretKeyEncrypted: encryptSecret(config.secretKey),
+        });
+      }
+    },
+  );
 
   return c.json(success(null, "测试成功"));
 });

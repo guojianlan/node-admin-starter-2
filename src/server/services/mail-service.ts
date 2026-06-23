@@ -97,3 +97,28 @@ export async function sendTestMail(input: {
     throw new Error(normalizeMailError(error));
   }
 }
+
+export async function sendMail(input: {
+  accountId?: number;
+  to: string;
+  subject: string;
+  text: string;
+}) {
+  const account = await getMailAccount(input.accountId);
+  if (account.status !== 1) throw new Error("邮件账号已停用");
+
+  const transporter = createTransport(account);
+  try {
+    await transporter.sendMail({
+      from: account.fromName
+        ? `"${account.fromName}" <${account.fromEmail}>`
+        : account.fromEmail,
+      to: input.to,
+      replyTo: account.replyTo || undefined,
+      subject: input.subject,
+      text: input.text,
+    });
+  } catch (error) {
+    throw new Error(normalizeMailError(error));
+  }
+}

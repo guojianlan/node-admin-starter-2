@@ -1,16 +1,16 @@
 # Admin Base 生产级对齐路线
 
-> 当前核对：2026-06-22  
+> 当前核对：2026-06-23  
 > 目标：明确当前小版本之后，Admin Base 要补哪些能力，才能从“可用起手式”推进到“生产级快速开发框架”。  
 > 对齐对象：`xin-admin/xin-admin-laravel` 与 `ContiNew Admin`。只对齐能力和工程标准，不复制代码和框架结构。
 
 ## 1. 一句话结论
 
-当前 Admin Base 已经完成一个可用小版本：核心系统管理、权限、数据权限、文件、存储、邮件、React Query 请求层和后台 UX 已经闭环。
+当前 Admin Base 已经完成一个可用小版本：核心系统管理、权限、数据权限、文件、存储、邮件、登录日志、在线会话、个人中心、通知公告、React Query 请求层和后台 UX 已经闭环。
 
 距离生产级还有五类关键缺口：
 
-1. 安全默认值：生产密钥、管理员初始密码、CORS、上传安全、token/session 策略。
+1. 安全默认值：生产密钥、管理员初始密码、CORS、验证码和更完整的生产密码策略。
 2. 可诊断性：`pnpm run doctor`、`GET /api/ready`、结构化日志、操作日志、错误追踪。
 3. 发布治理：非破坏性 E2E、CI、迁移策略、备份恢复、部署文档。
 4. 开发效率：业务模块模板、CRUD generator、OpenAPI/API 文档、权限 seed 自动化。
@@ -20,16 +20,16 @@
 
 | 领域         | 当前状态                                                   | 生产级判断                                |
 | ------------ | ---------------------------------------------------------- | ----------------------------------------- |
-| 核心后台模块 | 用户、角色、菜单、部门、字典、配置、文件、存储、邮件已完成 | 可用                                      |
-| 权限         | `sys_rule` + token abilities + `ability()` + `AuthButton`  | 可用，需补操作日志                        |
+| 核心后台模块 | 用户、角色、菜单、部门、字典、配置、文件、存储、邮件、登录日志、在线会话、通知公告已完成 | 可用                                      |
+| 权限         | `sys_rule` + token abilities + `ability()` + `AuthButton`  | 可用，操作日志已完成第一版                |
 | 数据权限     | `data_scope` + `sys_role_dept` + service 过滤              | 可用，需补更多业务模板示例                |
 | CRUD 工程化  | Drizzle table + Zod + CRUD factory + route check           | 可用，需补 generator                      |
 | 启动         | 源码启动文档、doctor、ready 已完成第一版                   | 可用，需补 setup                          |
 | 数据库       | PostgreSQL-first、migration、seed                          | 可用，需补发布迁移规范和备份恢复          |
-| 安全         | 密码 hash、token hash、密钥加密、系统数据保护              | 基础可用，生产默认值需强化                |
-| 文件         | 本地/S3-compatible、策略、元数据、预览                     | 基础可用，需补病毒扫描/内容安全策略可选项 |
+| 安全         | 密码 hash、token hash、密钥加密、系统数据保护、安全/登录/token 策略、登录验证码、忘记密码重置 | 基础可用，生产默认值需继续强化            |
+| 文件         | 本地/S3-compatible、策略、元数据、预览、扩展名/MIME 基础校验 | 基础可用，需补病毒扫描/内容安全策略可选项 |
 | 邮件         | SMTP 配置、默认账号、测试发送                              | 可用，需补模板/业务发送 API 规范          |
-| 可观测性     | 只有 health 和测试                                         | 不足                                      |
+| 可观测性     | health、ready、doctor、Pino 请求日志、操作日志第一版       | 基础可用，需补错误追踪和外部观测平台      |
 | 部署         | build/start 命令存在                                       | 不足                                      |
 | CI/CD        | 无                                                         | 不足                                      |
 
@@ -48,11 +48,10 @@
 - `sys_rule` 菜单/路由/action 权限模型。
 - `sys_role_rule`、token abilities、`ability()`。
 - `AdminDataTable`、`AdminEntityForm`、`AuthButton`。
-- 字典、配置、用户、角色、菜单权限、文件等系统管理页面。
+- 字典、配置、用户、角色、菜单权限、文件、登录日志、在线用户、通知公告等系统管理页面。
 
 还需要补齐：
 
-- 系统操作日志。
 - 更完整的 API 文档和部署文档。
 - 更稳定的快速启动和初始化体验。
 - 导入/导出按需后置，不进入当前核心主路径。
@@ -71,6 +70,8 @@
 - `data_scope` 数据权限。
 - CRUD factory。
 - 存储/邮件配置作为基础系统能力。
+- 登录日志、在线会话、个人中心、安全策略和通知公告作为后台框架基础能力。
+- 登录验证码和忘记密码邮箱重置作为认证基础能力。
 - 生成器、租户、定时任务作为后置或插件化能力。
 
 还需要补齐：
@@ -78,7 +79,6 @@
 - 代码生成器。
 - 模块模板和插件边界。
 - OpenAPI/接口文档。
-- 操作日志和审计。
 - 生产部署、CI、备份恢复、可观测性。
 
 ## 4. 生产级里程碑
@@ -101,13 +101,15 @@
    - 开发允许宽松 CORS。
    - 生产按 `ADMIN_BASE_ALLOWED_ORIGINS` 或同源限制。
    - 增加基础安全 header。
-4. Token/session 策略
+4. Token/session 策略，已完成第一版
    - 保持 token hash 存储。
-   - 补 token 清理脚本或过期 token 清理任务。
-   - 补全登出、全端登出、重置密码后 token 失效策略。
-5. 上传安全
-   - 强化 MIME/扩展名校验。
-   - 明确 SVG、HTML、脚本类文件的处理策略。
+   - 已记录 token IP、User-Agent、过期时间和最近活跃时间。
+   - 已支持在线会话列表、强制下线、清理过期 token、重置/修改密码后撤销 token。
+   - 已支持 `login.captcha_enabled` 控制登录验证码显示和后端校验。
+   - 已支持忘记密码邮箱重置链接，重置 token 只保存 hash，并有过期和已使用状态。
+5. 上传安全，已完成基础强化
+   - 已强化常见 MIME/扩展名一致性校验。
+   - 默认拒绝 SVG、HTML、脚本类文件。
    - 生产文档说明反向代理上传大小和对象存储权限。
 
 验收：
@@ -137,10 +139,12 @@ pnpm test
    - Pino 已引入。
    - request id、user id、path、status、duration。
    - 生产环境输出 JSON。
-4. 操作日志
-   - 新增 `sys_operation_log`。
-   - 记录用户、IP、User-Agent、模块、操作、结果、耗时。
-   - CRUD factory 自动记录常规 create/update/delete/status。
+4. 操作日志，已完成第一版
+   - 已新增 `sys_operation_log`。
+   - 已记录用户、IP、User-Agent、request id、模块、操作、资源、结果、耗时。
+   - CRUD factory 已自动记录常规 create/update/delete/batchDelete/restore/forceDelete/status。
+   - 登录/退出、存储、邮件、角色授权、菜单显隐/状态、配置保存、登录日志清理、强制下线、个人资料、通知发布/撤回等显式动作已接入。
+   - 后续如新增高风险自定义 route，应继续显式接入操作日志。
 5. 错误追踪接口
    - 保持对用户友好的错误响应。
    - 日志中保留 stack 和 request id。

@@ -9,6 +9,8 @@ import { sysMailAccount } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { sendTestMail } from "@/server/services/mail-service";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
+import { assertSystemCodeUnchanged } from "@/server/services/protected-records";
 import { encryptSecret } from "@/server/services/secret";
 
 const mailAccountSchema = z.object({
@@ -37,7 +39,9 @@ function withEncryptedPassword<T extends Record<string, unknown>>(values: T) {
 
 async function assertMailAccountMutable(id: number) {
   const row = (await sqlite
-    .prepare("SELECT is_default AS isDefault, is_system AS isSystem FROM sys_mail_account WHERE id = ?")
+    .prepare(
+      "SELECT is_default AS isDefault, is_system AS isSystem FROM sys_mail_account WHERE id = ?",
+    )
     .get(id)) as { isDefault?: boolean; isSystem?: boolean } | undefined;
   if (!row) throw new Error("邮件账号不存在");
   if (row.isDefault) throw new Error("默认邮件账号不能删除，请先切换默认账号");
@@ -60,9 +64,10 @@ const mailAccountCrud = createCrudRoutes({
       port: sysMailAccount.port,
       secure: sysMailAccount.secure,
       username: sysMailAccount.username,
-      hasPassword: drizzleSql<boolean>`(${sysMailAccount.passwordEncrypted} IS NOT NULL AND ${sysMailAccount.passwordEncrypted} <> '')`.as(
-        "hasPassword",
-      ),
+      hasPassword:
+        drizzleSql<boolean>`(${sysMailAccount.passwordEncrypted} IS NOT NULL AND ${sysMailAccount.passwordEncrypted} <> '')`.as(
+          "hasPassword",
+        ),
       fromName: sysMailAccount.fromName,
       fromEmail: sysMailAccount.fromEmail,
       replyTo: sysMailAccount.replyTo,
@@ -85,13 +90,14 @@ const mailAccountCrud = createCrudRoutes({
   },
   hooks: {
     beforeCreate: (_ctx, values) => withEncryptedPassword(values),
-    beforeUpdate: async (_ctx, id, values) => {
-      const row = (await sqlite
-        .prepare("SELECT is_system AS isSystem FROM sys_mail_account WHERE id = ?")
-        .get(id)) as { isSystem?: boolean } | undefined;
-      if (row?.isSystem && values.code !== undefined) {
-        throw new Error("系统内置邮件账号不能修改编码");
-      }
+    beforeUpdate: async (ctx, id, values) => {
+      await assertSystemCodeUnchanged({
+        db: ctx.sql,
+        table: "sys_mail_account",
+        id,
+        nextCode: values.code,
+        message: "系统内置邮件账号不能修改编码",
+      });
       return withEncryptedPassword(values);
     },
     beforeDelete: async (_ctx, ids) => {
@@ -109,14 +115,28 @@ mailRoutes.put(
   async (c) => {
     const id = Number(c.req.param("id"));
     const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
-    const row = (await sqlite
-      .prepare("SELECT is_default AS isDefault FROM sys_mail_account WHERE id = ? AND deleted_at IS NULL")
-      .get(id)) as { isDefault?: boolean } | undefined;
-    if (!row) throw new Error("邮件账号不存在");
-    if (row.isDefault && payload.status === 0) throw new Error("默认邮件账号不能停用");
-    await sqlite
-      .prepare("UPDATE sys_mail_account SET status = ?, updated_at = now() WHERE id = ?")
-      .run(payload.status, id);
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.mail",
+        action: "status",
+        resource: "/mail/account",
+        resourceId: id,
+        details: { status: payload.status },
+      },
+      async () => {
+        const row = (await sqlite
+          .prepare(
+            "SELECT is_default AS isDefault FROM sys_mail_account WHERE id = ? AND deleted_at IS NULL",
+          )
+          .get(id)) as { isDefault?: boolean } | undefined;
+        if (!row) throw new Error("邮件账号不存在");
+        if (row.isDefault && payload.status === 0) throw new Error("默认邮件账号不能停用");
+        await sqlite
+          .prepare("UPDATE sys_mail_account SET status = ?, updated_at = now() WHERE id = ?")
+          .run(payload.status, id);
+      },
+    );
     return c.json(success(null, "更新成功"));
   },
 );
@@ -127,17 +147,32 @@ mailRoutes.put(
   ability("system.mail.setDefault"),
   async (c) => {
     const id = Number(c.req.param("id"));
-    const row = (await sqlite
-      .prepare("SELECT id, status FROM sys_mail_account WHERE id = ? AND deleted_at IS NULL")
-      .get(id)) as { id: number; status: number } | undefined;
-    if (!row) throw new Error("邮件账号不存在");
-    if (row.status !== 1) throw new Error("停用的邮件账号不能设为默认");
-    await sqlite.transaction(async (tx) => {
-      await tx.prepare("UPDATE sys_mail_account SET is_default = false, updated_at = now()").run();
-      await tx
-        .prepare("UPDATE sys_mail_account SET is_default = true, updated_at = now() WHERE id = ?")
-        .run(id);
-    });
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.mail",
+        action: "setDefault",
+        resource: "/mail/account",
+        resourceId: id,
+      },
+      async () => {
+        const row = (await sqlite
+          .prepare("SELECT id, status FROM sys_mail_account WHERE id = ? AND deleted_at IS NULL")
+          .get(id)) as { id: number; status: number } | undefined;
+        if (!row) throw new Error("邮件账号不存在");
+        if (row.status !== 1) throw new Error("停用的邮件账号不能设为默认");
+        await sqlite.transaction(async (tx) => {
+          await tx
+            .prepare("UPDATE sys_mail_account SET is_default = false, updated_at = now()")
+            .run();
+          await tx
+            .prepare(
+              "UPDATE sys_mail_account SET is_default = true, updated_at = now() WHERE id = ?",
+            )
+            .run(id);
+        });
+      },
+    );
     return c.json(success(null, "设置成功"));
   },
 );
@@ -151,12 +186,24 @@ mailRoutes.post("/mail/account/test", authRequired(), ability("system.mail.test"
       text: z.string().optional(),
     })
     .parse(await c.req.json());
-  await sendTestMail({
-    accountId: payload.id,
-    to: payload.to,
-    subject: payload.subject,
-    text: payload.text,
-  });
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.mail",
+      action: "test",
+      resource: "/mail/account",
+      resourceId: payload.id ?? null,
+      details: { to: payload.to },
+    },
+    async () => {
+      await sendTestMail({
+        accountId: payload.id,
+        to: payload.to,
+        subject: payload.subject,
+        text: payload.text,
+      });
+    },
+  );
   return c.json(success(null, "发送成功"));
 });
 

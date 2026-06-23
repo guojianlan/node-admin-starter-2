@@ -20,7 +20,7 @@
 | 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                      |
 | 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                   |
 | 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                      |
-| 日志          | Pino                                        | 结构化请求日志、错误日志、request id                     |
+| 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志       |
 | 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                 |
 | 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                     |
 | 单测          | Vitest 4                                    | API、service、CRUD、权限测试                             |
@@ -164,22 +164,26 @@ CRUD factory 当前能力：
 
 当前核心表：
 
-| 表                                      | 作用                                   |
-| --------------------------------------- | -------------------------------------- |
-| `sys_user`                              | 用户、密码 hash、部门、状态、系统保护  |
-| `sys_role`                              | 角色、状态、`data_scope`、系统保护     |
-| `sys_user_role`                         | 用户角色关系                           |
-| `sys_role_dept`                         | 角色自定义数据权限部门                 |
-| `sys_rule`                              | 菜单、路由、按钮/API 权限              |
-| `sys_role_rule`                         | 角色权限关系                           |
-| `sys_dept`                              | 部门树                                 |
-| `sys_access_token`                      | 登录 token hash 和权限快照             |
-| `sys_login_record`                      | 登录日志                               |
-| `sys_dict` / `sys_dict_item`            | 字典和字典项                           |
-| `sys_config_group` / `sys_config_items` | 系统配置和文件策略                     |
-| `sys_storage`                           | 本地/S3-compatible 存储配置            |
-| `sys_file_group` / `sys_file`           | 文件分组、文件元数据、sha256、存储归属 |
-| `sys_mail_account`                      | SMTP 账号配置                          |
+| 表                                      | 作用                                           |
+| --------------------------------------- | ---------------------------------------------- |
+| `sys_user`                              | 用户、密码 hash、部门、状态、锁定和密码策略字段、系统保护 |
+| `sys_role`                              | 角色、状态、`data_scope`、系统保护             |
+| `sys_user_role`                         | 用户角色关系                                   |
+| `sys_role_dept`                         | 角色自定义数据权限部门                         |
+| `sys_rule`                              | 菜单、路由、按钮/API 权限                      |
+| `sys_role_rule`                         | 角色权限关系                                   |
+| `sys_dept`                              | 部门树                                         |
+| `sys_access_token`                      | 登录 token hash、权限快照、IP/User-Agent、过期和最近活跃 |
+| `sys_user_password_history`             | 用户历史密码 hash，用于密码历史策略            |
+| `sys_password_reset_token`              | 忘记密码重置 token hash、过期时间和使用状态    |
+| `sys_login_record`                      | 登录日志                                       |
+| `sys_operation_log`                     | 后台操作日志，记录用户、接口、模块、动作和结果 |
+| `sys_notice` / `sys_notice_read`        | 通知公告和用户已读状态                         |
+| `sys_dict` / `sys_dict_item`            | 字典和字典项                                   |
+| `sys_config_group` / `sys_config_items` | 普通系统参数、文件策略、安全/登录/token 策略   |
+| `sys_storage`                           | 本地/S3-compatible 存储配置                    |
+| `sys_file_group` / `sys_file`           | 文件分组、文件元数据、sha256、存储归属         |
+| `sys_mail_account`                      | SMTP 账号配置                                  |
 
 数据库策略：
 
@@ -189,6 +193,9 @@ CRUD factory 当前能力：
 - `created_at`、`updated_at` 由数据库默认值和 trigger 兜底。
 - `created_by`、`updated_by`、`deleted_by` 由 CRUD factory 或显式 route 写入。
 - migration 当前在 `src/server/db/migrations.ts` 中维护手写 SQL。
+- `sys_config_items` 只承载普通参数和策略参数；`sys_storage`、`sys_mail_account` 是独立资源型配置，后端 API、权限、默认实例和测试连接逻辑不合并。
+- `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
+- 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。
 
 ## 7. 权限与数据权限
 

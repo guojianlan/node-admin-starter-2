@@ -41,6 +41,9 @@ export const sysUser = pgTable(
     deptId: integer("dept_id"),
     loginIp: text("login_ip"),
     loginTime: timestamp("login_time", { withTimezone: true }),
+    passwordUpdatedAt: timestamp("password_updated_at", { withTimezone: true }),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
     status: integer("status").notNull().default(1),
     isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
@@ -197,6 +200,8 @@ export const sysAccessToken = pgTable(
     name: text("name").notNull(),
     tokenHash: text("token_hash").notNull(),
     abilitiesJson: text("abilities_json").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     ...timestamps,
@@ -205,6 +210,42 @@ export const sysAccessToken = pgTable(
     uniqueIndex("sys_access_token_token_hash_unique").on(table.tokenHash),
     index("sys_access_token_user_id_idx").on(table.userId),
     index("sys_access_token_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+export const sysUserPasswordHistory = pgTable(
+  "sys_user_password_history",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_user_password_history_user_id_created_at_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const sysPasswordResetToken = pgTable(
+  "sys_password_reset_token",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_password_reset_token_hash_unique").on(table.tokenHash),
+    index("sys_password_reset_token_user_id_idx").on(table.userId),
+    index("sys_password_reset_token_expires_at_idx").on(table.expiresAt),
   ],
 );
 
@@ -220,6 +261,78 @@ export const sysLoginRecord = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("sys_login_record_created_at_idx").on(table.createdAt)],
+);
+
+export const sysOperationLog = pgTable(
+  "sys_operation_log",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    username: text("username"),
+    module: text("module").notNull(),
+    action: text("action").notNull(),
+    resource: text("resource"),
+    resourceId: text("resource_id"),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    requestId: text("request_id"),
+    status: integer("status").notNull(),
+    success: boolean("success").notNull(),
+    message: text("message"),
+    durationMs: integer("duration_ms"),
+    detailsJson: text("details_json"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_operation_log_created_at_idx").on(table.createdAt),
+    index("sys_operation_log_user_id_created_at_idx").on(table.userId, table.createdAt),
+    index("sys_operation_log_module_action_idx").on(table.module, table.action),
+    index("sys_operation_log_success_created_at_idx").on(table.success, table.createdAt),
+    index("sys_operation_log_request_id_idx").on(table.requestId),
+  ],
+);
+
+export const sysNotice = pgTable(
+  "sys_notice",
+  {
+    id: serial("id").primaryKey(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    type: text("type", { enum: ["notice", "announcement"] })
+      .notNull()
+      .default("notice"),
+    scope: text("scope", { enum: ["all", "users"] }).notNull().default("all"),
+    targetUserIdsJson: text("target_user_ids_json"),
+    status: integer("status").notNull().default(0),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_notice_status_published_at_idx").on(table.status, table.publishedAt),
+    index("sys_notice_type_status_idx").on(table.type, table.status),
+  ],
+);
+
+export const sysNoticeRead = pgTable(
+  "sys_notice_read",
+  {
+    noticeId: integer("notice_id")
+      .notNull()
+      .references(() => sysNotice.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.noticeId, table.userId] }),
+    index("sys_notice_read_user_id_idx").on(table.userId),
+  ],
 );
 
 export const sysDict = pgTable(

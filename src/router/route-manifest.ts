@@ -5,7 +5,12 @@ import { DictItemPage } from "@/features/system/dict/DictItemPage";
 import { DeptPage } from "@/features/system/dept/DeptPage";
 import { DictPage } from "@/features/system/dict/DictPage";
 import { FilePage } from "@/features/system/file/FilePage";
+import { LoginLogPage } from "@/features/system/login-log/LoginLogPage";
 import { MailAccountPage } from "@/features/system/mail/MailAccountPage";
+import { NoticePage } from "@/features/system/notice/NoticePage";
+import { OnlineUserPage } from "@/features/system/online-user/OnlineUserPage";
+import { OperationLogPage } from "@/features/system/operation-log/OperationLogPage";
+import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RolePage } from "@/features/system/role/RolePage";
 import { RulePage } from "@/features/system/rule/RulePage";
 import { StoragePage } from "@/features/system/storage/StoragePage";
@@ -97,6 +102,41 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "邮件配置",
     auth: "system.mail.query",
     component: MailAccountPage,
+  },
+  {
+    path: "/system/operation/log",
+    key: "system.operationLog",
+    title: "操作日志",
+    auth: "system.operationLog.query",
+    component: OperationLogPage,
+  },
+  {
+    path: "/system/login/log",
+    key: "system.loginLog",
+    title: "登录日志",
+    auth: "system.loginLog.query",
+    component: LoginLogPage,
+  },
+  {
+    path: "/system/online/user",
+    key: "system.onlineUser",
+    title: "在线用户",
+    auth: "system.onlineUser.query",
+    component: OnlineUserPage,
+  },
+  {
+    path: "/system/notice",
+    key: "system.notice",
+    title: "通知公告",
+    auth: "system.notice.query",
+    component: NoticePage,
+  },
+  {
+    path: "/profile",
+    key: "profile",
+    title: "个人中心",
+    adminHidden: true,
+    component: ProfilePage,
   },
 ];
 

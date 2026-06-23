@@ -8,6 +8,7 @@ import { sqlite } from "@/server/db";
 import { sysRule } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 
 const ruleSchema = z.object({
@@ -160,24 +161,52 @@ ruleRoutes.get("/rule/parent", authRequired(), ability("system.rule.query"), asy
 ruleRoutes.put("/rule/hidden/:id", authRequired(), ability("system.rule.hidden"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ hidden: z.coerce.number() }).parse(await c.req.json());
-  if (payload.hidden === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
-    throw new Error("系统内置权限不能隐藏");
-  }
-  await sqlite
-    .prepare("UPDATE sys_rule SET hidden = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL")
-    .run(payload.hidden, id);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.rule",
+      action: "hidden",
+      resource: "/rule",
+      resourceId: id,
+      details: { hidden: payload.hidden },
+    },
+    async () => {
+      if (payload.hidden === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
+        throw new Error("系统内置权限不能隐藏");
+      }
+      await sqlite
+        .prepare(
+          "UPDATE sys_rule SET hidden = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(payload.hidden, id);
+    },
+  );
   return c.json(success(null, "更新成功"));
 });
 
 ruleRoutes.put("/rule/status/:id", authRequired(), ability("system.rule.status"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = z.object({ status: z.coerce.number() }).parse(await c.req.json());
-  if (payload.status === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
-    throw new Error("系统内置权限不能停用");
-  }
-  await sqlite
-    .prepare("UPDATE sys_rule SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL")
-    .run(payload.status, id);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.rule",
+      action: "status",
+      resource: "/rule",
+      resourceId: id,
+      details: { status: payload.status },
+    },
+    async () => {
+      if (payload.status === 0 && (await getSystemFlag(sqlite, "sys_rule", id))) {
+        throw new Error("系统内置权限不能停用");
+      }
+      await sqlite
+        .prepare(
+          "UPDATE sys_rule SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+        )
+        .run(payload.status, id);
+    },
+  );
   return c.json(success(null, "更新成功"));
 });
 

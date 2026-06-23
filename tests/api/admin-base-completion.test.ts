@@ -91,9 +91,7 @@ describe("admin base completion scope", () => {
 
     await sqlite.prepare("UPDATE sys_role SET data_scope = 'custom_dept' WHERE id = 2").run();
     await sqlite.prepare("DELETE FROM sys_role_dept WHERE role_id = 2").run();
-    await sqlite
-      .prepare("INSERT INTO sys_role_dept (role_id, dept_id) VALUES (2, 1)")
-      .run();
+    await sqlite.prepare("INSERT INTO sys_role_dept (role_id, dept_id) VALUES (2, 1)").run();
     const customToken = await login("demo", "123456");
     const customResponse = await app.request("/api/system/user?page=1&pageSize=20", {
       headers: { authorization: `Bearer ${customToken}` },
@@ -184,7 +182,9 @@ describe("admin base completion scope", () => {
     });
     expect(create.status).toBe(200);
     const mail = (await sqlite
-      .prepare("SELECT password_encrypted AS passwordEncrypted FROM sys_mail_account WHERE code = ?")
+      .prepare(
+        "SELECT password_encrypted AS passwordEncrypted FROM sys_mail_account WHERE code = ?",
+      )
       .get("smtp_secret")) as { passwordEncrypted: string };
     expect(mail.passwordEncrypted).toBeTruthy();
     expect(mail.passwordEncrypted).not.toContain("secret-value");
@@ -206,5 +206,47 @@ describe("admin base completion scope", () => {
     const testBody = await readJson(test);
     expect(test.status).toBe(500);
     expect(testBody.msg).toBe("SMTP 连接失败");
+  });
+
+  it("allows full-form updates of built-in mail accounts when protected code is unchanged", async () => {
+    const token = await login();
+
+    const update = await app.request("/api/system/mail/account/1", {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "本地 SMTP",
+        code: "local",
+        host: "localhost",
+        port: 1025,
+        secure: false,
+        username: null,
+        fromName: "Admin Base",
+        fromEmail: "noreply@admin-base.local",
+        replyTo: null,
+        status: 1,
+        sort: 1,
+      }),
+    });
+    expect(update.status).toBe(200);
+
+    const changeCode = await app.request("/api/system/mail/account/1", {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "本地 SMTP",
+        code: "local_changed",
+        host: "localhost",
+        port: 1025,
+        secure: false,
+        fromName: "Admin Base",
+        fromEmail: "noreply@admin-base.local",
+        status: 1,
+        sort: 1,
+      }),
+    });
+    const changeCodeBody = await readJson(changeCode);
+    expect(changeCode.status).toBe(500);
+    expect(changeCodeBody.msg).toBe("系统内置邮件账号不能修改编码");
   });
 });

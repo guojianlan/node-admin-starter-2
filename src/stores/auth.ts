@@ -33,6 +33,8 @@ type LoginPayload = {
   username: string;
   password: string;
   remember?: boolean;
+  captchaId?: string;
+  captchaCode?: string;
 };
 
 type LoginResult = {

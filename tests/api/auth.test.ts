@@ -51,6 +51,124 @@ describe("auth and permission API", () => {
     expect(JSON.stringify(menuBody.data)).toContain("/system/user");
   });
 
+  it("requires captcha when login captcha policy is enabled", async () => {
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'true' WHERE key = 'login.captcha_enabled'")
+      .run();
+
+    const options = await app.request("/api/system/login/options");
+    const optionsBody = await readJson(options);
+    expect(options.status).toBe(200);
+    expect(optionsBody.data).toMatchObject({ captchaEnabled: true });
+
+    const missingCaptcha = await app.request("/api/system/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "123456" }),
+    });
+    const missingCaptchaBody = await readJson(missingCaptcha);
+    expect(missingCaptcha.status).toBe(500);
+    expect(missingCaptchaBody.msg).toContain("验证码");
+
+    const captcha = await app.request("/api/system/login/captcha");
+    const captchaBody = await readJson(captcha);
+    const captchaData = captchaBody.data as {
+      captchaId: string;
+      debugCode: string;
+      image: string;
+    };
+    expect(captchaData.image).toContain("data:image/svg+xml;base64,");
+
+    const response = await app.request("/api/system/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "admin",
+        password: "123456",
+        captchaId: captchaData.captchaId,
+        captchaCode: captchaData.debugCode,
+      }),
+    });
+    const body = await readJson(response);
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(String(body.data?.token ?? "")).toHaveLength(64);
+  });
+
+  it("exposes only configured OAuth providers on login options", async () => {
+    const emptyOptions = await app.request("/api/system/login/options");
+    const emptyBody = await readJson(emptyOptions);
+    expect(emptyOptions.status).toBe(200);
+    expect(emptyBody.data?.oauthProviders).toEqual([]);
+
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = ? WHERE key = 'login.oauth_providers_json'")
+      .run(
+        JSON.stringify([
+          {
+            key: "github",
+            name: "GitHub",
+            enabled: true,
+            authUrl: "https://github.com/login/oauth/authorize?client_id=test",
+          },
+          {
+            key: "wechat",
+            name: "微信",
+            enabled: false,
+            authUrl: "https://example.com/wechat",
+          },
+          {
+            key: "bad",
+            name: "Bad",
+            enabled: true,
+            authUrl: "/local-only",
+          },
+        ]),
+      );
+
+    const options = await app.request("/api/system/login/options");
+    const body = await readJson(options);
+    expect(options.status).toBe(200);
+    expect(body.data?.oauthProviders).toEqual([
+      {
+        key: "github",
+        name: "GitHub",
+        authUrl: "https://github.com/login/oauth/authorize?client_id=test",
+      },
+    ]);
+  });
+
+  it("requests and confirms password reset", async () => {
+    const request = await app.request("/api/system/password-reset/request", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:3000",
+      },
+      body: JSON.stringify({ account: "admin" }),
+    });
+    const requestBody = await readJson(request);
+    expect(request.status).toBe(200);
+    const resetToken = String(requestBody.data?.debugResetToken ?? "");
+    expect(resetToken.length).toBeGreaterThan(20);
+
+    const confirm = await app.request("/api/system/password-reset/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: resetToken, password: "reset-password-123" }),
+    });
+    const confirmBody = await readJson(confirm);
+    expect(confirm.status).toBe(200);
+    expect(confirmBody.success).toBe(true);
+
+    const oldPassword = await login("admin", "123456");
+    expect(oldPassword.response.status).toBe(500);
+
+    const newPassword = await login("admin", "reset-password-123");
+    expect(newPassword.response.status).toBe(200);
+    expect(newPassword.token).toHaveLength(64);
+  });
+
   it("rejects protected APIs without token", async () => {
     const response = await app.request("/api/system/user");
     const body = await readJson(response);

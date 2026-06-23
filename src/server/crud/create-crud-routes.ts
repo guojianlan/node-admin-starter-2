@@ -7,6 +7,7 @@ import type { HonoVariables } from "@/server/context";
 import { createDbClient, db, schema, sql, sqlite, type DbClient } from "@/server/db";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { buildCrudListQuery } from "./list-query";
 import { createCrudMeta, resolveCrudPermission, validateCrudMeta } from "./permissions";
 import { registerCrudMeta } from "./registry";
@@ -84,6 +85,17 @@ function normalizeWhere(value: SQL | SQL[] | undefined) {
   return Array.isArray(value) ? value : [value];
 }
 
+function operationModule<
+  TCreate extends Record<string, unknown>,
+  TUpdate extends Record<string, unknown>,
+>(config: CrudConfig<TCreate, TUpdate>) {
+  return config.permissions.prefix;
+}
+
+function mutationFields(values: Record<string, unknown>) {
+  return Object.keys(values).filter((field) => !field.toLowerCase().includes("password"));
+}
+
 async function runMutation<
   TCreate extends Record<string, unknown>,
   TUpdate extends Record<string, unknown>,
@@ -156,28 +168,41 @@ export function createCrudRoutes<
   if (actions.includes("create")) {
     routes.post(basePath, ...withPermission(config, "create"), async (c) => {
       const rawValues = config.createSchema.parse(await c.req.json());
-      await runMutation(config, async (activeDb, activeSql) => {
-        const ctx = crudContext(c, activeDb, activeSql);
-        const hookValues = config.hooks?.beforeCreate
-          ? await config.hooks.beforeCreate(ctx, rawValues)
-          : rawValues;
-        const values = mapValuesToColumns(
-          config.table,
-          addAuditValues({
-            table: config.table,
-            values: hookValues,
-            userId: ctx.userId,
-            mode: "create",
-            enabled: config.audit !== false,
-          }),
-        );
-        const rows = await activeDb
-          .insert(config.table)
-          .values(values as never)
-          .returning({ id: config.idColumn });
-        const id = Number(rows[0]?.id ?? 0);
-        await config.hooks?.afterCreate?.(ctx, id, hookValues);
-      });
+      await runWithOperationLog(
+        c,
+        {
+          module: operationModule(config),
+          action: "create",
+          resource: config.basePath,
+          details: { fields: mutationFields(rawValues) },
+        },
+        async () => {
+          let createdId = 0;
+          await runMutation(config, async (activeDb, activeSql) => {
+            const ctx = crudContext(c, activeDb, activeSql);
+            const hookValues = config.hooks?.beforeCreate
+              ? await config.hooks.beforeCreate(ctx, rawValues)
+              : rawValues;
+            const values = mapValuesToColumns(
+              config.table,
+              addAuditValues({
+                table: config.table,
+                values: hookValues,
+                userId: ctx.userId,
+                mode: "create",
+                enabled: config.audit !== false,
+              }),
+            );
+            const rows = await activeDb
+              .insert(config.table)
+              .values(values as never)
+              .returning({ id: config.idColumn });
+            createdId = Number(rows[0]?.id ?? 0);
+            await config.hooks?.afterCreate?.(ctx, createdId, hookValues);
+          });
+          return createdId;
+        },
+      );
       return c.json(success(null, config.messages?.create ?? "创建成功"));
     });
   }
@@ -186,29 +211,41 @@ export function createCrudRoutes<
     routes.put(idPath, ...withPermission(config, "update"), async (c) => {
       const id = readId(c.req.param("id") ?? "");
       const rawValues = config.updateSchema.parse(await c.req.json());
-      await runMutation(config, async (activeDb, activeSql) => {
-        const ctx = crudContext(c, activeDb, activeSql);
-        const hookValues = config.hooks?.beforeUpdate
-          ? await config.hooks.beforeUpdate(ctx, id, rawValues)
-          : rawValues;
-        const values = mapValuesToColumns(
-          config.table,
-          addAuditValues({
-            table: config.table,
-            values: hookValues,
-            userId: ctx.userId,
-            mode: "update",
-            enabled: config.audit !== false,
-          }),
-        );
-        if (Object.keys(values).length) {
-          await activeDb
-            .update(config.table)
-            .set(values as never)
-            .where(eq(config.idColumn, id));
-        }
-        await config.hooks?.afterUpdate?.(ctx, id, hookValues);
-      });
+      await runWithOperationLog(
+        c,
+        {
+          module: operationModule(config),
+          action: "update",
+          resource: config.basePath,
+          resourceId: id,
+          details: { fields: mutationFields(rawValues) },
+        },
+        async () => {
+          await runMutation(config, async (activeDb, activeSql) => {
+            const ctx = crudContext(c, activeDb, activeSql);
+            const hookValues = config.hooks?.beforeUpdate
+              ? await config.hooks.beforeUpdate(ctx, id, rawValues)
+              : rawValues;
+            const values = mapValuesToColumns(
+              config.table,
+              addAuditValues({
+                table: config.table,
+                values: hookValues,
+                userId: ctx.userId,
+                mode: "update",
+                enabled: config.audit !== false,
+              }),
+            );
+            if (Object.keys(values).length) {
+              await activeDb
+                .update(config.table)
+                .set(values as never)
+                .where(eq(config.idColumn, id));
+            }
+            await config.hooks?.afterUpdate?.(ctx, id, hookValues);
+          });
+        },
+      );
       return c.json(success(null, config.messages?.update ?? "更新成功"));
     });
   }
@@ -216,31 +253,42 @@ export function createCrudRoutes<
   if (actions.includes("delete")) {
     routes.delete(idPath, ...withPermission(config, "delete"), async (c) => {
       const id = readId(c.req.param("id") ?? "");
-      await runMutation(config, async (activeDb, activeSql) => {
-        const ctx = crudContext(c, activeDb, activeSql);
-        await config.hooks?.beforeDelete?.(ctx, [id]);
+      await runWithOperationLog(
+        c,
+        {
+          module: operationModule(config),
+          action: "delete",
+          resource: config.basePath,
+          resourceId: id,
+        },
+        async () => {
+          await runMutation(config, async (activeDb, activeSql) => {
+            const ctx = crudContext(c, activeDb, activeSql);
+            await config.hooks?.beforeDelete?.(ctx, [id]);
 
-        if (softDeleteColumn) {
-          const values = mapValuesToColumns(
-            config.table,
-            addAuditValues({
-              table: config.table,
-              values: { deletedAt: new Date() },
-              userId: ctx.userId,
-              mode: "delete",
-              enabled: config.audit !== false,
-            }),
-          );
-          await activeDb
-            .update(config.table)
-            .set(values as never)
-            .where(eq(config.idColumn, id));
-        } else {
-          await activeDb.delete(config.table).where(eq(config.idColumn, id));
-        }
+            if (softDeleteColumn) {
+              const values = mapValuesToColumns(
+                config.table,
+                addAuditValues({
+                  table: config.table,
+                  values: { deletedAt: new Date() },
+                  userId: ctx.userId,
+                  mode: "delete",
+                  enabled: config.audit !== false,
+                }),
+              );
+              await activeDb
+                .update(config.table)
+                .set(values as never)
+                .where(eq(config.idColumn, id));
+            } else {
+              await activeDb.delete(config.table).where(eq(config.idColumn, id));
+            }
 
-        await config.hooks?.afterDelete?.(ctx, [id]);
-      });
+            await config.hooks?.afterDelete?.(ctx, [id]);
+          });
+        },
+      );
       return c.json(success(null, config.messages?.delete ?? "删除成功"));
     });
   }
@@ -251,31 +299,42 @@ export function createCrudRoutes<
       ...withPermission(config, "batchDelete"),
       async (c) => {
         const ids = readIds((await c.req.json()).ids);
-        await runMutation(config, async (activeDb, activeSql) => {
-          const ctx = crudContext(c, activeDb, activeSql);
-          await config.hooks?.beforeDelete?.(ctx, ids);
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "batchDelete",
+            resource: config.basePath,
+            details: { ids },
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              await config.hooks?.beforeDelete?.(ctx, ids);
 
-          if (softDeleteColumn) {
-            const values = mapValuesToColumns(
-              config.table,
-              addAuditValues({
-                table: config.table,
-                values: { deletedAt: new Date() },
-                userId: ctx.userId,
-                mode: "delete",
-                enabled: config.audit !== false,
-              }),
-            );
-            await activeDb
-              .update(config.table)
-              .set(values as never)
-              .where(inArray(config.idColumn, ids));
-          } else {
-            await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
-          }
+              if (softDeleteColumn) {
+                const values = mapValuesToColumns(
+                  config.table,
+                  addAuditValues({
+                    table: config.table,
+                    values: { deletedAt: new Date() },
+                    userId: ctx.userId,
+                    mode: "delete",
+                    enabled: config.audit !== false,
+                  }),
+                );
+                await activeDb
+                  .update(config.table)
+                  .set(values as never)
+                  .where(inArray(config.idColumn, ids));
+              } else {
+                await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
+              }
 
-          await config.hooks?.afterDelete?.(ctx, ids);
-        });
+              await config.hooks?.afterDelete?.(ctx, ids);
+            });
+          },
+        );
         return c.json(success(null, config.messages?.delete ?? "删除成功"));
       },
     );
@@ -290,25 +349,36 @@ export function createCrudRoutes<
       ...withPermission(config, "restore"),
       async (c) => {
         const id = readId(c.req.param("id") ?? "");
-        await runMutation(config, async (activeDb, activeSql) => {
-          const ctx = crudContext(c, activeDb, activeSql);
-          await config.hooks?.beforeRestore?.(ctx, [id]);
-          const values = mapValuesToColumns(
-            config.table,
-            addAuditValues({
-              table: config.table,
-              values: { deletedAt: null, deletedBy: null },
-              userId: ctx.userId,
-              mode: "update",
-              enabled: config.audit !== false,
-            }),
-          );
-          await activeDb
-            .update(config.table)
-            .set(values as never)
-            .where(eq(config.idColumn, id));
-          await config.hooks?.afterRestore?.(ctx, [id]);
-        });
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "restore",
+            resource: config.basePath,
+            resourceId: id,
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              await config.hooks?.beforeRestore?.(ctx, [id]);
+              const values = mapValuesToColumns(
+                config.table,
+                addAuditValues({
+                  table: config.table,
+                  values: { deletedAt: null, deletedBy: null },
+                  userId: ctx.userId,
+                  mode: "update",
+                  enabled: config.audit !== false,
+                }),
+              );
+              await activeDb
+                .update(config.table)
+                .set(values as never)
+                .where(eq(config.idColumn, id));
+              await config.hooks?.afterRestore?.(ctx, [id]);
+            });
+          },
+        );
         return c.json(success(null, "恢复成功"));
       },
     );
@@ -318,25 +388,36 @@ export function createCrudRoutes<
       ...withPermission(config, "restore"),
       async (c) => {
         const ids = readIds((await c.req.json()).ids);
-        await runMutation(config, async (activeDb, activeSql) => {
-          const ctx = crudContext(c, activeDb, activeSql);
-          await config.hooks?.beforeRestore?.(ctx, ids);
-          const values = mapValuesToColumns(
-            config.table,
-            addAuditValues({
-              table: config.table,
-              values: { deletedAt: null, deletedBy: null },
-              userId: ctx.userId,
-              mode: "update",
-              enabled: config.audit !== false,
-            }),
-          );
-          await activeDb
-            .update(config.table)
-            .set(values as never)
-            .where(inArray(config.idColumn, ids));
-          await config.hooks?.afterRestore?.(ctx, ids);
-        });
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "batchRestore",
+            resource: config.basePath,
+            details: { ids },
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              await config.hooks?.beforeRestore?.(ctx, ids);
+              const values = mapValuesToColumns(
+                config.table,
+                addAuditValues({
+                  table: config.table,
+                  values: { deletedAt: null, deletedBy: null },
+                  userId: ctx.userId,
+                  mode: "update",
+                  enabled: config.audit !== false,
+                }),
+              );
+              await activeDb
+                .update(config.table)
+                .set(values as never)
+                .where(inArray(config.idColumn, ids));
+              await config.hooks?.afterRestore?.(ctx, ids);
+            });
+          },
+        );
         return c.json(success(null, "恢复成功"));
       },
     );
@@ -348,12 +429,23 @@ export function createCrudRoutes<
       ...withPermission(config, "forceDelete"),
       async (c) => {
         const id = readId(c.req.param("id") ?? "");
-        await runMutation(config, async (activeDb, activeSql) => {
-          const ctx = crudContext(c, activeDb, activeSql);
-          await config.hooks?.beforeForceDelete?.(ctx, [id]);
-          await activeDb.delete(config.table).where(eq(config.idColumn, id));
-          await config.hooks?.afterForceDelete?.(ctx, [id]);
-        });
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "forceDelete",
+            resource: config.basePath,
+            resourceId: id,
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              await config.hooks?.beforeForceDelete?.(ctx, [id]);
+              await activeDb.delete(config.table).where(eq(config.idColumn, id));
+              await config.hooks?.afterForceDelete?.(ctx, [id]);
+            });
+          },
+        );
         return c.json(success(null, "彻底删除成功"));
       },
     );
@@ -363,42 +455,69 @@ export function createCrudRoutes<
       ...withPermission(config, "forceDelete"),
       async (c) => {
         const ids = readIds((await c.req.json()).ids);
-        await runMutation(config, async (activeDb, activeSql) => {
-          const ctx = crudContext(c, activeDb, activeSql);
-          await config.hooks?.beforeForceDelete?.(ctx, ids);
-          await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
-          await config.hooks?.afterForceDelete?.(ctx, ids);
-        });
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "batchForceDelete",
+            resource: config.basePath,
+            details: { ids },
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              await config.hooks?.beforeForceDelete?.(ctx, ids);
+              await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
+              await config.hooks?.afterForceDelete?.(ctx, ids);
+            });
+          },
+        );
         return c.json(success(null, "彻底删除成功"));
       },
     );
   }
 
   if (actions.includes("status")) {
-    routes.put(routePath(`${config.basePath}/status/:id`), ...withPermission(config, "status"), async (c) => {
-      const id = readId(c.req.param("id") ?? "");
-      const payload = asRecord(await c.req.json());
-      const status = Number(payload.status);
-      if (!Number.isFinite(status)) throw new Error("状态值不正确");
-      await runMutation(config, async (activeDb, activeSql) => {
-        const ctx = crudContext(c, activeDb, activeSql);
-        const values = mapValuesToColumns(
-          config.table,
-          addAuditValues({
-            table: config.table,
-            values: { status },
-            userId: ctx.userId,
-            mode: "update",
-            enabled: config.audit !== false,
-          }),
+    routes.put(
+      routePath(`${config.basePath}/status/:id`),
+      ...withPermission(config, "status"),
+      async (c) => {
+        const id = readId(c.req.param("id") ?? "");
+        const payload = asRecord(await c.req.json());
+        const status = Number(payload.status);
+        if (!Number.isFinite(status)) throw new Error("状态值不正确");
+        await runWithOperationLog(
+          c,
+          {
+            module: operationModule(config),
+            action: "status",
+            resource: config.basePath,
+            resourceId: id,
+            details: { status },
+          },
+          async () => {
+            await runMutation(config, async (activeDb, activeSql) => {
+              const ctx = crudContext(c, activeDb, activeSql);
+              const values = mapValuesToColumns(
+                config.table,
+                addAuditValues({
+                  table: config.table,
+                  values: { status },
+                  userId: ctx.userId,
+                  mode: "update",
+                  enabled: config.audit !== false,
+                }),
+              );
+              await activeDb
+                .update(config.table)
+                .set(values as never)
+                .where(eq(config.idColumn, id));
+            });
+          },
         );
-        await activeDb
-          .update(config.table)
-          .set(values as never)
-          .where(eq(config.idColumn, id));
-      });
-      return c.json(success(null, "更新成功"));
-    });
+        return c.json(success(null, "更新成功"));
+      },
+    );
   }
 
   return { routes, meta };
