@@ -59,6 +59,8 @@ export function AdminFieldRenderer({
       return <Switch checkedChildren="启用" unCheckedChildren="停用" {...mergedFieldProps} />;
     case "date":
       return <DatePicker style={{ width: "100%" }} {...mergedFieldProps} />;
+    case "datetime":
+      return <DatePicker showTime style={{ width: "100%" }} {...mergedFieldProps} />;
     case "dateRange":
       return <DatePicker.RangePicker style={{ width: "100%" }} {...mergedFieldProps} />;
     case "image":

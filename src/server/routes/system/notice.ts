@@ -16,16 +16,29 @@ const noticeSchema = z.object({
   scope: z.enum(["all", "users"]).default("all"),
   targetUserIds: z.array(z.coerce.number()).optional(),
   status: z.coerce.number().default(0),
+  publishedAt: z.preprocess(
+    (value) => (value === "" || value === undefined ? undefined : value),
+    z.coerce.date().nullable().optional(),
+  ),
 });
 
 function normalizeNotice(values: z.infer<typeof noticeSchema>) {
-  const { targetUserIds, ...rest } = values;
+  const { publishedAt, targetUserIds, ...rest } = values;
+  const uniqueTargetUserIds = [...new Set(targetUserIds ?? [])];
+  if (rest.scope === "users" && uniqueTargetUserIds.length === 0) {
+    throw new Error("请选择公告接收用户");
+  }
   return {
     ...rest,
     targetUserIdsJson:
-      rest.scope === "users" ? JSON.stringify([...(new Set(targetUserIds ?? []))]) : null,
-    publishedAt: rest.status === 1 ? new Date() : null,
+      rest.scope === "users" ? JSON.stringify(uniqueTargetUserIds) : null,
+    publishedAt: publishedAt ?? (rest.status === 1 ? new Date() : null),
   };
+}
+
+function normalizePublishAtForUpdate(status: number | undefined, publishedAt: Date | null | undefined) {
+  if (status === 1 && publishedAt == null) return new Date();
+  return publishedAt;
 }
 
 function parseTargetUsers(value: unknown) {
@@ -73,18 +86,24 @@ const noticeCrud = createCrudRoutes({
   hooks: {
     beforeCreate: (_ctx, values) => normalizeNotice(values),
     beforeUpdate: (_ctx, _id, values) => {
-      const { targetUserIds, ...rest } = values;
+      const { publishedAt, targetUserIds, ...rest } = values;
+      const uniqueTargetUserIds = [...new Set(targetUserIds ?? [])];
+      if (values.scope === "users" && uniqueTargetUserIds.length === 0) {
+        throw new Error("请选择公告接收用户");
+      }
       return {
         ...rest,
         ...(values.scope !== undefined
           ? {
               targetUserIdsJson:
                 values.scope === "users"
-                  ? JSON.stringify([...(new Set(targetUserIds ?? []))])
+                  ? JSON.stringify(uniqueTargetUserIds)
                   : null,
             }
           : {}),
-        ...(values.status === 1 ? { publishedAt: new Date() } : {}),
+        ...(publishedAt !== undefined || values.status === 1
+          ? { publishedAt: normalizePublishAtForUpdate(values.status, publishedAt) }
+          : {}),
       };
     },
     afterList: (_ctx, page) => ({
@@ -115,7 +134,13 @@ noticeRoutes.put(
       },
       async () => {
         await sqlite
-          .prepare("UPDATE sys_notice SET status = 1, published_at = now(), updated_at = now() WHERE id = ? AND deleted_at IS NULL")
+          .prepare(
+            `UPDATE sys_notice
+             SET status = 1,
+                 published_at = COALESCE(published_at, now()),
+                 updated_at = now()
+             WHERE id = ? AND deleted_at IS NULL`,
+          )
           .run(id);
       },
     );
@@ -155,6 +180,7 @@ noticeRoutes.get("/notice/my/unread-count", authRequired(), async (c) => {
        FROM sys_notice n
        WHERE n.deleted_at IS NULL
          AND n.status = 1
+         AND (n.published_at IS NULL OR n.published_at <= now())
          AND (
            n.scope = 'all'
            OR (
@@ -190,6 +216,7 @@ noticeRoutes.get("/notice/my", authRequired(), async (c) => {
        LEFT JOIN sys_notice_read r ON r.notice_id = n.id AND r.user_id = ?
        WHERE n.deleted_at IS NULL
          AND n.status = 1
+         AND (n.published_at IS NULL OR n.published_at <= now())
          AND (
            n.scope = 'all'
            OR (
@@ -214,10 +241,26 @@ noticeRoutes.post("/notice/my/:id/read", authRequired(), async (c) => {
   await sqlite
     .prepare(
       `INSERT INTO sys_notice_read (notice_id, user_id, read_at)
-       VALUES (?, ?, now())
+       SELECT n.id, ?, now()
+       FROM sys_notice n
+       WHERE n.id = ?
+         AND n.deleted_at IS NULL
+         AND n.status = 1
+         AND (n.published_at IS NULL OR n.published_at <= now())
+         AND (
+           n.scope = 'all'
+           OR (
+             n.scope = 'users'
+             AND EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements_text(COALESCE(n.target_user_ids_json, '[]')::jsonb) AS target(user_id)
+               WHERE target.user_id = ?::text
+             )
+           )
+         )
        ON CONFLICT (notice_id, user_id) DO UPDATE SET read_at = excluded.read_at`,
     )
-    .run(id, user.id);
+    .run(user.id, id, String(user.id));
   return c.json(success(null, "已读"));
 });
 
@@ -230,6 +273,7 @@ noticeRoutes.post("/notice/my/read-all", authRequired(), async (c) => {
        FROM sys_notice n
        WHERE n.deleted_at IS NULL
          AND n.status = 1
+         AND (n.published_at IS NULL OR n.published_at <= now())
          AND (
            n.scope = 'all'
            OR (

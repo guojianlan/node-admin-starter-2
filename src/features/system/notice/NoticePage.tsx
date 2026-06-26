@@ -1,6 +1,11 @@
 "use client";
 
-import { NotificationOutlined, PauseCircleOutlined, SendOutlined } from "@ant-design/icons";
+import {
+  ClockCircleOutlined,
+  NotificationOutlined,
+  PauseCircleOutlined,
+  SendOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { Button, Space, Tag, Tooltip, Typography } from "antd";
@@ -42,8 +47,21 @@ const scopeOptions = [
 
 const statusOptions = [
   { label: "草稿", value: 0 },
-  { label: "已发布", value: 1 },
+  { label: "发布/定时发布", value: 1 },
 ];
+
+function normalizeDateTime(value: unknown) {
+  if (!value) return null;
+  if (dayjs.isDayjs(value)) return value.toISOString();
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function getNoticeStatus(record: Pick<NoticeRecord, "publishedAt" | "status">) {
+  if (record.status !== 1) return "draft";
+  if (record.publishedAt && dayjs(record.publishedAt).isAfter(dayjs())) return "scheduled";
+  return "published";
+}
 
 export function NoticePage() {
   const queryClient = useQueryClient();
@@ -62,15 +80,17 @@ export function NoticePage() {
     staleTime: 5 * 60_000,
   });
 
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/notice"] });
+  const invalidateNoticeData = () => {
+    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/notice"] });
+    void queryClient.invalidateQueries({ queryKey: ["notice"] });
+  };
 
   const publishMutation = useMutation({
     mutationFn: (id: number) =>
       request(`/api/system/notice/publish/${id}`, { method: "PUT", body: {} }),
     onSuccess: () => {
       feedback.success("发布成功");
-      void invalidate();
+      invalidateNoticeData();
     },
   });
   const revokeMutation = useMutation({
@@ -78,7 +98,7 @@ export function NoticePage() {
       request(`/api/system/notice/revoke/${id}`, { method: "PUT", body: {} }),
     onSuccess: () => {
       feedback.success("撤回成功");
-      void invalidate();
+      invalidateNoticeData();
     },
   });
 
@@ -146,14 +166,39 @@ export function NoticePage() {
       dataIndex: "status",
       valueType: "select",
       options: statusOptions,
-      width: 96,
-      render: (value) =>
-        Number(value) === 1 ? <Tag color="success">已发布</Tag> : <Tag>草稿</Tag>,
+      width: 108,
+      render: (_value, record) => {
+        const status = getNoticeStatus(record);
+        if (status === "scheduled") {
+          return (
+            <Tag color="processing" icon={<ClockCircleOutlined />}>
+              待发布
+            </Tag>
+          );
+        }
+        if (status === "published") return <Tag color="success">已发布</Tag>;
+        return <Tag>草稿</Tag>;
+      },
     },
     {
       title: "发布时间",
       dataIndex: "publishedAt",
+      valueType: "datetime",
       width: 180,
+      hideInSearch: true,
+      formHelp: "为空时发布会立即生效；选择未来时间并设置为发布后，到点自动在消息中心可见。",
+      fieldProps: {
+        allowClear: true,
+        format: "YYYY-MM-DD HH:mm:ss",
+        showTime: { format: "HH:mm:ss" },
+        placeholder: "立即发布或选择未来时间",
+      },
+      formItemProps: {
+        getValueProps: (value: unknown) => ({
+          value: value ? dayjs(String(value)) : null,
+        }),
+        normalize: normalizeDateTime,
+      },
       render: (value) => (value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-"),
     },
     {
@@ -184,10 +229,12 @@ export function NoticePage() {
         }
         beforeSubmit={(values) => ({
           ...values,
+          publishedAt: normalizeDateTime(values.publishedAt),
           targetUserIds: Array.isArray(values.targetUserIds)
             ? values.targetUserIds.map(Number)
             : [],
         })}
+        onDataChanged={invalidateNoticeData}
         operateRender={(record) => (
           <>
             {record.status === 1 ? (

@@ -142,6 +142,34 @@ describe("framework completeness modules", () => {
 
   it("publishes notices and supports unread/read state", async () => {
     const { token } = await login();
+    const futurePublishedAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const futureCreate = await app.request("/api/system/notice", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        title: "定时发布测试",
+        content: "未来才可见",
+        type: "notice",
+        scope: "all",
+        status: 1,
+        publishedAt: futurePublishedAt,
+      }),
+    });
+    expect(futureCreate.status).toBe(200);
+
+    const scheduledMyNotices = await app.request("/api/system/notice/my", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const scheduledMyNoticesBody = await readJson<Array<{ title: string; content: string }>>(
+      scheduledMyNotices,
+    );
+    expect(scheduledMyNotices.status).toBe(200);
+    expect(scheduledMyNoticesBody.data).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "定时发布测试", content: "未来才可见" }),
+      ]),
+    );
+
     const create = await app.request("/api/system/notice", {
       method: "POST",
       headers: authHeaders(token),
@@ -172,6 +200,17 @@ describe("framework completeness modules", () => {
     });
     const unreadBody = await readJson<{ total: number }>(unread);
     expect(unreadBody.data?.total).toBeGreaterThanOrEqual(1);
+
+    const myNotices = await app.request("/api/system/notice/my", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const myNoticesBody = await readJson<Array<{ title: string; content: string }>>(myNotices);
+    expect(myNotices.status).toBe(200);
+    expect(myNoticesBody.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "发布测试", content: "公告内容" }),
+      ]),
+    );
 
     const read = await app.request(`/api/system/notice/my/${row?.id}/read`, {
       method: "POST",

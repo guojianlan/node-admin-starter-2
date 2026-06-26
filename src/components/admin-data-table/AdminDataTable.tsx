@@ -72,6 +72,7 @@ type AdminDataTableProps<T extends object> = {
     open: boolean,
     context: { mode: "create" | "update"; record: T | null },
   ) => void;
+  onDataChanged?: () => void;
 };
 
 const emptyQueryKeyDeps: readonly unknown[] = [];
@@ -130,6 +131,7 @@ export function AdminDataTable<T extends object>({
   handleRequest,
   queryKeyDeps = emptyQueryKeyDeps,
   onFormOpenChange,
+  onDataChanged,
 }: AdminDataTableProps<T>) {
   const queryClient = useQueryClient();
   const [editingRecord, setEditingRecord] = useState<T | null>(null);
@@ -198,6 +200,7 @@ export function AdminDataTable<T extends object>({
     mutationFn: (record: T) => request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }),
     onSuccess: () => {
       feedback.success("删除成功");
+      onDataChanged?.();
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
     },
   });
@@ -220,6 +223,7 @@ export function AdminDataTable<T extends object>({
     onSuccess: (message) => {
       feedback.success(message);
       closeForm();
+      onDataChanged?.();
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
     },
   });

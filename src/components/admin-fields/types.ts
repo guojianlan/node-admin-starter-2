@@ -13,6 +13,7 @@ export type FieldValueType =
   | "radioButton"
   | "switch"
   | "date"
+  | "datetime"
   | "dateRange"
   | "image";
 

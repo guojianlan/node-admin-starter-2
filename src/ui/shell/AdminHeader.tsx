@@ -35,10 +35,13 @@ import {
   Popover,
   Row,
   Space,
+  Tag,
   Tooltip,
+  Typography,
 } from "antd";
 import type { MenuProps } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import dayjs from "dayjs";
 import { useState } from "react";
 import { request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
@@ -122,6 +125,8 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
   const [fullscreen, setFullscreen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [selectedNotice, setSelectedNotice] = useState<MyNotice | null>(null);
   const unreadQuery = useQuery({
     queryKey: ["notice", "unread-count"],
     queryFn: () => request<{ total: number }>("/api/system/notice/my/unread-count", { silent: true }),
@@ -135,6 +140,13 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
   });
   const readAllMutation = useMutation({
     mutationFn: () => request("/api/system/notice/my/read-all", { method: "POST", body: {} }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["notice"] });
+    },
+  });
+  const readMutation = useMutation({
+    mutationFn: (id: number) =>
+      request(`/api/system/notice/my/${id}/read`, { method: "POST", body: {} }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["notice"] });
     },
@@ -179,6 +191,12 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
     setFullscreen(false);
   }
 
+  function openNoticeDetail(item: MyNotice) {
+    setSelectedNotice(item.readAt ? item : { ...item, readAt: new Date().toISOString() });
+    setNoticeOpen(false);
+    if (!item.readAt) readMutation.mutate(item.id);
+  }
+
   return (
     <>
       <div className="xin-header">
@@ -200,46 +218,61 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
           <div className="xin-header-right">
             <Tooltip title={t("home")}>
               <Button
-              className="xin-header-icon"
-              type="text"
-              icon={<HomeOutlined />}
-              aria-label={t("home")}
-              onClick={() => navigation.push("/dashboard")}
-            />
+                className="xin-header-icon"
+                type="text"
+                icon={<HomeOutlined />}
+                aria-label={t("home")}
+                onClick={() => navigation.push("/dashboard")}
+              />
             </Tooltip>
             <Tooltip title={t("github")}>
               <Button
-              className="xin-header-icon"
-              type="text"
-              icon={<GithubOutlined />}
-              aria-label={t("github")}
-              onClick={() => window.open("https://github.com/xin-admin/xin-admin-laravel", "_blank")}
-            />
+                className="xin-header-icon"
+                type="text"
+                icon={<GithubOutlined />}
+                aria-label={t("github")}
+                onClick={() =>
+                  window.open("https://github.com/xin-admin/xin-admin-laravel", "_blank")
+                }
+              />
             </Tooltip>
             <Tooltip title={t("search")}>
               <Button
-              className="xin-header-icon"
-              type="text"
-              icon={<SearchOutlined />}
-              aria-label={t("search")}
-              onClick={() => setSearchOpen(true)}
-            />
+                className="xin-header-icon"
+                type="text"
+                icon={<SearchOutlined />}
+                aria-label={t("search")}
+                onClick={() => setSearchOpen(true)}
+              />
             </Tooltip>
             <Tooltip title={fullscreen ? t("exitFullscreen") : t("fullscreen")}>
               <Button
                 className="xin-header-icon"
-              type="text"
-              icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-              aria-label={fullscreen ? t("exitFullscreen") : t("fullscreen")}
-              onClick={() => void toggleFullscreen()}
-            />
+                type="text"
+                icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                aria-label={fullscreen ? t("exitFullscreen") : t("fullscreen")}
+                onClick={() => void toggleFullscreen()}
+              />
             </Tooltip>
             <Dropdown menu={{ items: localeItems }} trigger={["click"]}>
-              <Button className="xin-header-icon" type="text" icon={<TranslationOutlined />} aria-label={t("language")} />
+              <Button
+                className="xin-header-icon"
+                type="text"
+                icon={<TranslationOutlined />}
+                aria-label={t("language")}
+              />
             </Dropdown>
             <Popover
               trigger="click"
               placement="bottomRight"
+              open={noticeOpen}
+              onOpenChange={(open) => {
+                setNoticeOpen(open);
+                if (open) {
+                  void noticeQuery.refetch();
+                  void unreadQuery.refetch();
+                }
+              }}
               title={
                 <Space style={{ width: 300, justifyContent: "space-between" }}>
                   <span>{t("noticeCenter")}</span>
@@ -257,18 +290,32 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
                 <List<MyNotice>
                   style={{ width: 320 }}
                   size="small"
+                  loading={noticeQuery.isFetching}
                   dataSource={(noticeQuery.data ?? []).slice(0, 6)}
                   locale={{ emptyText: t("noNotice") }}
                   renderItem={(item) => (
-                    <List.Item>
+                    <List.Item
+                      style={{ cursor: "pointer", paddingInline: 4 }}
+                      onClick={() => openNoticeDetail(item)}
+                    >
                       <List.Item.Meta
                         title={
-                          <Space>
+                          <Space size={6}>
                             {!item.readAt ? <Badge status="processing" /> : null}
-                            {item.title}
+                            <Typography.Text style={{ maxWidth: 220 }} ellipsis>
+                              {item.title}
+                            </Typography.Text>
                           </Space>
                         }
-                        description={item.content}
+                        description={
+                          <Typography.Paragraph
+                            type="secondary"
+                            ellipsis={{ rows: 2 }}
+                            style={{ marginBottom: 0 }}
+                          >
+                            {item.content}
+                          </Typography.Paragraph>
+                        }
                       />
                     </List.Item>
                   )}
@@ -276,7 +323,12 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
               }
             >
               <Badge count={unreadQuery.data?.total ?? 0} size="small">
-                <Button className="xin-header-icon" type="text" icon={<NotificationOutlined />} aria-label={t("noticeCenter")} />
+                <Button
+                  className="xin-header-icon"
+                  type="text"
+                  icon={<NotificationOutlined />}
+                  aria-label={t("noticeCenter")}
+                />
               </Badge>
             </Popover>
             <Tooltip title={t("settings")}>
@@ -331,15 +383,56 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
         </Space>
       </Modal>
 
+      <Modal
+        open={Boolean(selectedNotice)}
+        footer={
+          <Button type="primary" onClick={() => setSelectedNotice(null)}>
+            关闭
+          </Button>
+        }
+        width={640}
+        onCancel={() => setSelectedNotice(null)}
+        destroyOnHidden
+      >
+        {selectedNotice ? (
+          <div style={{ paddingTop: 8 }}>
+            <Space size={8} wrap>
+              <Tag color={selectedNotice.type === "announcement" ? "orange" : "blue"}>
+                {selectedNotice.type === "announcement" ? "公告" : "通知"}
+              </Tag>
+              <Tag color={selectedNotice.readAt ? "default" : "processing"}>
+                {selectedNotice.readAt ? "已读" : "未读"}
+              </Tag>
+              {selectedNotice.publishedAt ? (
+                <Typography.Text type="secondary">
+                  {dayjs(selectedNotice.publishedAt).format("YYYY-MM-DD HH:mm:ss")}
+                </Typography.Text>
+              ) : null}
+            </Space>
+            <Typography.Title level={4} style={{ marginTop: 16, marginBottom: 12 }}>
+              {selectedNotice.title}
+            </Typography.Title>
+            <Divider style={{ margin: "12px 0" }} />
+            <Typography.Paragraph
+              style={{
+                marginBottom: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {selectedNotice.content}
+            </Typography.Paragraph>
+          </div>
+        ) : null}
+      </Modal>
+
       <Drawer
         open={settingsOpen}
         placement="right"
         closable={false}
         onClose={() => setSettingsOpen(false)}
         footer={
-          <Button onClick={resetPreferences}>
-            {t("resetSettings")}
-          </Button>
+          <Button onClick={resetPreferences}>{t("resetSettings")}</Button>
         }
         styles={{ body: { paddingTop: 10 } }}
       >
