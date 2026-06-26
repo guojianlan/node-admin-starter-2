@@ -137,6 +137,7 @@ profileRoutes.put("/profile/password", authRequired(), async (c) => {
           `UPDATE sys_user
            SET password_hash = ?,
                password_updated_at = now(),
+               force_password_change = false,
                failed_login_attempts = 0,
                locked_until = NULL,
                updated_at = now()

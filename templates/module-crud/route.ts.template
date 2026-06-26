@@ -1,0 +1,33 @@
+import { z } from "zod";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
+import { sysExample } from "@/server/db/schema";
+
+const exampleSchema = z.object({
+  name: z.string().min(1),
+  code: z.string().min(1),
+  status: z.coerce.number().default(1),
+  sort: z.coerce.number().default(0),
+});
+
+export const exampleCrud = createCrudRoutes({
+  basePath: "/example",
+  table: sysExample,
+  idColumn: sysExample.id,
+  createSchema: exampleSchema,
+  updateSchema: exampleSchema.partial(),
+  permissions: { prefix: "system.example" },
+  list: {
+    select: {
+      id: sysExample.id,
+      name: sysExample.name,
+      code: sysExample.code,
+      status: sysExample.status,
+      sort: sysExample.sort,
+      createdAt: sysExample.createdAt,
+    },
+    searchable: { name: "like", code: "like", status: "=" },
+    quickSearchFields: ["name", "code"],
+    sortableFields: ["id", "sort", "createdAt"],
+    defaultSort: { field: "sort", order: "asc" },
+  },
+});

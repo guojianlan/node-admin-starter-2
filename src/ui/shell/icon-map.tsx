@@ -42,6 +42,7 @@ const iconMap: Record<string, React.ReactNode> = {
   onlineUser: <SolutionOutlined />,
   notice: <NotificationOutlined />,
   profile: <UserOutlined />,
+  settings: <SettingOutlined />,
 };
 
 export function renderMenuIcon(icon?: string | null) {

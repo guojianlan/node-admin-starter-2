@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: admin_base
+          POSTGRES_PASSWORD: admin_base
+          POSTGRES_DB: admin_base
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://admin_base:admin_base@localhost:5432/admin_base
+      ADMIN_BASE_SECRET_KEY: ci-admin-base-secret
+      ADMIN_BASE_ADMIN_PASSWORD: ci-admin-password-123
+      NODE_ENV: test
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm db:seed
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm admin:check-routes
+      - run: pnpm build
+      - name: Smoke
+        run: |
+          pnpm start > /tmp/admin-base-next.log 2>&1 &
+          npx wait-on http://localhost:3000/api/health
+          SMOKE_BASE_URL=http://localhost:3000 SMOKE_PASSWORD=ci-admin-password-123 pnpm smoke

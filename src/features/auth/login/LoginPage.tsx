@@ -19,6 +19,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button, Checkbox, Divider, Dropdown, Form, Input, Modal, Space, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { useMemo, useState } from "react";
+import { useEffect } from "react";
+import { setAuthToken } from "@/lib/auth-token";
 import { request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { useAuthStore } from "@/stores/auth";
@@ -59,6 +61,7 @@ type ResetPasswordValues = {
 export function LoginPage() {
   const navigation = useNavigationAdapter();
   const login = useAuthStore((state) => state.login);
+  const initSession = useAuthStore((state) => state.initSession);
   const loading = useAuthStore((state) => state.loading);
   const { locale, setLocale, setThemeMode, t, themeMode } = useAdminPreferences();
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -74,6 +77,19 @@ export function LoginPage() {
     return params.get("resetToken") || "";
   }, [navigation.search]);
   const resetOpen = Boolean(resetToken);
+  const oauthToken = useMemo(() => {
+    const params = new URLSearchParams(navigation.search);
+    return params.get("oauthToken") || "";
+  }, [navigation.search]);
+
+  useEffect(() => {
+    if (!oauthToken) return;
+    setAuthToken(oauthToken);
+    void initSession().then(() => {
+      const user = useAuthStore.getState().user;
+      navigation.replace(user?.mustChangePassword ? "/profile?forcePassword=1" : redirect);
+    });
+  }, [initSession, navigation, oauthToken, redirect]);
 
   const loginOptionsQuery = useQuery({
     queryKey: ["login", "options"],
@@ -140,7 +156,8 @@ export function LoginPage() {
         ...values,
         captchaId: captchaQuery.data?.captchaId,
       });
-      navigation.replace(redirect);
+      const user = useAuthStore.getState().user;
+      navigation.replace(user?.mustChangePassword ? "/profile?forcePassword=1" : redirect);
     } catch {
       // request() already displays the API error through the global feedback bridge.
       if (captchaEnabled) void captchaQuery.refetch();

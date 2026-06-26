@@ -15,6 +15,7 @@
     "doctor": "tsx scripts/doctor.ts",
     "admin:doctor": "tsx scripts/doctor.ts",
     "admin:check-routes": "tsx scripts/admin-check-routes.ts",
+    "smoke": "tsx scripts/smoke.ts",
     "test": "vitest run",
     "e2e": "playwright test"
   },

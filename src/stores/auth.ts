@@ -12,6 +12,7 @@ export type AdminUser = {
   mobile?: string | null;
   deptId?: number | null;
   status: number;
+  mustChangePassword?: boolean;
 };
 
 export type MenuNode = {
@@ -41,6 +42,7 @@ type LoginResult = {
   token: string;
   user: AdminUser;
   access: string[];
+  mustChangePassword?: boolean;
 };
 
 type InfoResult = {

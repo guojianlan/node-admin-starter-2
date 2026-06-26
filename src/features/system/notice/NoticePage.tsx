@@ -2,13 +2,15 @@
 
 import {
   ClockCircleOutlined,
+  BarChartOutlined,
   NotificationOutlined,
   PauseCircleOutlined,
   SendOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Button, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Modal, Space, Statistic, Tag, Tooltip, Typography } from "antd";
+import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
 import { AuthButton } from "@/components/auth-button/AuthButton";
@@ -22,10 +24,15 @@ type NoticeRecord = {
   title: string;
   content: string;
   type: "notice" | "announcement";
-  scope: "all" | "users";
+  scope: "all" | "users" | "roles" | "depts";
   targetUserIds?: number[];
+  targetRoleIds?: number[];
+  targetDeptIds?: number[];
+  priority: number;
+  pinned: boolean;
   status: number;
   publishedAt?: string | null;
+  expiredAt?: string | null;
   createdAt: string;
 };
 
@@ -33,6 +40,24 @@ type UserOptionRecord = {
   id: number;
   username: string;
   nickname: string;
+};
+
+type RoleOptionRecord = {
+  id: number;
+  name: string;
+  code: string;
+};
+
+type DeptOptionRecord = {
+  id: number;
+  name: string;
+  code?: string | null;
+};
+
+type NoticeReadStats = {
+  targetTotal: number;
+  readTotal: number;
+  unreadTotal: number;
 };
 
 const typeOptions = [
@@ -43,6 +68,8 @@ const typeOptions = [
 const scopeOptions = [
   { label: "全部用户", value: "all" },
   { label: "指定用户", value: "users" },
+  { label: "指定角色", value: "roles" },
+  { label: "指定部门", value: "depts" },
 ];
 
 const statusOptions = [
@@ -65,6 +92,8 @@ function getNoticeStatus(record: Pick<NoticeRecord, "publishedAt" | "status">) {
 
 export function NoticePage() {
   const queryClient = useQueryClient();
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsNotice, setStatsNotice] = useState<NoticeRecord | null>(null);
   const userOptionsQuery = useQuery({
     queryKey: ["notice", "user-options"],
     queryFn: async () => {
@@ -78,6 +107,39 @@ export function NoticePage() {
       }));
     },
     staleTime: 5 * 60_000,
+  });
+  const roleOptionsQuery = useQuery({
+    queryKey: ["notice", "role-options"],
+    queryFn: async () => {
+      const page = await request<PageResult<RoleOptionRecord>>(
+        `/api/system/role${buildQueryString({ page: 1, pageSize: 200 })}`,
+        { silent: true },
+      );
+      return page.data.map<FieldOption>((item) => ({
+        label: `${item.name} (${item.code})`,
+        value: item.id,
+      }));
+    },
+    staleTime: 5 * 60_000,
+  });
+  const deptOptionsQuery = useQuery({
+    queryKey: ["notice", "dept-options"],
+    queryFn: async () => {
+      const page = await request<PageResult<DeptOptionRecord>>(
+        `/api/system/dept${buildQueryString({ page: 1, pageSize: 200 })}`,
+        { silent: true },
+      );
+      return page.data.map<FieldOption>((item) => ({
+        label: `${item.name}${item.code ? ` (${item.code})` : ""}`,
+        value: item.id,
+      }));
+    },
+    staleTime: 5 * 60_000,
+  });
+  const statsQuery = useQuery({
+    queryKey: ["notice", "read-stats", statsNotice?.id],
+    queryFn: () => request<NoticeReadStats>(`/api/system/notice/${statsNotice?.id}/read-stats`),
+    enabled: Boolean(statsNotice?.id && statsOpen),
   });
 
   const invalidateNoticeData = () => {
@@ -145,7 +207,13 @@ export function NoticePage() {
       width: 112,
       render: (value, record) => (
         <Tag color={value === "all" ? "green" : "purple"}>
-          {value === "all" ? "全部用户" : `指定用户 ${record.targetUserIds?.length ?? 0}`}
+          {value === "all"
+            ? "全部用户"
+            : value === "users"
+              ? `指定用户 ${record.targetUserIds?.length ?? 0}`
+              : value === "roles"
+                ? `指定角色 ${record.targetRoleIds?.length ?? 0}`
+                : `指定部门 ${record.targetDeptIds?.length ?? 0}`}
         </Tag>
       ),
     },
@@ -160,6 +228,44 @@ export function NoticePage() {
         mode: "multiple",
         loading: userOptionsQuery.isFetching,
       },
+    },
+    {
+      title: "指定角色",
+      dataIndex: "targetRoleIds",
+      valueType: "select",
+      options: roleOptionsQuery.data ?? [],
+      hideInTable: true,
+      hideInSearch: true,
+      fieldProps: {
+        mode: "multiple",
+        loading: roleOptionsQuery.isFetching,
+      },
+    },
+    {
+      title: "指定部门",
+      dataIndex: "targetDeptIds",
+      valueType: "select",
+      options: deptOptionsQuery.data ?? [],
+      hideInTable: true,
+      hideInSearch: true,
+      fieldProps: {
+        mode: "multiple",
+        loading: deptOptionsQuery.isFetching,
+      },
+    },
+    {
+      title: "置顶",
+      dataIndex: "pinned",
+      valueType: "switch",
+      width: 80,
+      render: (value) => (value ? <Tag color="gold">置顶</Tag> : "-"),
+    },
+    {
+      title: "优先级",
+      dataIndex: "priority",
+      valueType: "digit",
+      width: 90,
+      render: (value) => <Tag>{Number(value ?? 0)}</Tag>,
     },
     {
       title: "状态",
@@ -202,6 +308,27 @@ export function NoticePage() {
       render: (value) => (value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-"),
     },
     {
+      title: "过期时间",
+      dataIndex: "expiredAt",
+      valueType: "datetime",
+      width: 180,
+      hideInSearch: true,
+      formHelp: "为空时长期有效；过期后消息中心不再展示。",
+      fieldProps: {
+        allowClear: true,
+        format: "YYYY-MM-DD HH:mm:ss",
+        showTime: { format: "HH:mm:ss" },
+        placeholder: "长期有效或选择过期时间",
+      },
+      formItemProps: {
+        getValueProps: (value: unknown) => ({
+          value: value ? dayjs(String(value)) : null,
+        }),
+        normalize: normalizeDateTime,
+      },
+      render: (value) => (value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-"),
+    },
+    {
       title: "创建时间",
       dataIndex: "createdAt",
       valueType: "dateRange",
@@ -230,13 +357,31 @@ export function NoticePage() {
         beforeSubmit={(values) => ({
           ...values,
           publishedAt: normalizeDateTime(values.publishedAt),
+          expiredAt: normalizeDateTime(values.expiredAt),
           targetUserIds: Array.isArray(values.targetUserIds)
             ? values.targetUserIds.map(Number)
+            : [],
+          targetRoleIds: Array.isArray(values.targetRoleIds)
+            ? values.targetRoleIds.map(Number)
+            : [],
+          targetDeptIds: Array.isArray(values.targetDeptIds)
+            ? values.targetDeptIds.map(Number)
             : [],
         })}
         onDataChanged={invalidateNoticeData}
         operateRender={(record) => (
           <>
+            <Tooltip title="阅读统计">
+              <Button
+                size="small"
+                icon={<BarChartOutlined />}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setStatsNotice(record);
+                  setStatsOpen(true);
+                }}
+              />
+            </Tooltip>
             {record.status === 1 ? (
               <AuthButton auth="system.notice.revoke">
                 <Tooltip title="撤回">
@@ -271,6 +416,18 @@ export function NoticePage() {
         )}
         tableProps={{ size: "small", scroll: { x: 1380 } }}
       />
+      <Modal
+        title={statsNotice ? `阅读统计：${statsNotice.title}` : "阅读统计"}
+        open={statsOpen}
+        footer={null}
+        onCancel={() => setStatsOpen(false)}
+      >
+        <Space size={24}>
+          <Statistic title="目标人数" value={statsQuery.data?.targetTotal ?? 0} loading={statsQuery.isFetching} />
+          <Statistic title="已读人数" value={statsQuery.data?.readTotal ?? 0} loading={statsQuery.isFetching} />
+          <Statistic title="未读人数" value={statsQuery.data?.unreadTotal ?? 0} loading={statsQuery.isFetching} />
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }

@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -10,6 +12,7 @@ import { sysFile, sysStorage } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { buildListQuery } from "@/server/services/list-query";
+import { runWithOperationLog } from "@/server/services/operation-log-service";
 import {
   classifyFile,
   copyStoredObject,
@@ -67,6 +70,23 @@ async function getFileObjectRows(ids: number[]) {
        WHERE f.id IN (${placeholders(ids)})`,
     )
     .all(...ids)) as FileObjectRow[];
+}
+
+async function assertFilesNotReferenced(ids: number[]) {
+  if (!ids.length) return;
+  const row = (await sqlite
+    .prepare(
+      `SELECT file_id AS fileId
+       FROM sys_file_reference
+       WHERE file_id IN (${placeholders(ids)})
+       LIMIT 1`,
+    )
+    .get(...ids)) as { fileId: number } | undefined;
+  if (row) throw new Error(`文件 ${row.fileId} 已被业务引用，不能物理删除`);
+}
+
+function chunkRoot() {
+  return path.join(process.cwd(), "storage", "upload-parts");
 }
 
 const fileCrud = createCrudRoutes({
@@ -131,6 +151,7 @@ const fileCrud = createCrudRoutes({
   },
   hooks: {
     beforeForceDelete: async (_ctx, ids) => {
+      await assertFilesNotReferenced(ids);
       const rows = await getFileObjectRows(ids);
       await Promise.all(rows.map((row) => deleteStoredObject(row)));
     },
@@ -235,14 +256,24 @@ fileRoutes.delete("/file/group/:id", authRequired(), ability("system.file.delete
 
 fileRoutes.post("/file/list/upload", authRequired(), ability("system.file.upload"), async (c) => {
   const user = c.get("user");
-  const body = await c.req.parseBody();
-  const file = body.file;
-  if (!(file instanceof File)) throw new Error("请选择文件");
-  const result = await uploadFileToDefaultStorage({
-    file,
-    groupId: Number(body.groupId || 1),
-    userId: user.id,
-  });
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "upload",
+      resource: "/file/list",
+    },
+    async () => {
+      const body = await c.req.parseBody();
+      const file = body.file;
+      if (!(file instanceof File)) throw new Error("请选择文件");
+      return uploadFileToDefaultStorage({
+        file,
+        groupId: Number(body.groupId || 1),
+        userId: user.id,
+      });
+    },
+  );
 
   return c.json(
     success(
@@ -289,10 +320,183 @@ fileRoutes.get(
       headers: {
         "Content-Type": "application/octet-stream",
         "Content-Disposition": `attachment; filename="${encodeURIComponent(row.originalName)}"`,
+        "X-Content-Type-Options": "nosniff",
       },
     });
   },
 );
+
+fileRoutes.post("/file/chunk/init", authRequired(), ability("system.file.upload"), async (c) => {
+  const user = c.get("user");
+  const payload = z
+    .object({
+      filename: z.string().min(1),
+      mime: z.string().optional().nullable(),
+      size: z.coerce.number().int().positive(),
+      totalParts: z.coerce.number().int().positive(),
+      groupId: z.coerce.number().optional().nullable(),
+    })
+    .parse(await c.req.json());
+  const uploadId = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await sqlite
+    .prepare(
+      `INSERT INTO sys_file_upload_session
+        (upload_id, filename, mime, size, total_parts, group_id, user_id, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      uploadId,
+      payload.filename,
+      payload.mime || null,
+      payload.size,
+      payload.totalParts,
+      payload.groupId ?? 1,
+      user.id,
+      expiresAt,
+    );
+  return c.json(success({ uploadId, expiresAt }, "初始化成功"));
+});
+
+fileRoutes.post("/file/chunk/part", authRequired(), ability("system.file.upload"), async (c) => {
+  const user = c.get("user");
+  const body = await c.req.parseBody();
+  const uploadId = String(body.uploadId || "");
+  const partNumber = Number(body.partNumber || 0);
+  const file = body.file;
+  if (!uploadId || !Number.isFinite(partNumber) || partNumber <= 0) throw new Error("分片参数不正确");
+  if (!(file instanceof File)) throw new Error("请选择分片文件");
+  const session = (await sqlite
+    .prepare(
+      `SELECT upload_id AS uploadId, total_parts AS totalParts, status, user_id AS userId, expires_at AS expiresAt
+       FROM sys_file_upload_session
+       WHERE upload_id = ?`,
+    )
+    .get(uploadId)) as
+    | { uploadId: string; totalParts: number; status: string; userId: number; expiresAt: string }
+    | undefined;
+  if (!session || session.userId !== user.id) throw new Error("上传会话不存在");
+  if (session.status !== "uploading") throw new Error("上传会话状态不可用");
+  if (new Date(session.expiresAt).getTime() <= Date.now()) throw new Error("上传会话已过期");
+  if (partNumber > session.totalParts) throw new Error("分片编号超出范围");
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  const dir = path.join(chunkRoot(), uploadId);
+  await fs.mkdir(dir, { recursive: true });
+  const partPath = path.join(dir, `${partNumber}.part`);
+  await fs.writeFile(partPath, buffer);
+  await sqlite
+    .prepare(
+      `INSERT INTO sys_file_upload_part (upload_id, part_number, size, sha256, path)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (upload_id, part_number)
+       DO UPDATE SET size = excluded.size, sha256 = excluded.sha256, path = excluded.path, created_at = now()`,
+    )
+    .run(uploadId, partNumber, buffer.length, sha256, partPath);
+  return c.json(success({ partNumber, sha256 }, "分片上传成功"));
+});
+
+fileRoutes.post("/file/chunk/complete", authRequired(), ability("system.file.upload"), async (c) => {
+  const user = c.get("user");
+  const payload = z.object({ uploadId: z.string().min(1) }).parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "chunkComplete",
+      resource: "/file/chunk",
+      resourceId: payload.uploadId,
+    },
+    async () => {
+      const session = (await sqlite
+        .prepare(
+          `SELECT upload_id AS uploadId, filename, mime, size, total_parts AS totalParts, group_id AS groupId, user_id AS userId, status, expires_at AS expiresAt
+           FROM sys_file_upload_session
+           WHERE upload_id = ?`,
+        )
+        .get(payload.uploadId)) as
+        | {
+            uploadId: string;
+            filename: string;
+            mime: string | null;
+            size: number;
+            totalParts: number;
+            groupId: number | null;
+            userId: number;
+            status: string;
+            expiresAt: string;
+          }
+        | undefined;
+      if (!session || session.userId !== user.id) throw new Error("上传会话不存在");
+      if (session.status !== "uploading") throw new Error("上传会话状态不可用");
+      if (new Date(session.expiresAt).getTime() <= Date.now()) throw new Error("上传会话已过期");
+      const parts = (await sqlite
+        .prepare(
+          `SELECT part_number AS partNumber, path, size
+           FROM sys_file_upload_part
+           WHERE upload_id = ?
+           ORDER BY part_number ASC`,
+        )
+        .all(payload.uploadId)) as Array<{ partNumber: number; path: string; size: number }>;
+      if (parts.length !== session.totalParts) throw new Error("分片数量不完整");
+      for (let index = 0; index < session.totalParts; index += 1) {
+        if (parts[index]?.partNumber !== index + 1) throw new Error("分片编号不连续");
+      }
+      const buffers = await Promise.all(parts.map((part) => fs.readFile(part.path)));
+      const buffer = Buffer.concat(buffers);
+      if (buffer.length !== Number(session.size)) throw new Error("合并文件大小不匹配");
+      const file = new File([buffer], session.filename, {
+        type: session.mime || "application/octet-stream",
+      });
+      const uploaded = await uploadFileToDefaultStorage({
+        file,
+        groupId: session.groupId ?? 1,
+        userId: user.id,
+      });
+      await sqlite
+        .prepare("UPDATE sys_file_upload_session SET status = 'completed', updated_at = now() WHERE upload_id = ?")
+        .run(payload.uploadId);
+      await fs.rm(path.join(chunkRoot(), payload.uploadId), { recursive: true, force: true });
+      return uploaded;
+    },
+  );
+  return c.json(success(result, "上传完成"));
+});
+
+fileRoutes.delete("/file/chunk/clean-expired", authRequired(), ability("system.file.delete"), async (c) => {
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "cleanExpiredUploadSessions",
+      resource: "/file/chunk",
+    },
+    async () => {
+      const rows = (await sqlite
+        .prepare("SELECT upload_id AS uploadId FROM sys_file_upload_session WHERE expires_at < now() AND status = 'uploading'")
+        .all()) as Array<{ uploadId: string }>;
+      for (const row of rows) {
+        await fs.rm(path.join(chunkRoot(), row.uploadId), { recursive: true, force: true });
+      }
+      await sqlite
+        .prepare("UPDATE sys_file_upload_session SET status = 'expired', updated_at = now() WHERE expires_at < now() AND status = 'uploading'")
+        .run();
+    },
+  );
+  return c.json(success(null, "清理成功"));
+});
+
+fileRoutes.delete("/file/chunk/:uploadId", authRequired(), ability("system.file.upload"), async (c) => {
+  const user = c.get("user");
+  const uploadId = c.req.param("uploadId");
+  await sqlite
+    .prepare(
+      "UPDATE sys_file_upload_session SET status = 'cancelled', updated_at = now() WHERE upload_id = ? AND user_id = ?",
+    )
+    .run(uploadId, user.id);
+  await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
+  return c.json(success(null, "已取消上传"));
+});
 
 fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"), async (c) => {
   const page = await buildListQuery(c.req.url, {
@@ -363,11 +567,22 @@ fileRoutes.put("/file/list/move", authRequired(), ability("system.file.upload"),
   const payload = z
     .object({ ids: z.array(z.coerce.number()).min(1), groupId: z.coerce.number() })
     .parse(await c.req.json());
-  await sqlite
-    .prepare(
-      `UPDATE sys_file SET group_id = ?, updated_at = ? WHERE id IN (${placeholders(payload.ids)})`,
-    )
-    .run(payload.groupId, nowIso(), ...payload.ids);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "move",
+      resource: "/file/list",
+      details: { ids: payload.ids, groupId: payload.groupId },
+    },
+    async () => {
+      await sqlite
+        .prepare(
+          `UPDATE sys_file SET group_id = ?, updated_at = ? WHERE id IN (${placeholders(payload.ids)})`,
+        )
+        .run(payload.groupId, nowIso(), ...payload.ids);
+    },
+  );
   return c.json(success(null, "移动成功"));
 });
 
@@ -376,9 +591,18 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
   const payload = z
     .object({ ids: z.array(z.coerce.number()).min(1), groupId: z.coerce.number() })
     .parse(await c.req.json());
-  const rows = (await sqlite
-    .prepare(
-      `SELECT
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "copy",
+      resource: "/file/list",
+      details: { ids: payload.ids, groupId: payload.groupId },
+    },
+    async () => {
+      const rows = (await sqlite
+        .prepare(
+          `SELECT
         f.*,
         COALESCE(s.type, 'local') AS storageType,
         s.endpoint,
@@ -390,76 +614,78 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
        FROM sys_file f
        LEFT JOIN sys_storage s ON s.id = f.storage_id
        WHERE f.id IN (${placeholders(payload.ids)}) AND f.deleted_at IS NULL`,
-    )
-    .all(...payload.ids)) as Array<{
-    group_id: number | null;
-    storage_id: number | null;
-    original_name: string;
-    filename: string;
-    path: string;
-    url: string;
-    size: number;
-    ext: string | null;
-    mime: string | null;
-    type: string | null;
-    sha256: string | null;
-    metadata_json: string | null;
-    storageType: "local" | "s3";
-    endpoint: string | null;
-    region: string | null;
-    bucket: string | null;
-    accessKey: string | null;
-    secretKeyEncrypted: string | null;
-    rootPath: string | null;
-  }>;
-  const insert = sqlite.prepare(
-    `INSERT INTO sys_file
+        )
+        .all(...payload.ids)) as Array<{
+        group_id: number | null;
+        storage_id: number | null;
+        original_name: string;
+        filename: string;
+        path: string;
+        url: string;
+        size: number;
+        ext: string | null;
+        mime: string | null;
+        type: string | null;
+        sha256: string | null;
+        metadata_json: string | null;
+        storageType: "local" | "s3";
+        endpoint: string | null;
+        region: string | null;
+        bucket: string | null;
+        accessKey: string | null;
+        secretKeyEncrypted: string | null;
+        rootPath: string | null;
+      }>;
+      const insert = sqlite.prepare(
+        `INSERT INTO sys_file
       (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type, sha256, metadata_json, uploader_id, created_at, updated_at)
      VALUES
       (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
+      );
 
-  for (const row of rows) {
-    const ext = row.ext ? `.${row.ext}` : safeExt(row.original_name);
-    const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-    const filename = `${crypto.randomUUID()}${ext}`;
-    const relativePath = `${dateDir}/${filename}`;
-    await copyStoredObject({
-      source: {
-        filename: row.filename,
-        path: row.path,
-        mime: row.mime,
-        storageId: row.storage_id,
-        storageType: row.storageType,
-        endpoint: row.endpoint,
-        region: row.region,
-        bucket: row.bucket,
-        accessKey: row.accessKey,
-        secretKeyEncrypted: row.secretKeyEncrypted,
-        rootPath: row.rootPath,
-      },
-      targetPath: relativePath,
-      contentType: row.mime,
-    });
-    const now = nowIso();
-    await insert.run(
-      payload.groupId,
-      row.storage_id,
-      row.original_name,
-      filename,
-      relativePath,
-      row.url.replace(row.path, relativePath),
-      row.size,
-      row.ext,
-      row.mime,
-      row.type ?? classifyFile({ ext: row.ext, mime: row.mime }),
-      row.sha256,
-      row.metadata_json,
-      user.id,
-      now,
-      now,
-    );
-  }
+      for (const row of rows) {
+        const ext = row.ext ? `.${row.ext}` : safeExt(row.original_name);
+        const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+        const filename = `${crypto.randomUUID()}${ext}`;
+        const relativePath = `${dateDir}/${filename}`;
+        await copyStoredObject({
+          source: {
+            filename: row.filename,
+            path: row.path,
+            mime: row.mime,
+            storageId: row.storage_id,
+            storageType: row.storageType,
+            endpoint: row.endpoint,
+            region: row.region,
+            bucket: row.bucket,
+            accessKey: row.accessKey,
+            secretKeyEncrypted: row.secretKeyEncrypted,
+            rootPath: row.rootPath,
+          },
+          targetPath: relativePath,
+          contentType: row.mime,
+        });
+        const now = nowIso();
+        await insert.run(
+          payload.groupId,
+          row.storage_id,
+          row.original_name,
+          filename,
+          relativePath,
+          row.url.replace(row.path, relativePath),
+          row.size,
+          row.ext,
+          row.mime,
+          row.type ?? classifyFile({ ext: row.ext, mime: row.mime }),
+          row.sha256,
+          row.metadata_json,
+          user.id,
+          now,
+          now,
+        );
+      }
+    },
+  );
 
   return c.json(success(null, "复制成功"));
 });
@@ -469,9 +695,26 @@ fileRoutes.delete(
   authRequired(),
   ability("system.file.delete"),
   async (c) => {
-    const rows = (await sqlite
-      .prepare(
-        `SELECT
+    const count = await runWithOperationLog(
+      c,
+      {
+        module: "system.file",
+        action: "cleanTrash",
+        resource: "/file/list",
+      },
+      async () => {
+        const referenced = (await sqlite
+          .prepare(
+            `SELECT DISTINCT f.id
+             FROM sys_file f
+             INNER JOIN sys_file_reference r ON r.file_id = f.id
+             WHERE f.deleted_at IS NOT NULL`,
+          )
+          .all()) as Array<{ id: number }>;
+        if (referenced.length) throw new Error("回收站中存在被业务引用的文件，不能清空");
+        const rows = (await sqlite
+          .prepare(
+            `SELECT
           f.id,
           f.filename,
           f.path,
@@ -487,11 +730,14 @@ fileRoutes.delete(
          FROM sys_file f
          LEFT JOIN sys_storage s ON s.id = f.storage_id
          WHERE f.deleted_at IS NOT NULL`,
-      )
-      .all()) as FileObjectRow[];
-    await Promise.all(rows.map((row) => deleteStoredObject(row)));
-    await sqlite.prepare("DELETE FROM sys_file WHERE deleted_at IS NOT NULL").run();
-    return c.json(success({ count: rows.length }, "清空成功"));
+          )
+          .all()) as FileObjectRow[];
+        await Promise.all(rows.map((row) => deleteStoredObject(row)));
+        await sqlite.prepare("DELETE FROM sys_file WHERE deleted_at IS NOT NULL").run();
+        return rows.length;
+      },
+    );
+    return c.json(success({ count }, "清空成功"));
   },
 );
 

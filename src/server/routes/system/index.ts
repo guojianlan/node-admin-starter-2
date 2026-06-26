@@ -1,6 +1,11 @@
 import { Hono } from "hono";
+import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
+import { ability } from "@/server/middleware/ability";
+import { authRequired } from "@/server/middleware/auth";
+import { runReadinessChecks } from "@/server/services/readiness-service";
 import { configRoutes } from "./config";
+import { dashboardRoutes } from "./dashboard";
 import { deptRoutes } from "./dept";
 import { dictRoutes } from "./dict";
 import { fileRoutes } from "./file";
@@ -17,6 +22,12 @@ import { userRoutes } from "./user";
 
 export const systemRoutes = new Hono<{ Variables: HonoVariables }>();
 
+systemRoutes.get("/doctor", authRequired(), ability("system.config.query"), async (c) => {
+  const result = await runReadinessChecks({ includeMail: true });
+  return c.json(success(result), result.status === "failed" ? 503 : 200);
+});
+
+systemRoutes.route("/", dashboardRoutes);
 systemRoutes.route("/", userRoutes);
 systemRoutes.route("/", roleRoutes);
 systemRoutes.route("/", ruleRoutes);

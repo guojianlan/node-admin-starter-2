@@ -28,6 +28,9 @@ const missingInDatabase = adminRoutes.filter(
   (item) => !item.adminHidden && !dbPathSet.has(item.path),
 );
 const missingAuthRules = adminRoutes.filter((item) => item.auth && !actionKeys.has(item.auth));
+const missingRouteAuth = adminRoutes.filter(
+  (item) => !item.adminHidden && item.path !== "/dashboard" && !item.auth,
+);
 const invalidCrudPermissions = crudMetas.flatMap((meta) =>
   Object.entries(meta.actions)
     .filter(([, permission]) => permission !== false && !actionKeys.has(permission))
@@ -50,6 +53,7 @@ if (
   missingInManifest.length ||
   missingInDatabase.length ||
   missingAuthRules.length ||
+  missingRouteAuth.length ||
   invalidCrudPermissions.length ||
   missingCrudPermissions.length
 ) {
@@ -62,6 +66,9 @@ if (
   }
   if (missingAuthRules.length) {
     console.error("Manifest auth rules missing in DB:", missingAuthRules);
+  }
+  if (missingRouteAuth.length) {
+    console.error("Manifest routes missing auth binding:", missingRouteAuth);
   }
   if (invalidCrudPermissions.length) {
     console.error("CRUD permissions missing in DB:", invalidCrudPermissions);

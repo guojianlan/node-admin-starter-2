@@ -92,6 +92,16 @@ const mimeRules: Record<string, string[]> = {
   webm: ["video/webm"],
 };
 
+const magicRules: Record<string, Array<number[]>> = {
+  jpg: [[0xff, 0xd8, 0xff]],
+  jpeg: [[0xff, 0xd8, 0xff]],
+  png: [[0x89, 0x50, 0x4e, 0x47]],
+  gif: [[0x47, 0x49, 0x46, 0x38]],
+  webp: [[0x52, 0x49, 0x46, 0x46]],
+  pdf: [[0x25, 0x50, 0x44, 0x46]],
+  zip: [[0x50, 0x4b, 0x03, 0x04], [0x50, 0x4b, 0x05, 0x06], [0x50, 0x4b, 0x07, 0x08]],
+};
+
 function splitExtensions(value?: string | null) {
   return (value ?? "")
     .split(",")
@@ -265,6 +275,14 @@ export async function assertUploadAllowed(file: File, ext: string) {
       mime.endsWith("/") ? file.type.startsWith(mime) : file.type === mime,
     );
     if (!matched) throw new Error("文件扩展名与 MIME 类型不匹配");
+  }
+  const expectedMagic = magicRules[normalizedExt];
+  if (expectedMagic?.length) {
+    const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+    const matched = expectedMagic.some((signature) =>
+      signature.every((byte, index) => bytes[index] === byte),
+    );
+    if (!matched) throw new Error("文件内容与扩展名不匹配");
   }
   return config;
 }

@@ -46,6 +46,7 @@ const moduleRules = [
       ["delete", "删除角色"],
       ["setRule", "分配权限"],
       ["status", "切换状态"],
+      ["copy", "复制角色"],
     ],
   },
   {
@@ -121,6 +122,21 @@ const moduleRules = [
   },
   {
     route: {
+      id: 150,
+      parentId: 2,
+      key: "system.settings",
+      name: "系统设置",
+      path: "/system/settings",
+      icon: "settings",
+      order: 65,
+    },
+    actions: [
+      ["query", "查看系统设置"],
+      ["save", "保存系统设置"],
+    ],
+  },
+  {
+    route: {
       id: 70,
       parentId: 2,
       key: "system.file",
@@ -186,7 +202,11 @@ const moduleRules = [
       icon: "operationLog",
       order: 100,
     },
-    actions: [["query", "查询操作日志"]],
+    actions: [
+      ["query", "查询操作日志"],
+      ["export", "导出操作日志"],
+      ["clean", "清理操作日志"],
+    ],
   },
   {
     route: {

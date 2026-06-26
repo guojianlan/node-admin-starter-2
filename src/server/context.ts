@@ -6,6 +6,7 @@ export type AdminUserContext = {
   mobile?: string | null;
   deptId?: number | null;
   status: number;
+  mustChangePassword?: boolean;
 };
 
 export type HonoVariables = {

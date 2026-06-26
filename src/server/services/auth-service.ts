@@ -18,6 +18,8 @@ type UserRow = {
   mobile: string | null;
   deptId: number | null;
   lockedUntil: string | Date | null;
+  passwordUpdatedAt: string | Date | null;
+  forcePasswordChange: boolean;
   failedLoginAttempts: number;
   status: number;
 };
@@ -55,7 +57,20 @@ export function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-function toUserContext(row: UserRow): AdminUserContext {
+function isPasswordExpired(
+  row: Pick<UserRow, "passwordUpdatedAt">,
+  policy: Awaited<ReturnType<typeof getSecurityPolicy>>,
+) {
+  return (
+    policy.passwordExpireDays > 0 &&
+    (!row.passwordUpdatedAt ||
+      new Date(row.passwordUpdatedAt).getTime() +
+        policy.passwordExpireDays * 24 * 60 * 60 * 1000 <=
+        Date.now())
+  );
+}
+
+function toUserContext(row: UserRow, mustChangePassword = false): AdminUserContext {
   return {
     id: row.id,
     username: row.username,
@@ -64,6 +79,7 @@ function toUserContext(row: UserRow): AdminUserContext {
     mobile: row.mobile,
     deptId: row.deptId,
     status: row.status,
+    mustChangePassword,
   };
 }
 
@@ -117,6 +133,8 @@ export async function getUserById(userId: number) {
         mobile,
         dept_id AS deptId,
         locked_until AS lockedUntil,
+        password_updated_at AS passwordUpdatedAt,
+        force_password_change AS forcePasswordChange,
         failed_login_attempts AS failedLoginAttempts,
         status
        FROM sys_user
@@ -219,6 +237,8 @@ export async function login(input: LoginInput) {
         mobile,
         dept_id AS deptId,
         locked_until AS lockedUntil,
+        password_updated_at AS passwordUpdatedAt,
+        force_password_change AS forcePasswordChange,
         failed_login_attempts AS failedLoginAttempts,
         status
        FROM sys_user
@@ -259,36 +279,14 @@ export async function login(input: LoginInput) {
     throw new Error("账号已停用");
   }
 
-  const token = crypto.randomBytes(32).toString("hex");
-  const tokenHash = hashToken(token);
-  const access = await getUserAccess(user.id);
+  const issued = await issueUserToken({
+    userId: user.id,
+    remember: input.remember,
+    ip: input.ip,
+    userAgent: input.userAgent,
+  });
+
   const now = nowIso();
-  const ttlDays = input.remember ? policy.rememberTtlDays : policy.accessTokenTtlDays;
-  const expiresAt =
-    input.remember && ttlDays <= 0
-      ? null
-      : new Date(Date.now() + Math.max(ttlDays, 1) * 24 * 60 * 60 * 1000).toISOString();
-
-  await sqlite
-    .prepare(
-      `INSERT INTO sys_access_token
-        (user_id, name, token_hash, abilities_json, ip, user_agent, last_used_at, expires_at, created_at, updated_at)
-       VALUES
-        (?, 'web', ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      user.id,
-      tokenHash,
-      JSON.stringify(access),
-      input.ip ?? null,
-      input.userAgent ?? null,
-      now,
-      expiresAt,
-      now,
-      now,
-    );
-  await enforceSessionPolicy({ userId: user.id, currentTokenHash: tokenHash });
-
   await sqlite
     .prepare(
       `UPDATE sys_user
@@ -304,12 +302,55 @@ export async function login(input: LoginInput) {
   await recordPasswordHistory({ userId: user.id, passwordHash: user.passwordHash });
 
   await recordLogin({ ...input, status: 1, message: "登录成功" });
+  const mustChangePassword = Boolean(user.forcePasswordChange || isPasswordExpired(user, policy));
 
   return {
-    token,
-    user: toUserContext(user),
-    access,
+    token: issued.token,
+    user: toUserContext(user, mustChangePassword),
+    access: issued.access,
+    mustChangePassword,
   };
+}
+
+export async function issueUserToken(input: {
+  userId: number;
+  remember?: boolean;
+  ip?: string | null;
+  userAgent?: string | null;
+  name?: string;
+}) {
+  const policy = await getSecurityPolicy();
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashToken(token);
+  const access = await getUserAccess(input.userId);
+  const now = nowIso();
+  const ttlDays = input.remember ? policy.rememberTtlDays : policy.accessTokenTtlDays;
+  const expiresAt =
+    input.remember && ttlDays <= 0
+      ? null
+      : new Date(Date.now() + Math.max(ttlDays, 1) * 24 * 60 * 60 * 1000).toISOString();
+
+  await sqlite
+    .prepare(
+      `INSERT INTO sys_access_token
+        (user_id, name, token_hash, abilities_json, ip, user_agent, last_used_at, expires_at, created_at, updated_at)
+       VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.userId,
+      input.name || "web",
+      tokenHash,
+      JSON.stringify(access),
+      input.ip ?? null,
+      input.userAgent ?? null,
+      now,
+      expiresAt,
+      now,
+      now,
+    );
+  await enforceSessionPolicy({ userId: input.userId, currentTokenHash: tokenHash });
+  return { token, tokenHash, access };
 }
 
 export async function resolveToken(token: string) {
@@ -337,10 +378,11 @@ export async function resolveToken(token: string) {
       .prepare("UPDATE sys_access_token SET last_used_at = ?, updated_at = ? WHERE id = ?")
       .run(nowIso(), nowIso(), tokenRow.id);
   }
+  const mustChangePassword = Boolean(user.forcePasswordChange || isPasswordExpired(user, policy));
 
   return {
     tokenHash,
-    user: toUserContext(user),
+    user: toUserContext(user, mustChangePassword),
     abilities: parseAbilities(tokenRow.abilitiesJson),
   };
 }

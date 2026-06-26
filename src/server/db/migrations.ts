@@ -721,6 +721,155 @@ VALUES
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0008_system_settings_route",
+    sql: `
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (150, 2, 'route', 'system.settings', '系统设置', '/system/settings', 'settings', 65, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (151, 150, 'action', 'system.settings.query', '查看系统设置', 1, 1, 0, 0, true, now(), now()),
+  (152, 150, 'action', 'system.settings.save', '保存系统设置', 2, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (150), (151), (152)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0009_notice_v2",
+    sql: `
+ALTER TABLE sys_notice ADD COLUMN IF NOT EXISTS target_role_ids_json TEXT;
+ALTER TABLE sys_notice ADD COLUMN IF NOT EXISTS target_dept_ids_json TEXT;
+ALTER TABLE sys_notice ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sys_notice ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_notice ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS sys_notice_expired_at_idx ON sys_notice(expired_at);
+CREATE INDEX IF NOT EXISTS sys_notice_pinned_priority_idx ON sys_notice(pinned, priority);
+`,
+  },
+  {
+    id: "0010_file_upload_sessions",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_file_reference (
+  id SERIAL PRIMARY KEY,
+  file_id INTEGER NOT NULL REFERENCES sys_file(id) ON DELETE CASCADE,
+  module TEXT NOT NULL,
+  resource_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sys_file_reference_file_id_idx ON sys_file_reference(file_id);
+CREATE INDEX IF NOT EXISTS sys_file_reference_module_resource_idx ON sys_file_reference(module, resource_id);
+
+CREATE TABLE IF NOT EXISTS sys_file_upload_session (
+  id SERIAL PRIMARY KEY,
+  upload_id TEXT NOT NULL UNIQUE,
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size BIGINT NOT NULL,
+  total_parts INTEGER NOT NULL,
+  group_id INTEGER,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'uploading',
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sys_file_upload_session_user_id_idx ON sys_file_upload_session(user_id);
+CREATE INDEX IF NOT EXISTS sys_file_upload_session_expires_at_idx ON sys_file_upload_session(expires_at);
+
+CREATE TABLE IF NOT EXISTS sys_file_upload_part (
+  upload_id TEXT NOT NULL,
+  part_number INTEGER NOT NULL,
+  size BIGINT NOT NULL,
+  sha256 TEXT NOT NULL,
+  path TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (upload_id, part_number)
+);
+`,
+  },
+  {
+    id: "0011_oauth_login",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_oauth_state (
+  state TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  redirect_uri TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sys_oauth_state_expires_at_idx ON sys_oauth_state(expires_at);
+
+CREATE TABLE IF NOT EXISTS sys_oauth_account (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  provider_username TEXT,
+  email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(provider, provider_user_id),
+  UNIQUE(user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS sys_oauth_account_user_id_idx ON sys_oauth_account(user_id);
+`,
+  },
+  {
+    id: "0012_force_password_change",
+    sql: `
+ALTER TABLE sys_user ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN NOT NULL DEFAULT false;
+`,
+  },
+  {
+    id: "0013_operation_log_governance_rules",
+    sql: `
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (102, 100, 'action', 'system.operationLog.export', '导出操作日志', 2, 1, 0, 0, true, now(), now()),
+  (103, 100, 'action', 'system.operationLog.clean', '清理操作日志', 3, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (102), (103)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0014_role_copy_rule",
+    sql: `
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (27, 20, 'action', 'system.role.copy', '复制角色', 7, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, 27
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = 27)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

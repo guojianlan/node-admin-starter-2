@@ -1,0 +1,13 @@
+import { integer, pgTable, serial, text } from "drizzle-orm/pg-core";
+import { auditUsers, softDelete, timestamps } from "@/server/db/schema";
+
+export const sysExample = pgTable("sys_example", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  code: text("code").notNull(),
+  status: integer("status").notNull().default(1),
+  sort: integer("sort").notNull().default(0),
+  ...timestamps,
+  ...softDelete,
+  ...auditUsers,
+});

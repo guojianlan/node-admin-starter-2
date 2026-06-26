@@ -2,13 +2,16 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
+import { nowIso, sqlite } from "@/server/db";
 import { authRequired } from "@/server/middleware/auth";
 import { getUserAccess, getUserMenus, login, logout } from "@/server/services/auth-service";
 import { resolveDataScopeForUser } from "@/server/services/data-scope";
 import {
   confirmPasswordReset,
   createLoginCaptcha,
+  createOauthRedirect,
   getPublicOauthProviders,
+  handleOauthCallback,
   requestPasswordReset,
   verifyLoginCaptcha,
 } from "@/server/services/login-security-service";
@@ -46,6 +49,75 @@ authRoutes.get("/login/options", async (c) => {
 
 authRoutes.get("/login/captcha", async (c) => {
   return c.json(success(createLoginCaptcha()));
+});
+
+authRoutes.get("/oauth/:provider/redirect", async (c) => {
+  const providerKey = c.req.param("provider");
+  const url = new URL(c.req.url);
+  const origin = c.req.header("origin") || `${url.protocol}//${url.host}`;
+  const redirectUrl = await createOauthRedirect({
+    providerKey,
+    origin,
+    redirect: url.searchParams.get("redirect"),
+  });
+  return c.redirect(redirectUrl);
+});
+
+authRoutes.get("/oauth/:provider/callback", async (c) => {
+  const providerKey = c.req.param("provider");
+  const url = new URL(c.req.url);
+  const origin = `${url.protocol}//${url.host}`;
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  if (!code || !state) throw new Error("OAuth callback 参数不完整");
+  try {
+    const result = await handleOauthCallback({
+      providerKey,
+      code,
+      state,
+      origin,
+      ip: c.req.header("x-forwarded-for") ?? null,
+      userAgent: c.req.header("user-agent") ?? null,
+    });
+    await recordOperationLog(c, {
+      userId: result.userId,
+      module: "system.auth",
+      action: `oauthLogin:${providerKey}`,
+      resource: "/auth",
+      resourceId: result.userId,
+      status: 302,
+      success: true,
+    });
+    const target = new URL("/login", origin);
+    target.searchParams.set("oauthToken", result.token);
+    target.searchParams.set("redirect", result.redirectUri);
+    return c.redirect(target.toString());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_login_record
+          (username, ip, user_agent, status, message, created_at)
+         VALUES
+          (?, ?, ?, 0, ?, ?)`,
+      )
+      .run(
+        `oauth:${providerKey}`,
+        c.req.header("x-forwarded-for") ?? null,
+        c.req.header("user-agent") ?? null,
+        message,
+        nowIso(),
+      );
+    await recordOperationLog(c, {
+      module: "system.auth",
+      action: `oauthLogin:${providerKey}`,
+      resource: "/auth",
+      status: 500,
+      success: false,
+      message,
+    });
+    throw error;
+  }
 });
 
 authRoutes.post("/login", async (c) => {

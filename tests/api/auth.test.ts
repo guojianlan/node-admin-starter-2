@@ -133,7 +133,7 @@ describe("auth and permission API", () => {
       {
         key: "github",
         name: "GitHub",
-        authUrl: "https://github.com/login/oauth/authorize?client_id=test",
+        authUrl: "/api/system/oauth/github/redirect",
       },
     ]);
   });

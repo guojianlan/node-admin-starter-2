@@ -5,7 +5,7 @@ import { buildTree } from "@/lib/tree";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
-import { type DbClient, sqlite } from "@/server/db";
+import { nowIso, type DbClient, sqlite } from "@/server/db";
 import { sysRole } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
@@ -49,6 +49,15 @@ async function syncRoleDepts(dbClient: DbClient, roleId: number, deptIds: number
   for (const deptId of [...new Set(deptIds)]) {
     await insert.run(roleId, deptId);
   }
+}
+
+async function revokeTokensForRole(roleId: number) {
+  await sqlite
+    .prepare(
+      `DELETE FROM sys_access_token
+       WHERE user_id IN (SELECT user_id FROM sys_user_role WHERE role_id = ?)`,
+    )
+    .run(roleId);
 }
 
 function parseIds(value: unknown) {
@@ -306,9 +315,74 @@ roleRoutes.post("/role/setRule", authRequired(), ability("system.role.setRule"),
       await sqlite.transaction(async (tx) => {
         await syncRoleRules(tx, payload.id, payload.ruleIds);
       });
+      await revokeTokensForRole(payload.id);
     },
   );
   return c.json(success(null, "分配成功"));
+});
+
+roleRoutes.post("/role/copy/:id", authRequired(), ability("system.role.copy"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const payload = z
+    .object({
+      name: z.string().min(1),
+      code: z.string().min(1),
+    })
+    .parse(await c.req.json());
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.role",
+      action: "copy",
+      resource: "/role",
+      resourceId: id,
+      details: { code: payload.code },
+    },
+    async () => {
+      const source = (await sqlite
+        .prepare(
+          `SELECT remark, sort, status, data_scope AS dataScope
+           FROM sys_role
+           WHERE id = ? AND deleted_at IS NULL`,
+        )
+        .get(id)) as
+        | { remark: string | null; sort: number; status: number; dataScope: string }
+        | undefined;
+      if (!source) throw new Error("角色不存在");
+      const exists = await sqlite
+        .prepare("SELECT id FROM sys_role WHERE code = ? AND deleted_at IS NULL")
+        .get(payload.code);
+      if (exists) throw new Error("角色编码已存在");
+      const now = nowIso();
+      const result = await sqlite
+        .prepare(
+          `INSERT INTO sys_role
+            (name, code, remark, sort, status, data_scope, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id`,
+        )
+        .run(
+          payload.name,
+          payload.code,
+          source.remark,
+          source.sort + 1,
+          source.status,
+          source.dataScope,
+          now,
+          now,
+        );
+      const newRoleId = Number(result.lastInsertRowid);
+      const ruleRows = (await sqlite
+        .prepare("SELECT rule_id AS ruleId FROM sys_role_rule WHERE role_id = ?")
+        .all(id)) as Array<{ ruleId: number }>;
+      const deptRows = (await sqlite
+        .prepare("SELECT dept_id AS deptId FROM sys_role_dept WHERE role_id = ?")
+        .all(id)) as Array<{ deptId: number }>;
+      await syncRoleRules(sqlite, newRoleId, ruleRows.map((row) => row.ruleId));
+      await syncRoleDepts(sqlite, newRoleId, deptRows.map((row) => row.deptId));
+    },
+  );
+  return c.json(success(null, "复制成功"));
 });
 
 roleRoutes.route("/", roleCrud.routes);
