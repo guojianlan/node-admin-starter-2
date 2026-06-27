@@ -363,6 +363,7 @@ fileRoutes.post("/file/chunk/part", authRequired(), ability("system.file.upload"
   const body = await c.req.parseBody();
   const uploadId = String(body.uploadId || "");
   const partNumber = Number(body.partNumber || 0);
+  const expectedSha256 = String(body.sha256 || "");
   const file = body.file;
   if (!uploadId || !Number.isFinite(partNumber) || partNumber <= 0) throw new Error("分片参数不正确");
   if (!(file instanceof File)) throw new Error("请选择分片文件");
@@ -381,6 +382,7 @@ fileRoutes.post("/file/chunk/part", authRequired(), ability("system.file.upload"
   if (partNumber > session.totalParts) throw new Error("分片编号超出范围");
   const buffer = Buffer.from(await file.arrayBuffer());
   const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (expectedSha256 && expectedSha256 !== sha256) throw new Error("分片 SHA256 校验失败");
   const dir = path.join(chunkRoot(), uploadId);
   await fs.mkdir(dir, { recursive: true });
   const partPath = path.join(dir, `${partNumber}.part`);
@@ -432,17 +434,24 @@ fileRoutes.post("/file/chunk/complete", authRequired(), ability("system.file.upl
       if (new Date(session.expiresAt).getTime() <= Date.now()) throw new Error("上传会话已过期");
       const parts = (await sqlite
         .prepare(
-          `SELECT part_number AS partNumber, path, size
+          `SELECT part_number AS partNumber, path, size, sha256
            FROM sys_file_upload_part
            WHERE upload_id = ?
            ORDER BY part_number ASC`,
         )
-        .all(payload.uploadId)) as Array<{ partNumber: number; path: string; size: number }>;
+        .all(payload.uploadId)) as Array<{ partNumber: number; path: string; size: number; sha256: string }>;
       if (parts.length !== session.totalParts) throw new Error("分片数量不完整");
       for (let index = 0; index < session.totalParts; index += 1) {
         if (parts[index]?.partNumber !== index + 1) throw new Error("分片编号不连续");
       }
-      const buffers = await Promise.all(parts.map((part) => fs.readFile(part.path)));
+      const buffers = await Promise.all(
+        parts.map(async (part) => {
+          const content = await fs.readFile(part.path);
+          const actualSha256 = crypto.createHash("sha256").update(content).digest("hex");
+          if (actualSha256 !== part.sha256) throw new Error(`分片 ${part.partNumber} 校验失败`);
+          return content;
+        }),
+      );
       const buffer = Buffer.concat(buffers);
       if (buffer.length !== Number(session.size)) throw new Error("合并文件大小不匹配");
       const file = new File([buffer], session.filename, {
@@ -496,6 +505,101 @@ fileRoutes.delete("/file/chunk/:uploadId", authRequired(), ability("system.file.
     .run(uploadId, user.id);
   await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
   return c.json(success(null, "已取消上传"));
+});
+
+const fileReferenceSchema = z.object({
+  fileId: z.coerce.number(),
+  module: z.string().min(1),
+  resourceType: z.string().optional().nullable(),
+  resourceId: z.string().optional().nullable(),
+  field: z.string().optional().nullable(),
+});
+
+fileRoutes.post("/file/reference", authRequired(), ability("system.file.upload"), async (c) => {
+  const payload = fileReferenceSchema.parse(await c.req.json());
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "reference",
+      resource: "/file/reference",
+      resourceId: payload.fileId,
+      details: payload,
+    },
+    async () => {
+      const file = await sqlite
+        .prepare("SELECT id FROM sys_file WHERE id = ? AND deleted_at IS NULL")
+        .get(payload.fileId);
+      if (!file) throw new Error("文件不存在");
+      await sqlite
+        .prepare(
+          `INSERT INTO sys_file_reference
+            (file_id, module, resource_type, resource_id, field, created_at)
+           VALUES (?, ?, ?, ?, ?, now())`,
+        )
+        .run(
+          payload.fileId,
+          payload.module,
+          payload.resourceType || null,
+          payload.resourceId || null,
+          payload.field || null,
+        );
+    },
+  );
+  return c.json(success(null, "引用已记录"));
+});
+
+fileRoutes.delete("/file/reference", authRequired(), ability("system.file.upload"), async (c) => {
+  const payload = fileReferenceSchema.parse(await c.req.json());
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "unreference",
+      resource: "/file/reference",
+      resourceId: payload.fileId,
+      details: payload,
+    },
+    async () => {
+      await sqlite
+        .prepare(
+          `DELETE FROM sys_file_reference
+           WHERE file_id = ?
+             AND module = ?
+             AND COALESCE(resource_type, '') = COALESCE(?, '')
+             AND COALESCE(resource_id, '') = COALESCE(?, '')
+             AND COALESCE(field, '') = COALESCE(?, '')`,
+        )
+        .run(
+          payload.fileId,
+          payload.module,
+          payload.resourceType || null,
+          payload.resourceId || null,
+          payload.field || null,
+        );
+    },
+  );
+  return c.json(success(null, "引用已移除"));
+});
+
+fileRoutes.get("/file/:id/references", authRequired(), ability("system.file.query"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const rows = await sqlite
+    .prepare(
+      `SELECT
+        id,
+        file_id AS fileId,
+        module,
+        resource_type AS resourceType,
+        resource_id AS resourceId,
+        field,
+        created_at AS createdAt
+       FROM sys_file_reference
+       WHERE file_id = ?
+       ORDER BY id DESC`,
+    )
+    .all(id);
+  return c.json(success(rows));
 });
 
 fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"), async (c) => {

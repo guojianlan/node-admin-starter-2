@@ -85,6 +85,8 @@ type FileRecord = {
 
 const emptyFileGroups: FileGroup[] = [];
 const emptyTrashFiles: FileRecord[] = [];
+const chunkSize = 5 * 1024 * 1024;
+const chunkUploadThreshold = 10 * 1024 * 1024;
 
 function formatSize(size: number) {
   if (size < 1024) return `${size} B`;
@@ -159,6 +161,13 @@ async function downloadFile(record: Pick<FileRecord, "id" | "originalName">) {
   link.download = record.originalName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+async function sha256Blob(blob: Blob) {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export function FilePage() {
@@ -604,10 +613,43 @@ export function FilePage() {
     try {
       for (const [index, item] of uploadFiles.entries()) {
         if (!item.originFileObj) continue;
-        const formData = new FormData();
-        formData.append("file", item.originFileObj);
-        formData.append("groupId", String(Number(selectedGroupId) || 1));
-        await request("/api/system/file/list/upload", { method: "POST", body: formData });
+        const file = item.originFileObj;
+        if (file.size <= chunkUploadThreshold) {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("groupId", String(Number(selectedGroupId) || 1));
+          await request("/api/system/file/list/upload", { method: "POST", body: formData });
+          setUploadProgress(Math.round(((index + 1) / uploadFiles.length) * 100));
+          continue;
+        }
+        const totalParts = Math.ceil(file.size / chunkSize);
+        const init = await request<{ uploadId: string }>("/api/system/file/chunk/init", {
+          method: "POST",
+          body: {
+            filename: file.name,
+            mime: file.type,
+            size: file.size,
+            totalParts,
+            groupId: Number(selectedGroupId) || 1,
+          },
+        });
+        for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
+          const start = (partNumber - 1) * chunkSize;
+          const part = file.slice(start, Math.min(start + chunkSize, file.size));
+          const formData = new FormData();
+          formData.append("uploadId", init.uploadId);
+          formData.append("partNumber", String(partNumber));
+          formData.append("sha256", await sha256Blob(part));
+          formData.append("file", new File([part], `${file.name}.part${partNumber}`));
+          await request("/api/system/file/chunk/part", { method: "POST", body: formData });
+          const fileWeight = 1 / uploadFiles.length;
+          const current = index / uploadFiles.length + (partNumber / totalParts) * fileWeight * 0.9;
+          setUploadProgress(Math.min(99, Math.round(current * 100)));
+        }
+        await request("/api/system/file/chunk/complete", {
+          method: "POST",
+          body: { uploadId: init.uploadId },
+        });
         setUploadProgress(Math.round(((index + 1) / uploadFiles.length) * 100));
       }
       feedback.success("上传成功");

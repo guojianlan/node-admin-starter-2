@@ -588,6 +588,67 @@ export const sysFile = pgTable(
   ],
 );
 
+export const sysFileReference = pgTable(
+  "sys_file_reference",
+  {
+    id: serial("id").primaryKey(),
+    fileId: integer("file_id")
+      .notNull()
+      .references(() => sysFile.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    field: text("field"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_file_reference_file_id_idx").on(table.fileId),
+    index("sys_file_reference_module_resource_idx").on(table.module, table.resourceId),
+    index("sys_file_reference_resource_type_idx").on(table.resourceType),
+  ],
+);
+
+export const sysFileUploadSession = pgTable(
+  "sys_file_upload_session",
+  {
+    id: serial("id").primaryKey(),
+    uploadId: text("upload_id").notNull(),
+    filename: text("filename").notNull(),
+    mime: text("mime"),
+    size: integer("size").notNull(),
+    totalParts: integer("total_parts").notNull(),
+    groupId: integer("group_id"),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["uploading", "completed", "cancelled", "expired", "failed"],
+    })
+      .notNull()
+      .default("uploading"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_file_upload_session_upload_id_unique").on(table.uploadId),
+    index("sys_file_upload_session_user_id_idx").on(table.userId),
+    index("sys_file_upload_session_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+export const sysFileUploadPart = pgTable(
+  "sys_file_upload_part",
+  {
+    uploadId: text("upload_id").notNull(),
+    partNumber: integer("part_number").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    path: text("path").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.uploadId, table.partNumber] })],
+);
+
 export const sysMailAccount = pgTable(
   "sys_mail_account",
   {

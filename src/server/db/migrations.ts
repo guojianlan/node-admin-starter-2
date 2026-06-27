@@ -942,6 +942,15 @@ CREATE INDEX IF NOT EXISTS sys_operation_log_risk_level_created_at_idx
   ON sys_operation_log(risk_level, created_at);
 `,
   },
+  {
+    id: "0017_file_reference_fields",
+    sql: `
+ALTER TABLE sys_file_reference ADD COLUMN IF NOT EXISTS resource_type TEXT;
+ALTER TABLE sys_file_reference ADD COLUMN IF NOT EXISTS field TEXT;
+CREATE INDEX IF NOT EXISTS sys_file_reference_resource_type_idx
+  ON sys_file_reference(resource_type);
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

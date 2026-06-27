@@ -577,12 +577,28 @@ describe("framework completeness coverage", () => {
     const cancelPart = new FormData();
     cancelPart.append("uploadId", cancelUploadId);
     cancelPart.append("partNumber", "1");
+    cancelPart.append("sha256", "0000");
     cancelPart.append("file", new File(["hello"], "1.part"));
     expect(
       await app.request("/api/system/file/chunk/part", {
         method: "POST",
         headers: { authorization: `Bearer ${token}` },
         body: cancelPart,
+      }),
+    ).toHaveProperty("status", 500);
+    const validCancelPart = new FormData();
+    validCancelPart.append("uploadId", cancelUploadId);
+    validCancelPart.append("partNumber", "1");
+    validCancelPart.append(
+      "sha256",
+      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    );
+    validCancelPart.append("file", new File(["hello"], "1.part"));
+    expect(
+      await app.request("/api/system/file/chunk/part", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: validCancelPart,
       }),
     ).toHaveProperty("status", 200);
     const cancel = await app.request(`/api/system/file/chunk/${cancelUploadId}`, {
@@ -598,6 +614,47 @@ describe("framework completeness coverage", () => {
     await expect(
       fs.stat(path.join(process.cwd(), "storage", "upload-parts", cancelUploadId)),
     ).rejects.toThrow();
+
+    const txtForm = new FormData();
+    txtForm.append("file", new File(["reference"], "reference.txt", { type: "text/plain" }));
+    const txtUpload = await app.request("/api/system/file/list/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: txtForm,
+    });
+    const txtUploadBody = await readJson<{ id: number }>(txtUpload);
+    expect(txtUpload.status).toBe(200);
+    const addReference = await app.request("/api/system/file/reference", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        fileId: txtUploadBody.data?.id,
+        module: "test.module",
+        resourceType: "article",
+        resourceId: "100",
+        field: "cover",
+      }),
+    });
+    expect(addReference.status).toBe(200);
+    const references = await app.request(`/api/system/file/${txtUploadBody.data?.id}/references`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const referencesBody = await readJson<Array<{ module: string; resourceType: string }>>(references);
+    expect(referencesBody.data).toContainEqual(
+      expect.objectContaining({ module: "test.module", resourceType: "article" }),
+    );
+    const removeReference = await app.request("/api/system/file/reference", {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        fileId: txtUploadBody.data?.id,
+        module: "test.module",
+        resourceType: "article",
+        resourceId: "100",
+        field: "cover",
+      }),
+    });
+    expect(removeReference.status).toBe(200);
   });
 
   it("enforces password policies, lockouts, force-change reset and token revocation", async () => {
