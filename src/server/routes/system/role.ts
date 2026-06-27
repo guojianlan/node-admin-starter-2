@@ -153,11 +153,13 @@ const roleCrud = createCrudRoutes({
         syncRoleRules(ctx.sql, id, values.ruleIds ?? []),
         syncRoleDepts(ctx.sql, id, values.deptIds ?? []),
       ]).then(() => undefined),
-    afterUpdate: (ctx, id, values) =>
-      Promise.all([
+    afterUpdate: async (ctx, id, values) => {
+      await Promise.all([
         values.ruleIds ? syncRoleRules(ctx.sql, id, values.ruleIds) : Promise.resolve(),
         values.deptIds ? syncRoleDepts(ctx.sql, id, values.deptIds) : Promise.resolve(),
-      ]).then(() => undefined),
+      ]);
+      if (values.ruleIds || values.deptIds || values.dataScope) await revokeTokensForRole(id);
+    },
     beforeDelete: (ctx, ids) =>
       assertNotSystemRecords({
         db: ctx.sql,
@@ -306,7 +308,10 @@ roleRoutes.post("/role/setRule", authRequired(), ability("system.role.setRule"),
       action: "setRule",
       resource: "/role",
       resourceId: payload.id,
-      details: { ruleCount: payload.ruleIds.length },
+      details: {
+        ruleCount: payload.ruleIds.length,
+        requestedRuleIds: payload.ruleIds,
+      },
     },
     async () => {
       if (await getSystemFlag(sqlite, "sys_role", payload.id)) {
@@ -327,6 +332,8 @@ roleRoutes.post("/role/copy/:id", authRequired(), ability("system.role.copy"), a
     .object({
       name: z.string().min(1),
       code: z.string().min(1),
+      copyRules: z.coerce.boolean().default(true),
+      copyDataScope: z.coerce.boolean().default(true),
     })
     .parse(await c.req.json());
   await runWithOperationLog(
@@ -367,7 +374,7 @@ roleRoutes.post("/role/copy/:id", authRequired(), ability("system.role.copy"), a
           source.remark,
           source.sort + 1,
           source.status,
-          source.dataScope,
+          payload.copyDataScope ? source.dataScope : "self",
           now,
           now,
         );
@@ -378,8 +385,10 @@ roleRoutes.post("/role/copy/:id", authRequired(), ability("system.role.copy"), a
       const deptRows = (await sqlite
         .prepare("SELECT dept_id AS deptId FROM sys_role_dept WHERE role_id = ?")
         .all(id)) as Array<{ deptId: number }>;
-      await syncRoleRules(sqlite, newRoleId, ruleRows.map((row) => row.ruleId));
-      await syncRoleDepts(sqlite, newRoleId, deptRows.map((row) => row.deptId));
+      if (payload.copyRules) await syncRoleRules(sqlite, newRoleId, ruleRows.map((row) => row.ruleId));
+      if (payload.copyDataScope) {
+        await syncRoleDepts(sqlite, newRoleId, deptRows.map((row) => row.deptId));
+      }
     },
   );
   return c.json(success(null, "复制成功"));

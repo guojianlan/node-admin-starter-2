@@ -1,8 +1,8 @@
 "use client";
 
-import { KeyOutlined, SaveOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
+import { CopyOutlined, KeyOutlined, SaveOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Col, Row, Spin, Switch, Table, Tag, Tooltip, Tree } from "antd";
+import { Button, Card, Checkbox, Col, Input, Modal, Row, Space, Spin, Switch, Table, Tag, Tooltip, Tree } from "antd";
 import type { TableProps, TreeProps } from "antd";
 import { useMemo, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
@@ -89,6 +89,13 @@ export function RolePage() {
   const [checkedRuleKeys, setCheckedRuleKeys] = useState<React.Key[]>([]);
   const [expandedRuleKeys, setExpandedRuleKeys] = useState<React.Key[]>([]);
   const [roleUserPage, setRoleUserPage] = useState({ page: 1, pageSize: 10 });
+  const [copyRole, setCopyRole] = useState<RoleRecord | null>(null);
+  const [copyForm, setCopyForm] = useState({
+    name: "",
+    code: "",
+    copyRules: true,
+    copyDataScope: true,
+  });
 
   const roleMetaQuery = useQuery({
     queryKey: ["system-role-meta"],
@@ -146,6 +153,21 @@ export function RolePage() {
       feedback.success("权限保存成功");
       setSelectedRole((role) => (role ? { ...role, ruleIds: checkedRuleKeys.map(Number) } : role));
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/role"] });
+    },
+  });
+
+  const copyRoleMutation = useMutation({
+    mutationFn: () => {
+      if (!copyRole) throw new Error("请先选择角色");
+      return request(`/api/system/role/copy/${copyRole.id}`, {
+        method: "POST",
+        body: copyForm,
+      });
+    },
+    onSuccess: async () => {
+      feedback.success("复制成功");
+      setCopyRole(null);
+      await queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/role"] });
     },
   });
 
@@ -310,13 +332,62 @@ export function RolePage() {
 
   const ruleTreeData = useMemo(() => toTreeData(ruleTree), [ruleTree]);
   const allRuleKeys = useMemo(() => getAllNodeKeys(ruleTree), [ruleTree]);
+  const ruleNameMap = useMemo(() => {
+    const map = new Map<number, RuleNode>();
+    const visit = (nodes: RuleNode[]) => {
+      nodes.forEach((node) => {
+        map.set(node.id, node);
+        visit(node.children ?? []);
+      });
+    };
+    visit(ruleTree);
+    return map;
+  }, [ruleTree]);
 
   async function saveRules() {
     if (!selectedRole) {
       feedback.warning("请先选择角色");
       return;
     }
-    await saveRulesMutation.mutateAsync();
+    const before = new Set((selectedRole.ruleIds ?? []).map(Number));
+    const after = new Set(checkedRuleKeys.map(Number));
+    const added = [...after].filter((id) => !before.has(id));
+    const removed = [...before].filter((id) => !after.has(id));
+    const unchanged = [...after].filter((id) => before.has(id)).length;
+    Modal.confirm({
+      title: "确认保存角色权限",
+      width: 560,
+      content: (
+        <Space direction="vertical" size={10}>
+          <span>
+            新增 {added.length} 项，移除 {removed.length} 项，保持 {unchanged} 项。保存后该角色用户的旧 token 会失效。
+          </span>
+          {added.length ? (
+            <div>
+              <strong>新增：</strong>
+              <Space wrap size={4}>
+                {added.slice(0, 12).map((id) => (
+                  <Tag color="green" key={id}>{ruleNameMap.get(id)?.name ?? id}</Tag>
+                ))}
+              </Space>
+            </div>
+          ) : null}
+          {removed.length ? (
+            <div>
+              <strong>移除：</strong>
+              <Space wrap size={4}>
+                {removed.slice(0, 12).map((id) => (
+                  <Tag color="red" key={id}>{ruleNameMap.get(id)?.name ?? id}</Tag>
+                ))}
+              </Space>
+            </div>
+          ) : null}
+        </Space>
+      ),
+      okText: "保存权限",
+      cancelText: "取消",
+      onOk: () => saveRulesMutation.mutateAsync(),
+    });
   }
 
   return (
@@ -338,6 +409,24 @@ export function RolePage() {
             }}
             canUpdate={(record) => !record.isSystem}
             canDelete={(record) => !record.isSystem}
+            operateRender={(record) => (
+              <Tooltip title="复制角色">
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setCopyRole(record);
+                    setCopyForm({
+                      name: `${record.name} 副本`,
+                      code: `${record.code}_copy`,
+                      copyRules: true,
+                      copyDataScope: true,
+                    });
+                  }}
+                />
+              </Tooltip>
+            )}
             tableProps={{
               size: "small",
               bordered: true,
@@ -465,6 +554,43 @@ export function RolePage() {
           </Card>
         </Col>
       </Row>
+      <Modal
+        title={copyRole ? `复制角色：${copyRole.name}` : "复制角色"}
+        open={Boolean(copyRole)}
+        okText="复制"
+        confirmLoading={copyRoleMutation.isPending}
+        onOk={() => copyRoleMutation.mutateAsync()}
+        onCancel={() => setCopyRole(null)}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Input
+            addonBefore="名称"
+            value={copyForm.name}
+            onChange={(event) => setCopyForm((current) => ({ ...current, name: event.target.value }))}
+          />
+          <Input
+            addonBefore="编码"
+            value={copyForm.code}
+            onChange={(event) => setCopyForm((current) => ({ ...current, code: event.target.value }))}
+          />
+          <Checkbox
+            checked={copyForm.copyRules}
+            onChange={(event) =>
+              setCopyForm((current) => ({ ...current, copyRules: event.target.checked }))
+            }
+          >
+            复制菜单/API 权限
+          </Checkbox>
+          <Checkbox
+            checked={copyForm.copyDataScope}
+            onChange={(event) =>
+              setCopyForm((current) => ({ ...current, copyDataScope: event.target.checked }))
+            }
+          >
+            复制数据权限
+          </Checkbox>
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }

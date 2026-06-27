@@ -169,8 +169,11 @@ const userCrud = createCrudRoutes({
       }
       return values;
     },
-    afterUpdate: (ctx, id, values) =>
-      values.roleIds ? syncUserRoles(ctx.sql, id, values.roleIds) : undefined,
+    afterUpdate: async (ctx, id, values) => {
+      if (!values.roleIds) return;
+      await syncUserRoles(ctx.sql, id, values.roleIds);
+      await revokeUserTokens({ userId: id });
+    },
     beforeDelete: (ctx, ids) =>
       assertNotSystemRecords({
         db: ctx.sql,
