@@ -870,6 +870,70 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0015_oauth_provider_resource",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_oauth_provider (
+  id SERIAL PRIMARY KEY,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  auth_url TEXT NOT NULL DEFAULT '',
+  token_url TEXT,
+  user_info_url TEXT,
+  client_id TEXT,
+  client_secret_encrypted TEXT,
+  scopes_json TEXT,
+  user_mapping_json TEXT,
+  auto_create_user BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_oauth_provider_key_active_unique
+  ON sys_oauth_provider(key)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_oauth_provider_status_sort_idx
+  ON sys_oauth_provider(status, sort);
+
+ALTER TABLE sys_oauth_state ADD COLUMN IF NOT EXISTS bind_user_id INTEGER;
+
+INSERT INTO sys_oauth_provider
+  (key, name, enabled, auth_url, token_url, user_info_url, scopes_json, user_mapping_json, status, sort, is_system, created_at, updated_at)
+VALUES
+  ('github', 'GitHub', false, 'https://github.com/login/oauth/authorize', 'https://github.com/login/oauth/access_token', 'https://api.github.com/user', '["user:email"]', '{"id":"id","username":"login","email":"email","nickname":"name"}', 1, 1, true, now(), now()),
+  ('gitee', 'Gitee', false, 'https://gitee.com/oauth/authorize', 'https://gitee.com/oauth/token', 'https://gitee.com/api/v5/user', '["user_info"]', '{"id":"id","username":"login","email":"email","nickname":"name"}', 1, 2, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (160, 2, 'route', 'system.oauthProvider', '第三方登录', '/system/oauth/provider', 'login', 95, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (161, 160, 'action', 'system.oauthProvider.query', '查询第三方登录', 1, 1, 0, 0, true, now(), now()),
+  (162, 160, 'action', 'system.oauthProvider.create', '新增第三方登录', 2, 1, 0, 0, true, now(), now()),
+  (163, 160, 'action', 'system.oauthProvider.update', '编辑第三方登录', 3, 1, 0, 0, true, now(), now()),
+  (164, 160, 'action', 'system.oauthProvider.delete', '删除第三方登录', 4, 1, 0, 0, true, now(), now()),
+  (165, 160, 'action', 'system.oauthProvider.status', '启停第三方登录', 5, 1, 0, 0, true, now(), now()),
+  (166, 160, 'action', 'system.oauthProvider.test', '测试第三方登录', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (160), (161), (162), (163), (164), (165), (166)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

@@ -2,10 +2,13 @@
 
 import {
   ClockCircleOutlined,
+  DisconnectOutlined,
   KeyOutlined,
+  LinkOutlined,
   LockOutlined,
   MailOutlined,
   MobileOutlined,
+  PlusOutlined,
   ReloadOutlined,
   SaveOutlined,
   UploadOutlined,
@@ -20,6 +23,7 @@ import {
   Col,
   Form,
   Input,
+  Modal,
   Radio,
   Row,
   Space,
@@ -60,6 +64,20 @@ type LoginRecord = {
   createdAt: string;
 };
 
+type OAuthAccount = {
+  provider: string;
+  providerUserId: string;
+  providerUsername?: string | null;
+  email?: string | null;
+  createdAt: string;
+};
+
+type LoginOptionProvider = {
+  key: string;
+  name: string;
+  authUrl: string;
+};
+
 type ProfileFormValues = {
   nickname: string;
   email?: string;
@@ -90,6 +108,17 @@ export function ProfilePage() {
     queryKey: ["profile", "login-records"],
     queryFn: () =>
       request<PageResult<LoginRecord>>("/api/system/profile/login-records?page=1&pageSize=10"),
+  });
+  const oauthAccountsQuery = useQuery({
+    queryKey: ["profile", "oauth-accounts"],
+    queryFn: () => request<OAuthAccount[]>("/api/system/profile/oauth/accounts"),
+  });
+  const loginOptionsQuery = useQuery({
+    queryKey: ["profile", "oauth-providers"],
+    queryFn: () =>
+      request<{ oauthProviders: LoginOptionProvider[] }>("/api/system/login/options", {
+        silent: true,
+      }),
   });
 
   useEffect(() => {
@@ -139,6 +168,29 @@ export function ProfilePage() {
       feedback.success("头像已更新");
       await queryClient.invalidateQueries({ queryKey: ["profile"] });
       await initSession();
+    },
+  });
+
+  const bindOauthMutation = useMutation({
+    mutationFn: (provider: string) =>
+      request<{ authUrl: string }>(`/api/system/profile/oauth/${provider}/bind`, {
+        method: "POST",
+        body: {},
+      }),
+    onSuccess: (result) => {
+      window.location.href = result.authUrl;
+    },
+  });
+
+  const unbindOauthMutation = useMutation({
+    mutationFn: (provider: string) =>
+      request(`/api/system/profile/oauth/${provider}/unbind`, {
+        method: "DELETE",
+        body: {},
+      }),
+    onSuccess: async () => {
+      feedback.success("解绑成功");
+      await queryClient.invalidateQueries({ queryKey: ["profile", "oauth-accounts"] });
     },
   });
 
@@ -323,6 +375,87 @@ export function ProfilePage() {
                         {t("changePassword")}
                       </Button>
                     </Form>
+                  ),
+                },
+                {
+                  key: "oauth",
+                  label: "第三方账号",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <Space wrap>
+                        {(loginOptionsQuery.data?.oauthProviders ?? []).map((provider) => {
+                          const bound = (oauthAccountsQuery.data ?? []).some(
+                            (account) => account.provider === provider.key,
+                          );
+                          return (
+                            <Button
+                              key={provider.key}
+                              type={bound ? "default" : "primary"}
+                              icon={bound ? <LinkOutlined /> : <PlusOutlined />}
+                              disabled={bound}
+                              loading={bindOauthMutation.isPending}
+                              onClick={() => bindOauthMutation.mutate(provider.key)}
+                            >
+                              {bound ? `${provider.name} 已绑定` : `绑定 ${provider.name}`}
+                            </Button>
+                          );
+                        })}
+                        {loginOptionsQuery.data?.oauthProviders?.length ? null : (
+                          <Typography.Text type="secondary">暂无已启用的第三方登录 Provider</Typography.Text>
+                        )}
+                      </Space>
+                      <Table<OAuthAccount>
+                        rowKey={(record) => `${record.provider}:${record.providerUserId}`}
+                        size="small"
+                        loading={oauthAccountsQuery.isFetching}
+                        dataSource={oauthAccountsQuery.data ?? []}
+                        pagination={false}
+                        columns={[
+                          {
+                            title: "Provider",
+                            dataIndex: "provider",
+                            width: 140,
+                            render: (value) => <Tag color="blue">{String(value)}</Tag>,
+                          },
+                          {
+                            title: "第三方用户",
+                            dataIndex: "providerUsername",
+                            render: (value, record) => value || record.providerUserId,
+                          },
+                          { title: "邮箱", dataIndex: "email", width: 220 },
+                          {
+                            title: "绑定时间",
+                            dataIndex: "createdAt",
+                            width: 180,
+                            render: (value) => dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss"),
+                          },
+                          {
+                            title: "操作",
+                            width: 96,
+                            render: (_, record) => (
+                              <Button
+                                danger
+                                size="small"
+                                icon={<DisconnectOutlined />}
+                                loading={unbindOauthMutation.isPending}
+                                onClick={() => {
+                                  Modal.confirm({
+                                    title: "解绑第三方账号",
+                                    content: `确认解绑 ${record.provider} 账号吗？`,
+                                    okText: "解绑",
+                                    okButtonProps: { danger: true },
+                                    cancelText: "取消",
+                                    onOk: () => unbindOauthMutation.mutateAsync(record.provider),
+                                  });
+                                }}
+                              >
+                                解绑
+                              </Button>
+                            ),
+                          },
+                        ]}
+                      />
+                    </Space>
                   ),
                 },
                 {

@@ -71,6 +71,15 @@ type OAuthProviderConfig = {
   authUrl?: string;
 };
 
+type OAuthProviderRecord = {
+  id: number;
+  key: string;
+  name: string;
+  enabled: boolean;
+  status: number;
+  hasClientSecret?: boolean;
+};
+
 type ConfigSection = {
   key: string;
   title: string;
@@ -383,8 +392,21 @@ function ResourceSettings({
   );
 }
 
-function LoginMethods({ oauthConfig }: { oauthConfig?: ConfigItem }) {
-  const providers = parseOAuthProviders(oauthConfig?.values);
+function LoginMethods({
+  oauthConfig,
+  oauthProviders,
+}: {
+  oauthConfig?: ConfigItem;
+  oauthProviders: OAuthProviderRecord[];
+}) {
+  const navigation = useNavigationAdapter();
+  const legacyProviders = parseOAuthProviders(oauthConfig?.values);
+  const providers = (oauthProviders.length ? oauthProviders : legacyProviders).map((provider) => ({
+    key: provider.key,
+    name: provider.name,
+    enabled: Boolean(provider.enabled),
+    status: "status" in provider ? provider.status : 1,
+  }));
   return (
     <Card
       title={
@@ -406,9 +428,12 @@ function LoginMethods({ oauthConfig }: { oauthConfig?: ConfigItem }) {
             {providers.length ? (
               <Space wrap>
                 {providers.map((provider) => (
-                  <Tag color={provider.enabled ? "success" : "default"} key={provider.key}>
+                  <Tag
+                    color={provider.enabled && Number(provider.status ?? 1) === 1 ? "success" : "default"}
+                    key={provider.key}
+                  >
                     {provider.name || provider.key}
-                    {provider.enabled ? " / 启用" : " / 停用"}
+                    {provider.enabled && Number(provider.status ?? 1) === 1 ? " / 启用" : " / 停用"}
                   </Tag>
                 ))}
               </Space>
@@ -419,8 +444,9 @@ function LoginMethods({ oauthConfig }: { oauthConfig?: ConfigItem }) {
         </div>
         <Alert
           showIcon
-          type="warning"
-          message="OAuth Provider 将在第三方登录管理中表单化维护。当前高级 JSON 仍保留在系统配置页，避免在业务设置里直接暴露复杂 JSON。"
+          type="success"
+          message="OAuth Provider 已按资源型配置独立维护；系统设置只聚合入口，不直接暴露复杂 JSON。"
+          action={<Button onClick={() => navigation.push("/system/oauth/provider")}>管理 Provider</Button>}
         />
       </Space>
     </Card>
@@ -455,11 +481,24 @@ export function SettingsPage() {
       return page.data;
     },
   });
+  const oauthProviderQuery = useQuery({
+    queryKey: ["system-settings", "oauth-provider"],
+    queryFn: async () => {
+      const page = await request<PageResult<OAuthProviderRecord>>(
+        `/api/system/oauth/provider${buildQueryString({ page: 1, pageSize: 100 })}`,
+      );
+      return page.data;
+    },
+  });
 
   const itemsByKey = useMemo(() => {
     return new Map((configQuery.data ?? []).map((item) => [item.key, item]));
   }, [configQuery.data]);
-  const loading = configQuery.isLoading || storageQuery.isLoading || mailQuery.isLoading;
+  const loading =
+    configQuery.isLoading ||
+    storageQuery.isLoading ||
+    mailQuery.isLoading ||
+    oauthProviderQuery.isLoading;
 
   return (
     <PageScaffold title="系统设置" description="聚合基础参数、安全策略、登录策略、上传策略和资源配置">
@@ -505,7 +544,12 @@ export function SettingsPage() {
                     登录方式
                   </Space>
                 ),
-                children: <LoginMethods oauthConfig={itemsByKey.get("login.oauth_providers_json")} />,
+                children: (
+                  <LoginMethods
+                    oauthConfig={itemsByKey.get("login.oauth_providers_json")}
+                    oauthProviders={oauthProviderQuery.data ?? []}
+                  />
+                ),
               },
             ]}
           />

@@ -568,6 +568,17 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
 
   await dbClient
     .prepare(
+      `INSERT INTO sys_oauth_provider
+        (key, name, enabled, auth_url, token_url, user_info_url, scopes_json, user_mapping_json, status, sort, is_system, created_at, updated_at)
+       VALUES
+        ('github', 'GitHub', false, 'https://github.com/login/oauth/authorize', 'https://github.com/login/oauth/access_token', 'https://api.github.com/user', '["user:email"]', '{"id":"id","username":"login","email":"email","nickname":"name"}', 1, 1, true, ?, ?),
+        ('gitee', 'Gitee', false, 'https://gitee.com/oauth/authorize', 'https://gitee.com/oauth/token', 'https://gitee.com/api/v5/user', '["user_info"]', '{"id":"id","username":"login","email":"email","nickname":"name"}', 1, 2, true, ?, ?)
+       ON CONFLICT DO NOTHING`,
+    )
+    .run(now, now, now, now);
+
+  await dbClient
+    .prepare(
       `INSERT INTO sys_mail_account
         (id, name, code, host, port, secure, username, from_name, from_email, reply_to, is_default, status, sort, is_system, created_at, updated_at)
        SELECT

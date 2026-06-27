@@ -194,6 +194,25 @@ const moduleRules = [
   },
   {
     route: {
+      id: 160,
+      parentId: 2,
+      key: "system.oauthProvider",
+      name: "第三方登录",
+      path: "/system/oauth/provider",
+      icon: "login",
+      order: 95,
+    },
+    actions: [
+      ["query", "查询第三方登录"],
+      ["create", "新增第三方登录"],
+      ["update", "编辑第三方登录"],
+      ["delete", "删除第三方登录"],
+      ["status", "启停第三方登录"],
+      ["test", "测试第三方登录"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 2,
       key: "system.operationLog",

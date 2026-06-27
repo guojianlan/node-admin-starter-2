@@ -211,35 +211,43 @@ describe("framework completeness coverage", () => {
 
   it("handles OAuth provider redirects, callback failures and successful email binding", async () => {
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = ? WHERE key = 'login.oauth_providers_json'")
+      .prepare(
+        `INSERT INTO sys_oauth_provider
+          (key, name, enabled, auth_url, client_id, status, sort, created_at, updated_at)
+         VALUES
+          ('disabled', 'Disabled', false, 'https://provider.test/oauth/authorize', 'disabled-client', 1, 90, now(), now())
+         ON CONFLICT DO NOTHING`,
+      )
+      .run();
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_oauth_provider
+          (key, name, enabled, auth_url, status, sort, created_at, updated_at)
+         VALUES
+          ('missing-client', 'Missing Client', true, 'https://provider.test/oauth/authorize', 1, 91, now(), now())
+         ON CONFLICT DO NOTHING`,
+      )
+      .run();
+    await sqlite
+      .prepare(
+        `UPDATE sys_oauth_provider
+         SET enabled = true,
+             auth_url = ?,
+             token_url = ?,
+             user_info_url = ?,
+             client_id = ?,
+             scopes_json = ?,
+             user_mapping_json = ?,
+             status = 1
+         WHERE key = 'github'`,
+      )
       .run(
-        JSON.stringify([
-          {
-            key: "disabled",
-            name: "Disabled",
-            enabled: false,
-            authUrl: "https://provider.test/oauth/authorize",
-            clientId: "disabled-client",
-          },
-          {
-            key: "missing-client",
-            name: "Missing Client",
-            enabled: true,
-            authUrl: "https://provider.test/oauth/authorize",
-          },
-          {
-            key: "github",
-            name: "GitHub",
-            enabled: true,
-            authUrl: "https://provider.test/oauth/authorize",
-            tokenUrl: "https://provider.test/oauth/token",
-            userInfoUrl: "https://provider.test/user",
-            clientId: "github-client",
-            clientSecret: "github-secret",
-            scopes: ["user:email"],
-            userMapping: { id: "id", username: "login", email: "email", nickname: "name" },
-          },
-        ]),
+        "https://provider.test/oauth/authorize",
+        "https://provider.test/oauth/token",
+        "https://provider.test/user",
+        "github-client",
+        JSON.stringify(["user:email"]),
+        JSON.stringify({ id: "id", username: "login", email: "email", nickname: "name" }),
       );
 
     const disabledRedirect = await app.request("/api/system/oauth/disabled/redirect", {
@@ -334,6 +342,110 @@ describe("framework completeness coverage", () => {
       requestId: "oauth-success",
       success: true,
       status: 302,
+    });
+  });
+
+  it("manages OAuth provider resources and profile account unbinding without leaking secrets", async () => {
+    const { token } = await login();
+    const create = await app.request("/api/system/oauth/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        key: "custom",
+        name: "Custom OAuth",
+        enabled: true,
+        authUrl: "https://custom.test/oauth/authorize",
+        tokenUrl: "https://custom.test/oauth/token",
+        userInfoUrl: "https://custom.test/user",
+        clientId: "custom-client",
+        clientSecret: "custom-secret",
+        scopes: "openid email",
+        userMapping: '{"id":"sub","username":"preferred_username","email":"email","nickname":"name"}',
+        autoCreateUser: false,
+        status: 1,
+        sort: 50,
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const list = await app.request("/api/system/oauth/provider?keyword=custom", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listBody = await readJson<Page<Record<string, unknown>>>(list);
+    expect(list.status).toBe(200);
+    expect(listBody.data?.data[0]).toMatchObject({
+      key: "custom",
+      hasClientSecret: true,
+      clientId: "custom-client",
+    });
+    expect(listBody.data?.data[0]).not.toHaveProperty("clientSecretEncrypted");
+
+    const loginOptions = await app.request("/api/system/login/options");
+    const loginOptionsBody = await readJson<{ oauthProviders: Array<{ key: string; authUrl: string }> }>(
+      loginOptions,
+    );
+    expect(loginOptionsBody.data?.oauthProviders).toContainEqual({
+      key: "custom",
+      name: "Custom OAuth",
+      authUrl: "/api/system/oauth/custom/redirect",
+    });
+
+    const github = (await sqlite
+      .prepare("SELECT id FROM sys_oauth_provider WHERE key = 'github'")
+      .get()) as { id: number };
+    const renameSystem = await app.request(`/api/system/oauth/provider/${github.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ key: "github-renamed" }),
+    });
+    expect(renameSystem.status).toBe(500);
+    const deleteSystem = await app.request(`/api/system/oauth/provider/${github.id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    expect(deleteSystem.status).toBe(500);
+
+    const custom = listBody.data?.data[0] as { id: number };
+    const disable = await app.request(`/api/system/oauth/provider/status/${custom.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ status: 1, enabled: false }),
+    });
+    expect(disable.status).toBe(200);
+    const disabledRedirect = await app.request("/api/system/oauth/custom/redirect", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    expect(disabledRedirect.status).toBe(500);
+
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_oauth_account
+          (user_id, provider, provider_user_id, provider_username, email, created_at, updated_at)
+         VALUES (1, 'custom', 'custom-admin', 'admin-custom', 'admin@xinadmin.test', now(), now())`,
+      )
+      .run();
+    const accounts = await app.request("/api/system/profile/oauth/accounts", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const accountsBody = await readJson<Array<{ provider: string; providerUsername: string }>>(accounts);
+    expect(accounts.status).toBe(200);
+    expect(accountsBody.data).toContainEqual(
+      expect.objectContaining({ provider: "custom", providerUsername: "admin-custom" }),
+    );
+
+    const unbind = await app.request("/api/system/profile/oauth/custom/unbind", {
+      method: "DELETE",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    expect(unbind.status).toBe(200);
+    const remaining = (await sqlite
+      .prepare("SELECT COUNT(1)::int AS total FROM sys_oauth_account WHERE user_id = 1 AND provider = 'custom'")
+      .get()) as { total: number };
+    expect(Number(remaining.total)).toBe(0);
+    expect(await latestOperation("profile.oauth", "unbind")).toMatchObject({
+      success: true,
+      status: 200,
     });
   });
 

@@ -37,6 +37,20 @@ type OauthProviderConfig = PublicOauthProvider & {
   };
 };
 
+type OauthStateRow = {
+  provider: string;
+  redirectUri: string | null;
+  expiresAt: string;
+  bindUserId: number | null;
+};
+
+type OauthProfile = {
+  providerUserId: string;
+  username: string | null;
+  email: string | null;
+  nickname: string | null;
+};
+
 function sha256(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -113,6 +127,66 @@ export async function getPublicOauthProviders() {
 }
 
 async function getOauthProviderConfigs() {
+  const resourceProviders = await getResourceOauthProviderConfigs();
+  if (resourceProviders.some((item) => item.enabled)) return resourceProviders;
+  return getLegacyOauthProviderConfigs();
+}
+
+async function getResourceOauthProviderConfigs() {
+  try {
+    const rows = (await sqlite
+      .prepare(
+        `SELECT
+          key,
+          name,
+          enabled,
+          auth_url AS authUrl,
+          token_url AS tokenUrl,
+          user_info_url AS userInfoUrl,
+          client_id AS clientId,
+          client_secret_encrypted AS clientSecretEncrypted,
+          scopes_json AS scopesJson,
+          user_mapping_json AS userMappingJson,
+          auto_create_user AS autoCreateUser
+         FROM sys_oauth_provider
+         WHERE deleted_at IS NULL
+           AND status = 1
+         ORDER BY sort ASC, id ASC`,
+      )
+      .all()) as Array<{
+      key: string;
+      name: string;
+      enabled: boolean;
+      authUrl: string;
+      tokenUrl: string | null;
+      userInfoUrl: string | null;
+      clientId: string | null;
+      clientSecretEncrypted: string | null;
+      scopesJson: string | null;
+      userMappingJson: string | null;
+      autoCreateUser: boolean;
+    }>;
+    return rows
+      .map((row) => ({
+        key: row.key,
+        name: row.name,
+        authUrl: row.authUrl,
+        tokenUrl: row.tokenUrl || undefined,
+        userInfoUrl: row.userInfoUrl || undefined,
+        clientId: row.clientId || undefined,
+        clientSecretEncrypted: row.clientSecretEncrypted || undefined,
+        scopes: parseJsonArray(row.scopesJson),
+        autoCreateUser: Boolean(row.autoCreateUser),
+        userMapping: parseUserMapping(row.userMappingJson),
+        enabled: Boolean(row.enabled),
+      }))
+      .filter((item) => item.key && item.name);
+  } catch {
+    return [];
+  }
+}
+
+async function getLegacyOauthProviderConfigs() {
   const row = (await sqlite
     .prepare(
       `SELECT "values" AS values
@@ -153,6 +227,33 @@ async function getOauthProviderConfigs() {
   }
 }
 
+function parseJsonArray(value?: string | null) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseUserMapping(value?: string | null): OauthProviderConfig["userMapping"] {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const record = parsed as Record<string, unknown>;
+    return {
+      id: record.id ? String(record.id) : undefined,
+      username: record.username ? String(record.username) : undefined,
+      email: record.email ? String(record.email) : undefined,
+      nickname: record.nickname ? String(record.nickname) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 function readPath(source: unknown, selector?: string) {
   if (!selector) return undefined;
   return selector.split(".").reduce<unknown>((value, key) => {
@@ -171,6 +272,7 @@ export async function createOauthRedirect(input: {
   providerKey: string;
   origin: string;
   redirect?: string | null;
+  bindUserId?: number | null;
 }) {
   const provider = (await getOauthProviderConfigs()).find(
     (item) => item.key === input.providerKey && item.enabled,
@@ -182,9 +284,9 @@ export async function createOauthRedirect(input: {
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   await sqlite
     .prepare(
-      "INSERT INTO sys_oauth_state (state, provider, redirect_uri, expires_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO sys_oauth_state (state, provider, redirect_uri, expires_at, bind_user_id) VALUES (?, ?, ?, ?, ?)",
     )
-    .run(state, provider.key, input.redirect || "/dashboard", expiresAt);
+    .run(state, provider.key, input.redirect || "/dashboard", expiresAt, input.bindUserId ?? null);
   const url = new URL(provider.authUrl);
   url.searchParams.set("client_id", provider.clientId);
   url.searchParams.set("redirect_uri", callbackUrl);
@@ -193,6 +295,19 @@ export async function createOauthRedirect(input: {
   const scopes = Array.isArray(provider.scopes) ? provider.scopes.join(" ") : provider.scopes;
   if (scopes) url.searchParams.set("scope", scopes);
   return url.toString();
+}
+
+export async function createOauthBindRedirect(input: {
+  providerKey: string;
+  userId: number;
+  origin: string;
+}) {
+  return createOauthRedirect({
+    providerKey: input.providerKey,
+    origin: input.origin,
+    redirect: "/profile",
+    bindUserId: input.userId,
+  });
 }
 
 export async function handleOauthCallback(input: {
@@ -204,8 +319,16 @@ export async function handleOauthCallback(input: {
   userAgent?: string | null;
 }) {
   const stateRow = (await sqlite
-    .prepare("SELECT provider, redirect_uri AS redirectUri, expires_at AS expiresAt FROM sys_oauth_state WHERE state = ?")
-    .get(input.state)) as { provider: string; redirectUri: string | null; expiresAt: string } | undefined;
+    .prepare(
+      `SELECT
+        provider,
+        redirect_uri AS redirectUri,
+        expires_at AS expiresAt,
+        bind_user_id AS bindUserId
+       FROM sys_oauth_state
+       WHERE state = ?`,
+    )
+    .get(input.state)) as OauthStateRow | undefined;
   if (!stateRow || stateRow.provider !== input.providerKey) throw new Error("OAuth state 无效");
   if (new Date(stateRow.expiresAt).getTime() <= Date.now()) throw new Error("OAuth state 已过期");
   await sqlite.prepare("DELETE FROM sys_oauth_state WHERE state = ?").run(input.state);
@@ -237,13 +360,24 @@ export async function handleOauthCallback(input: {
     headers: { accept: "application/json", authorization: `Bearer ${accessToken}` },
   });
   if (!userInfoResponse.ok) throw new Error("获取 OAuth 用户信息失败");
-  const profile = (await userInfoResponse.json()) as Record<string, unknown>;
-  const mapping = provider.userMapping ?? {};
-  const providerUserId = String(readPath(profile, mapping.id || "id") || "");
-  const email = readPath(profile, mapping.email || "email");
-  const username = readPath(profile, mapping.username || "login") ?? readPath(profile, "username");
-  const nickname = readPath(profile, mapping.nickname || "name") ?? username;
-  if (!providerUserId) throw new Error("OAuth 用户信息缺少用户 ID");
+  const profile = normalizeOauthProfile(
+    (await userInfoResponse.json()) as Record<string, unknown>,
+    provider,
+  );
+
+  if (stateRow.bindUserId) {
+    await bindOauthAccount({
+      userId: stateRow.bindUserId,
+      providerKey: provider.key,
+      profile,
+    });
+    return {
+      mode: "bind" as const,
+      redirectUri: stateRow.redirectUri || "/profile",
+      userId: stateRow.bindUserId,
+      providerKey: provider.key,
+    };
+  }
 
   const bound = (await sqlite
     .prepare(
@@ -252,12 +386,12 @@ export async function handleOauthCallback(input: {
        INNER JOIN sys_user u ON u.id = oa.user_id
        WHERE oa.provider = ? AND oa.provider_user_id = ? AND u.deleted_at IS NULL AND u.status = 1`,
     )
-    .get(provider.key, providerUserId)) as { id: number } | undefined;
+    .get(provider.key, profile.providerUserId)) as { id: number } | undefined;
   let userId = bound?.id ?? 0;
-  if (!userId && email) {
+  if (!userId && profile.email) {
     const matched = (await sqlite
       .prepare("SELECT id FROM sys_user WHERE email = ? AND deleted_at IS NULL AND status = 1 LIMIT 1")
-      .get(String(email))) as { id: number } | undefined;
+      .get(profile.email)) as { id: number } | undefined;
     if (matched) userId = matched.id;
   }
   if (!userId && provider.autoCreateUser) {
@@ -268,20 +402,17 @@ export async function handleOauthCallback(input: {
          VALUES (?, ?, ?, ?, 1, now(), now())
          RETURNING id`,
       )
-      .run(`${provider.key}_${providerUserId}`, randomPasswordHash, String(nickname || username || provider.key), email ? String(email) : null);
+      .run(
+        `${provider.key}_${profile.providerUserId}`,
+        randomPasswordHash,
+        String(profile.nickname || profile.username || provider.key),
+        profile.email,
+      );
     userId = Number(result.lastInsertRowid);
   }
   if (!userId) throw new Error("OAuth 账号未绑定本地用户");
 
-  await sqlite
-    .prepare(
-      `INSERT INTO sys_oauth_account
-        (user_id, provider, provider_user_id, provider_username, email, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, now(), now())
-       ON CONFLICT (provider, provider_user_id)
-       DO UPDATE SET user_id = excluded.user_id, provider_username = excluded.provider_username, email = excluded.email, updated_at = now()`,
-    )
-    .run(userId, provider.key, providerUserId, username ? String(username) : null, email ? String(email) : null);
+  await bindOauthAccount({ userId, providerKey: provider.key, profile });
 
   const issued = await issueUserToken({
     userId,
@@ -297,13 +428,50 @@ export async function handleOauthCallback(input: {
         (?, ?, ?, 1, ?, ?)`,
     )
     .run(
-      `${provider.key}:${providerUserId}`,
+      `${provider.key}:${profile.providerUserId}`,
       input.ip ?? null,
       input.userAgent ?? null,
       `OAuth 登录成功：${provider.key}`,
       nowIso(),
     );
-  return { token: issued.token, redirectUri: stateRow.redirectUri || "/dashboard", userId };
+  return { mode: "login" as const, token: issued.token, redirectUri: stateRow.redirectUri || "/dashboard", userId };
+}
+
+function normalizeOauthProfile(profile: Record<string, unknown>, provider: OauthProviderConfig): OauthProfile {
+  const mapping = provider.userMapping ?? {};
+  const providerUserId = String(readPath(profile, mapping.id || "id") || "");
+  const email = readPath(profile, mapping.email || "email");
+  const username = readPath(profile, mapping.username || "login") ?? readPath(profile, "username");
+  const nickname = readPath(profile, mapping.nickname || "name") ?? username;
+  if (!providerUserId) throw new Error("OAuth 用户信息缺少用户 ID");
+  return {
+    providerUserId,
+    username: username ? String(username) : null,
+    email: email ? String(email) : null,
+    nickname: nickname ? String(nickname) : null,
+  };
+}
+
+async function bindOauthAccount(input: {
+  userId: number;
+  providerKey: string;
+  profile: OauthProfile;
+}) {
+  await sqlite
+    .prepare(
+      `INSERT INTO sys_oauth_account
+        (user_id, provider, provider_user_id, provider_username, email, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, now(), now())
+       ON CONFLICT (provider, provider_user_id)
+       DO UPDATE SET user_id = excluded.user_id, provider_username = excluded.provider_username, email = excluded.email, updated_at = now()`,
+    )
+    .run(
+      input.userId,
+      input.providerKey,
+      input.profile.providerUserId,
+      input.profile.username,
+      input.profile.email,
+    );
 }
 
 type ResetUserRow = {

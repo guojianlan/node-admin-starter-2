@@ -250,6 +250,72 @@ export const sysPasswordResetToken = pgTable(
   ],
 );
 
+export const sysOauthState = pgTable(
+  "sys_oauth_state",
+  {
+    state: text("state").primaryKey(),
+    provider: text("provider").notNull(),
+    redirectUri: text("redirect_uri"),
+    bindUserId: integer("bind_user_id").references(() => sysUser.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("sys_oauth_state_expires_at_idx").on(table.expiresAt)],
+);
+
+export const sysOauthAccount = pgTable(
+  "sys_oauth_account",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    providerUsername: text("provider_username"),
+    email: text("email"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_oauth_account_provider_user_unique").on(
+      table.provider,
+      table.providerUserId,
+    ),
+    uniqueIndex("sys_oauth_account_user_provider_unique").on(table.userId, table.provider),
+    index("sys_oauth_account_user_id_idx").on(table.userId),
+  ],
+);
+
+export const sysOauthProvider = pgTable(
+  "sys_oauth_provider",
+  {
+    id: serial("id").primaryKey(),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    authUrl: text("auth_url").notNull(),
+    tokenUrl: text("token_url"),
+    userInfoUrl: text("user_info_url"),
+    clientId: text("client_id"),
+    clientSecretEncrypted: text("client_secret_encrypted"),
+    scopesJson: text("scopes_json"),
+    userMappingJson: text("user_mapping_json"),
+    autoCreateUser: boolean("auto_create_user").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_oauth_provider_key_active_unique")
+      .on(table.key)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_oauth_provider_status_sort_idx").on(table.status, table.sort),
+  ],
+);
+
 export const sysLoginRecord = pgTable(
   "sys_login_record",
   {

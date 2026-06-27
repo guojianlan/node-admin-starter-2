@@ -82,12 +82,17 @@ authRoutes.get("/oauth/:provider/callback", async (c) => {
     await recordOperationLog(c, {
       userId: result.userId,
       module: "system.auth",
-      action: `oauthLogin:${providerKey}`,
+      action: result.mode === "bind" ? `oauthBind:${providerKey}` : `oauthLogin:${providerKey}`,
       resource: "/auth",
       resourceId: result.userId,
       status: 302,
       success: true,
     });
+    if (result.mode === "bind") {
+      const target = new URL(result.redirectUri || "/profile", origin);
+      target.searchParams.set("oauthBound", providerKey);
+      return c.redirect(target.toString());
+    }
     const target = new URL("/login", origin);
     target.searchParams.set("oauthToken", result.token);
     target.searchParams.set("redirect", result.redirectUri);

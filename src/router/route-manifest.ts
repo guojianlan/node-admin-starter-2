@@ -10,6 +10,7 @@ import { MailAccountPage } from "@/features/system/mail/MailAccountPage";
 import { NoticePage } from "@/features/system/notice/NoticePage";
 import { OnlineUserPage } from "@/features/system/online-user/OnlineUserPage";
 import { OperationLogPage } from "@/features/system/operation-log/OperationLogPage";
+import { OAuthProviderPage } from "@/features/system/oauth-provider/OAuthProviderPage";
 import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RolePage } from "@/features/system/role/RolePage";
 import { RulePage } from "@/features/system/rule/RulePage";
@@ -131,6 +132,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "在线用户",
     auth: "system.onlineUser.query",
     component: OnlineUserPage,
+  },
+  {
+    path: "/system/oauth/provider",
+    key: "system.oauthProvider",
+    title: "第三方登录",
+    auth: "system.oauthProvider.query",
+    component: OAuthProviderPage,
   },
   {
     path: "/system/notice",

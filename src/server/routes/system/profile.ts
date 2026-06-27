@@ -6,6 +6,7 @@ import type { HonoVariables } from "@/server/context";
 import { sqlite } from "@/server/db";
 import { authRequired } from "@/server/middleware/auth";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
+import { createOauthBindRedirect } from "@/server/services/login-security-service";
 import {
   assertPasswordPolicy,
   recordPasswordHistory,
@@ -21,6 +22,15 @@ type LoginRecord = {
   status: number;
   message: string | null;
   createdAt: string | Date;
+};
+
+type OauthAccount = {
+  provider: string;
+  providerUserId: string;
+  providerUsername: string | null;
+  email: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 function pageParam(value: string | null, fallback: number) {
@@ -217,4 +227,76 @@ profileRoutes.get("/profile/login-records", authRequired(), async (c) => {
     total: Number(total?.total ?? 0),
   };
   return c.json(success(result));
+});
+
+profileRoutes.get("/profile/oauth/accounts", authRequired(), async (c) => {
+  const user = c.get("user");
+  const rows = (await sqlite
+    .prepare(
+      `SELECT
+        provider,
+        provider_user_id AS providerUserId,
+        provider_username AS providerUsername,
+        email,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+       FROM sys_oauth_account
+       WHERE user_id = ?
+       ORDER BY provider ASC`,
+    )
+    .all(user.id)) as OauthAccount[];
+  return c.json(success(rows));
+});
+
+profileRoutes.post("/profile/oauth/:provider/bind", authRequired(), async (c) => {
+  const user = c.get("user");
+  const providerKey = c.req.param("provider");
+  const url = new URL(c.req.url);
+  const origin = c.req.header("origin") || `${url.protocol}//${url.host}`;
+  const authUrl = await createOauthBindRedirect({
+    providerKey,
+    userId: user.id,
+    origin,
+  });
+  return c.json(success({ authUrl }));
+});
+
+profileRoutes.delete("/profile/oauth/:provider/unbind", authRequired(), async (c) => {
+  const user = c.get("user");
+  const providerKey = c.req.param("provider");
+  const account = (await sqlite
+    .prepare("SELECT provider FROM sys_oauth_account WHERE user_id = ? AND provider = ?")
+    .get(user.id, providerKey)) as { provider: string } | undefined;
+  if (!account) throw new Error("第三方账号绑定不存在");
+
+  const loginMethods = (await sqlite
+    .prepare(
+      `SELECT
+        u.password_hash AS passwordHash,
+        (SELECT COUNT(1)::int FROM sys_oauth_account WHERE user_id = u.id) AS oauthCount
+       FROM sys_user u
+       WHERE u.id = ?`,
+    )
+    .get(user.id)) as { passwordHash: string | null; oauthCount: number } | undefined;
+  if (!loginMethods?.passwordHash && Number(loginMethods?.oauthCount ?? 0) <= 1) {
+    throw new Error("当前账号没有可用密码，不能解绑最后一个第三方账号");
+  }
+
+  await runWithOperationLog(
+    c,
+    {
+      module: "profile.oauth",
+      action: "unbind",
+      resource: "/profile/oauth",
+      resourceId: user.id,
+      details: { provider: providerKey },
+    },
+    async () => {
+      await sqlite
+        .prepare("DELETE FROM sys_oauth_account WHERE user_id = ? AND provider = ?")
+        .run(user.id, providerKey);
+    },
+  );
+
+  return c.json(success(null, "解绑成功"));
 });
