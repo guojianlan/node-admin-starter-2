@@ -34,6 +34,7 @@ import {
   Modal,
   Popover,
   Row,
+  Segmented,
   Space,
   Tag,
   Tooltip,
@@ -126,6 +127,8 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeListOpen, setNoticeListOpen] = useState(false);
+  const [noticeFilter, setNoticeFilter] = useState<"all" | "unread" | "read">("all");
   const [selectedNotice, setSelectedNotice] = useState<MyNotice | null>(null);
   const unreadQuery = useQuery({
     queryKey: ["notice", "unread-count"],
@@ -196,6 +199,48 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
     setNoticeOpen(false);
     if (!item.readAt) readMutation.mutate(item.id);
   }
+
+  const filteredNotices = (noticeQuery.data ?? []).filter((item) => {
+    if (noticeFilter === "unread") return !item.readAt;
+    if (noticeFilter === "read") return Boolean(item.readAt);
+    return true;
+  });
+
+  const renderNoticeList = (limit?: number) => (
+    <List<MyNotice>
+      style={{ width: limit ? 320 : "100%" }}
+      size="small"
+      loading={noticeQuery.isFetching}
+      dataSource={limit ? filteredNotices.slice(0, limit) : filteredNotices}
+      locale={{ emptyText: t("noNotice") }}
+      renderItem={(item) => (
+        <List.Item
+          style={{ cursor: "pointer", paddingInline: 4 }}
+          onClick={() => openNoticeDetail(item)}
+        >
+          <List.Item.Meta
+            title={
+              <Space size={6}>
+                {!item.readAt ? <Badge status="processing" /> : null}
+                <Typography.Text style={{ maxWidth: limit ? 220 : 420 }} ellipsis>
+                  {item.title}
+                </Typography.Text>
+              </Space>
+            }
+            description={
+              <Typography.Paragraph
+                type="secondary"
+                ellipsis={{ rows: 2 }}
+                style={{ marginBottom: 0 }}
+              >
+                {item.content}
+              </Typography.Paragraph>
+            }
+          />
+        </List.Item>
+      )}
+    />
+  );
 
   return (
     <>
@@ -287,39 +332,30 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
                 </Space>
               }
               content={
-                <List<MyNotice>
-                  style={{ width: 320 }}
-                  size="small"
-                  loading={noticeQuery.isFetching}
-                  dataSource={(noticeQuery.data ?? []).slice(0, 6)}
-                  locale={{ emptyText: t("noNotice") }}
-                  renderItem={(item) => (
-                    <List.Item
-                      style={{ cursor: "pointer", paddingInline: 4 }}
-                      onClick={() => openNoticeDetail(item)}
-                    >
-                      <List.Item.Meta
-                        title={
-                          <Space size={6}>
-                            {!item.readAt ? <Badge status="processing" /> : null}
-                            <Typography.Text style={{ maxWidth: 220 }} ellipsis>
-                              {item.title}
-                            </Typography.Text>
-                          </Space>
-                        }
-                        description={
-                          <Typography.Paragraph
-                            type="secondary"
-                            ellipsis={{ rows: 2 }}
-                            style={{ marginBottom: 0 }}
-                          >
-                            {item.content}
-                          </Typography.Paragraph>
-                        }
-                      />
-                    </List.Item>
-                  )}
-                />
+                <Space direction="vertical" size={10} style={{ width: 320 }}>
+                  <Segmented
+                    block
+                    size="small"
+                    value={noticeFilter}
+                    options={[
+                      { label: "全部", value: "all" },
+                      { label: "未读", value: "unread" },
+                      { label: "已读", value: "read" },
+                    ]}
+                    onChange={(value) => setNoticeFilter(value as "all" | "unread" | "read")}
+                  />
+                  {renderNoticeList(6)}
+                  <Button
+                    block
+                    type="link"
+                    onClick={() => {
+                      setNoticeOpen(false);
+                      setNoticeListOpen(true);
+                    }}
+                  >
+                    查看更多
+                  </Button>
+                </Space>
               }
             >
               <Badge count={unreadQuery.data?.total ?? 0} size="small">
@@ -425,6 +461,27 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
           </div>
         ) : null}
       </Modal>
+
+      <Drawer
+        title={t("noticeCenter")}
+        open={noticeListOpen}
+        width={520}
+        onClose={() => setNoticeListOpen(false)}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Segmented
+            block
+            value={noticeFilter}
+            options={[
+              { label: "全部", value: "all" },
+              { label: "未读", value: "unread" },
+              { label: "已读", value: "read" },
+            ]}
+            onChange={(value) => setNoticeFilter(value as "all" | "unread" | "read")}
+          />
+          {renderNoticeList()}
+        </Space>
+      </Drawer>
 
       <Drawer
         open={settingsOpen}

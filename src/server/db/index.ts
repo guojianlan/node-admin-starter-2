@@ -60,6 +60,7 @@ const aliasMap: Record<string, string> = {
   propsjson: "propsJson",
   optionsjson: "optionsJson",
   replyto: "replyTo",
+  readstatus: "readStatus",
   requestid: "requestId",
   resourceid: "resourceId",
   roleids: "roleIds",

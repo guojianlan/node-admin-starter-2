@@ -9,7 +9,7 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Button, Modal, Space, Statistic, Tag, Tooltip, Typography } from "antd";
+import { Button, Drawer, Input, Select, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
@@ -60,6 +60,15 @@ type NoticeReadStats = {
   unreadTotal: number;
 };
 
+type NoticeReadUser = {
+  userId: number;
+  username: string;
+  nickname: string;
+  deptName?: string | null;
+  readAt?: string | null;
+  readStatus: "read" | "unread";
+};
+
 const typeOptions = [
   { label: "通知", value: "notice" },
   { label: "公告", value: "announcement" },
@@ -94,6 +103,12 @@ export function NoticePage() {
   const queryClient = useQueryClient();
   const [statsOpen, setStatsOpen] = useState(false);
   const [statsNotice, setStatsNotice] = useState<NoticeRecord | null>(null);
+  const [readUserPage, setReadUserPage] = useState(1);
+  const [readUserFilters, setReadUserFilters] = useState({
+    readStatus: "",
+    username: "",
+    dept: "",
+  });
   const userOptionsQuery = useQuery({
     queryKey: ["notice", "user-options"],
     queryFn: async () => {
@@ -139,6 +154,18 @@ export function NoticePage() {
   const statsQuery = useQuery({
     queryKey: ["notice", "read-stats", statsNotice?.id],
     queryFn: () => request<NoticeReadStats>(`/api/system/notice/${statsNotice?.id}/read-stats`),
+    enabled: Boolean(statsNotice?.id && statsOpen),
+  });
+  const readUsersQuery = useQuery({
+    queryKey: ["notice", "read-users", statsNotice?.id, readUserPage, readUserFilters],
+    queryFn: () =>
+      request<PageResult<NoticeReadUser>>(
+        `/api/system/notice/${statsNotice?.id}/read-users${buildQueryString({
+          page: readUserPage,
+          pageSize: 10,
+          ...readUserFilters,
+        })}`,
+      ),
     enabled: Boolean(statsNotice?.id && statsOpen),
   });
 
@@ -378,6 +405,8 @@ export function NoticePage() {
                 onClick={(event) => {
                   event.stopPropagation();
                   setStatsNotice(record);
+                  setReadUserPage(1);
+                  setReadUserFilters({ readStatus: "", username: "", dept: "" });
                   setStatsOpen(true);
                 }}
               />
@@ -416,18 +445,100 @@ export function NoticePage() {
         )}
         tableProps={{ size: "small", scroll: { x: 1380 } }}
       />
-      <Modal
+      <Drawer
         title={statsNotice ? `阅读统计：${statsNotice.title}` : "阅读统计"}
         open={statsOpen}
-        footer={null}
-        onCancel={() => setStatsOpen(false)}
+        width={760}
+        onClose={() => setStatsOpen(false)}
       >
-        <Space size={24}>
-          <Statistic title="目标人数" value={statsQuery.data?.targetTotal ?? 0} loading={statsQuery.isFetching} />
-          <Statistic title="已读人数" value={statsQuery.data?.readTotal ?? 0} loading={statsQuery.isFetching} />
-          <Statistic title="未读人数" value={statsQuery.data?.unreadTotal ?? 0} loading={statsQuery.isFetching} />
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Space size={24}>
+            <Statistic title="目标人数" value={statsQuery.data?.targetTotal ?? 0} loading={statsQuery.isFetching} />
+            <Statistic title="已读人数" value={statsQuery.data?.readTotal ?? 0} loading={statsQuery.isFetching} />
+            <Statistic title="未读人数" value={statsQuery.data?.unreadTotal ?? 0} loading={statsQuery.isFetching} />
+          </Space>
+          <Space wrap>
+            <Select
+              allowClear
+              placeholder="阅读状态"
+              style={{ width: 140 }}
+              value={readUserFilters.readStatus || undefined}
+              options={[
+                { label: "已读", value: "read" },
+                { label: "未读", value: "unread" },
+              ]}
+              onChange={(value) => {
+                setReadUserPage(1);
+                setReadUserFilters((current) => ({ ...current, readStatus: value ?? "" }));
+              }}
+            />
+            <Input.Search
+              allowClear
+              placeholder="用户名/昵称"
+              style={{ width: 180 }}
+              value={readUserFilters.username}
+              onChange={(event) =>
+                setReadUserFilters((current) => ({ ...current, username: event.target.value }))
+              }
+              onSearch={(value) => {
+                setReadUserPage(1);
+                setReadUserFilters((current) => ({ ...current, username: value }));
+              }}
+            />
+            <Input.Search
+              allowClear
+              placeholder="部门"
+              style={{ width: 180 }}
+              value={readUserFilters.dept}
+              onChange={(event) =>
+                setReadUserFilters((current) => ({ ...current, dept: event.target.value }))
+              }
+              onSearch={(value) => {
+                setReadUserPage(1);
+                setReadUserFilters((current) => ({ ...current, dept: value }));
+              }}
+            />
+          </Space>
+          <Table<NoticeReadUser>
+            rowKey="userId"
+            size="small"
+            loading={readUsersQuery.isFetching}
+            dataSource={readUsersQuery.data?.data ?? []}
+            pagination={{
+              current: readUsersQuery.data?.page ?? readUserPage,
+              pageSize: readUsersQuery.data?.pageSize ?? 10,
+              total: readUsersQuery.data?.total ?? 0,
+              onChange: (page) => setReadUserPage(page),
+            }}
+            columns={[
+              {
+                title: "用户",
+                dataIndex: "username",
+                render: (_, record) => (
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text strong>{record.nickname || record.username}</Typography.Text>
+                    <Typography.Text type="secondary">{record.username}</Typography.Text>
+                  </Space>
+                ),
+              },
+              { title: "部门", dataIndex: "deptName", width: 160, render: (value) => value || "-" },
+              {
+                title: "状态",
+                dataIndex: "readStatus",
+                width: 96,
+                render: (value) =>
+                  value === "read" ? <Tag color="success">已读</Tag> : <Tag>未读</Tag>,
+              },
+              {
+                title: "读取时间",
+                dataIndex: "readAt",
+                width: 180,
+                render: (value) => (value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-"),
+              },
+            ]}
+          />
         </Space>
-      </Modal>
+      </Drawer>
     </PageScaffold>
   );
 }

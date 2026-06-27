@@ -167,6 +167,20 @@ describe("framework completeness coverage", () => {
     expect(stats.status).toBe(200);
     expect(statsBody.data).toMatchObject({ targetTotal: 1, readTotal: 0, unreadTotal: 1 });
 
+    const unreadUsers = await app.request(
+      `/api/system/notice/${userNotice.id}/read-users?readStatus=unread`,
+      {
+        headers: { authorization: `Bearer ${admin.token}` },
+      },
+    );
+    const unreadUsersBody = await readJson<Page<{ username: string; readStatus: string }>>(
+      unreadUsers,
+    );
+    expect(unreadUsers.status).toBe(200);
+    expect(unreadUsersBody.data?.data).toContainEqual(
+      expect.objectContaining({ username: "demo", readStatus: "unread" }),
+    );
+
     const read = await app.request(`/api/system/notice/my/${userNotice.id}/read`, {
       method: "POST",
       headers: authHeaders(demo.token),
@@ -187,6 +201,18 @@ describe("framework completeness coverage", () => {
       readTotal: 1,
       unreadTotal: 0,
     });
+    const readUsers = await app.request(
+      `/api/system/notice/${userNotice.id}/read-users?readStatus=read`,
+      {
+        headers: { authorization: `Bearer ${admin.token}` },
+      },
+    );
+    const readUsersBody = await readJson<Page<{ username: string; readStatus: string }>>(
+      readUsers,
+    );
+    expect(readUsersBody.data?.data).toContainEqual(
+      expect.objectContaining({ username: "demo", readStatus: "read" }),
+    );
 
     const readAll = await app.request("/api/system/notice/my/read-all", {
       method: "POST",

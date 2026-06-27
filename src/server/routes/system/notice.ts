@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
+import type { PageResult } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { sqlite } from "@/server/db";
@@ -73,6 +74,60 @@ function parseTargetUsers(value: unknown) {
 }
 
 const parseTargetIds = parseTargetUsers;
+
+function pageParam(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function buildNoticeTargetUsersQuery(notice: {
+  scope: "all" | "users" | "roles" | "depts";
+  targetUserIdsJson: string | null;
+  targetRoleIdsJson: string | null;
+  targetDeptIdsJson: string | null;
+}) {
+  if (notice.scope === "users") {
+    const ids = parseTargetIds(notice.targetUserIdsJson);
+    return {
+      sql: `SELECT u.id, u.username, u.nickname, u.dept_id AS deptId, d.name AS deptName
+            FROM sys_user u
+            LEFT JOIN sys_dept d ON d.id = u.dept_id
+            WHERE u.deleted_at IS NULL AND u.status = 1
+              ${ids.length ? `AND u.id IN (${ids.map(() => "?").join(", ")})` : "AND 1 = 0"}`,
+      params: ids,
+    };
+  }
+  if (notice.scope === "roles") {
+    const ids = parseTargetIds(notice.targetRoleIdsJson);
+    return {
+      sql: `SELECT DISTINCT u.id, u.username, u.nickname, u.dept_id AS deptId, d.name AS deptName
+            FROM sys_user u
+            INNER JOIN sys_user_role sur ON sur.user_id = u.id
+            LEFT JOIN sys_dept d ON d.id = u.dept_id
+            WHERE u.deleted_at IS NULL AND u.status = 1
+              ${ids.length ? `AND sur.role_id IN (${ids.map(() => "?").join(", ")})` : "AND 1 = 0"}`,
+      params: ids,
+    };
+  }
+  if (notice.scope === "depts") {
+    const ids = parseTargetIds(notice.targetDeptIdsJson);
+    return {
+      sql: `SELECT u.id, u.username, u.nickname, u.dept_id AS deptId, d.name AS deptName
+            FROM sys_user u
+            LEFT JOIN sys_dept d ON d.id = u.dept_id
+            WHERE u.deleted_at IS NULL AND u.status = 1
+              ${ids.length ? `AND u.dept_id IN (${ids.map(() => "?").join(", ")})` : "AND 1 = 0"}`,
+      params: ids,
+    };
+  }
+  return {
+    sql: `SELECT u.id, u.username, u.nickname, u.dept_id AS deptId, d.name AS deptName
+          FROM sys_user u
+          LEFT JOIN sys_dept d ON d.id = u.dept_id
+          WHERE u.deleted_at IS NULL AND u.status = 1`,
+    params: [] as number[],
+  };
+}
 
 function visibleNoticeSql() {
   return `
@@ -367,6 +422,90 @@ noticeRoutes.get(
     }
     const readTotal = Number(readRow?.total ?? 0);
     return c.json(success({ targetTotal, readTotal, unreadTotal: Math.max(targetTotal - readTotal, 0) }));
+  },
+);
+
+noticeRoutes.get(
+  "/notice/:id/read-users",
+  authRequired(),
+  ability("system.notice.query"),
+  async (c) => {
+    const id = Number(c.req.param("id"));
+    const notice = (await sqlite
+      .prepare(
+        `SELECT
+          scope,
+          target_user_ids_json AS targetUserIdsJson,
+          target_role_ids_json AS targetRoleIdsJson,
+          target_dept_ids_json AS targetDeptIdsJson
+         FROM sys_notice
+         WHERE id = ? AND deleted_at IS NULL`,
+      )
+      .get(id)) as
+      | {
+          scope: "all" | "users" | "roles" | "depts";
+          targetUserIdsJson: string | null;
+          targetRoleIdsJson: string | null;
+          targetDeptIdsJson: string | null;
+        }
+      | undefined;
+    if (!notice) throw new Error("公告不存在");
+
+    const params = new URL(c.req.url).searchParams;
+    const page = pageParam(params.get("page"), 1);
+    const pageSize = Math.min(pageParam(params.get("pageSize"), 10), 100);
+    const readStatus = params.get("readStatus");
+    const keyword = params.get("username")?.trim();
+    const dept = params.get("dept")?.trim();
+    const target = buildNoticeTargetUsersQuery(notice);
+    const filters: string[] = [];
+    const values: Array<string | number> = [...target.params];
+    if (readStatus === "read") filters.push("r.read_at IS NOT NULL");
+    if (readStatus === "unread") filters.push("r.read_at IS NULL");
+    if (keyword) {
+      filters.push("(target.username ILIKE ? OR target.nickname ILIKE ?)");
+      values.push(`%${keyword}%`, `%${keyword}%`);
+    }
+    if (dept) {
+      filters.push("target.deptName ILIKE ?");
+      values.push(`%${dept}%`);
+    }
+    const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+    const baseSql = `FROM (${target.sql}) target
+      LEFT JOIN sys_notice_read r ON r.notice_id = ? AND r.user_id = target.id
+      ${where}`;
+    values.splice(target.params.length, 0, id);
+    const count = (await sqlite
+      .prepare(`SELECT COUNT(1)::int AS total ${baseSql}`)
+      .get(...values)) as { total: number } | undefined;
+    const rows = (await sqlite
+      .prepare(
+        `SELECT
+          target.id AS userId,
+          target.username,
+          target.nickname,
+          target.deptName,
+          r.read_at AS readAt,
+          CASE WHEN r.read_at IS NULL THEN 'unread' ELSE 'read' END AS readStatus
+         ${baseSql}
+         ORDER BY r.read_at DESC NULLS LAST, target.id ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...values, pageSize, (page - 1) * pageSize)) as Array<{
+      userId: number;
+      username: string;
+      nickname: string;
+      deptName: string | null;
+      readAt: string | null;
+      readStatus: "read" | "unread";
+    }>;
+    const result: PageResult<(typeof rows)[number]> = {
+      data: rows,
+      page,
+      pageSize,
+      total: Number(count?.total ?? 0),
+    };
+    return c.json(success(result));
   },
 );
 
