@@ -13,6 +13,7 @@ const policyDefaults = {
   maxFailedAttempts: 5,
   lockMinutes: 15,
   captchaEnabled: false,
+  captchaAfterFailures: 0,
   allowMultiSession: true,
   maxOnlineTokens: 0,
   accessTokenTtlDays: 7,
@@ -51,6 +52,7 @@ export async function getSecurityPolicy(dbClient: DbClient = sqlite): Promise<Se
            'login.max_failed_attempts',
            'login.lock_minutes',
            'login.captcha_enabled',
+           'login.captcha_after_failures',
            'login.allow_multi_session',
            'login.max_online_tokens',
            'token.access_token_ttl_days',
@@ -101,6 +103,10 @@ export async function getSecurityPolicy(dbClient: DbClient = sqlite): Promise<Se
     ),
     lockMinutes: toNumber(map.get("login.lock_minutes"), policyDefaults.lockMinutes),
     captchaEnabled: toBoolean(map.get("login.captcha_enabled"), policyDefaults.captchaEnabled),
+    captchaAfterFailures: toNumber(
+      map.get("login.captcha_after_failures"),
+      policyDefaults.captchaAfterFailures,
+    ),
     allowMultiSession: toBoolean(
       map.get("login.allow_multi_session"),
       policyDefaults.allowMultiSession,

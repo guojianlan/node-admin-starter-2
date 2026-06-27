@@ -2,7 +2,7 @@
 
 import { ApiOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Switch, Tag, Tooltip } from "antd";
+import { Button, Modal, Switch, Tag, Tooltip } from "antd";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { request } from "@/lib/request";
@@ -171,9 +171,17 @@ export function StoragePage() {
                   type="primary"
                   icon={<CheckCircleOutlined />}
                   loading={defaultMutation.isPending}
-                  onClick={async () => {
-                    await defaultMutation.mutateAsync(record.id);
-                    reload();
+                  onClick={() => {
+                    Modal.confirm({
+                      title: "切换默认存储",
+                      content: `确认将 ${record.name} 设为默认存储吗？后续上传会使用该存储。`,
+                      okText: "设为默认",
+                      cancelText: "取消",
+                      onOk: async () => {
+                        await defaultMutation.mutateAsync(record.id);
+                        reload();
+                      },
+                    });
                   }}
                 />
               </Tooltip>

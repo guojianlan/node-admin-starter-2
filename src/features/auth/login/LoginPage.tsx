@@ -21,7 +21,7 @@ import type { MenuProps } from "antd";
 import { useMemo, useState } from "react";
 import { useEffect } from "react";
 import { setAuthToken } from "@/lib/auth-token";
-import { request } from "@/lib/request";
+import { ApiError, request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { useAuthStore } from "@/stores/auth";
 import { feedback } from "@/ui/feedback/feedback";
@@ -65,6 +65,7 @@ export function LoginPage() {
   const loading = useAuthStore((state) => state.loading);
   const { locale, setLocale, setThemeMode, t, themeMode } = useAdminPreferences();
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [forceCaptcha, setForceCaptcha] = useState(false);
   const [forgotForm] = Form.useForm<ForgotPasswordValues>();
   const [resetForm] = Form.useForm<ResetPasswordValues>();
 
@@ -95,7 +96,7 @@ export function LoginPage() {
     queryKey: ["login", "options"],
     queryFn: () => request<LoginOptions>("/api/system/login/options", { silent: true }),
   });
-  const captchaEnabled = Boolean(loginOptionsQuery.data?.captchaEnabled);
+  const captchaEnabled = Boolean(loginOptionsQuery.data?.captchaEnabled || forceCaptcha);
   const oauthProviders = loginOptionsQuery.data?.oauthProviders ?? [];
   const providerIcons: Record<string, React.ReactNode> = {
     github: <GithubOutlined style={{ fontSize: 20 }} />,
@@ -158,8 +159,11 @@ export function LoginPage() {
       });
       const user = useAuthStore.getState().user;
       navigation.replace(user?.mustChangePassword ? "/profile?forcePassword=1" : redirect);
-    } catch {
+    } catch (error) {
       // request() already displays the API error through the global feedback bridge.
+      if (error instanceof ApiError && error.message.includes("验证码")) {
+        setForceCaptcha(true);
+      }
       if (captchaEnabled) void captchaQuery.refetch();
     }
   }

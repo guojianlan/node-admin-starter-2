@@ -16,6 +16,7 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((state) => state.token);
   const access = useAuthStore((state) => state.access);
   const menus = useAuthStore((state) => state.menus);
+  const user = useAuthStore((state) => state.user);
   const initialized = useAuthStore((state) => state.initialized);
   const loading = useAuthStore((state) => state.loading);
   const initSession = useAuthStore((state) => state.initSession);
@@ -31,6 +32,11 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
     });
   }, [initDicts, initSession, pathname, router, token]);
 
+  useEffect(() => {
+    if (!initialized || loading || !user?.mustChangePassword || pathname === "/profile") return;
+    router.replace("/profile?forcePassword=1");
+  }, [initialized, loading, pathname, router, user?.mustChangePassword]);
+
   const route = useMemo(
     () => adminRoutes.find((item) => item.path === pathname),
     [pathname],
@@ -44,6 +50,10 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
 
   if (!route) {
     return <NotFoundPage />;
+  }
+
+  if (user?.mustChangePassword && pathname !== "/profile") {
+    return <Spin fullscreen description="正在进入密码修改页..." />;
   }
 
   if (route.auth && !access.includes(route.auth)) {

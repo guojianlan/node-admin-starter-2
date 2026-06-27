@@ -18,6 +18,7 @@ import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protect
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import {
   assertPasswordPolicy,
+  getSecurityPolicy,
   recordPasswordHistory,
   revokeUserTokens,
 } from "@/server/services/security-policy-service";
@@ -147,9 +148,12 @@ const userCrud = createCrudRoutes({
     }),
     beforeCreate: async (ctx, values) => {
       await assertUsernameAvailable(ctx.sql, values.username);
+      const policy = await getSecurityPolicy();
       return {
         ...values,
         passwordHash: await bcrypt.hash(values.password, 10),
+        passwordUpdatedAt: new Date(),
+        forcePasswordChange: policy.forceChangeOnFirstLogin,
       };
     },
     afterCreate: (ctx, id, values) => syncUserRoles(ctx.sql, id, values.roleIds ?? []),

@@ -3,7 +3,7 @@
 import { ClearOutlined, DisconnectOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Badge, Button, Space, Tag, Tooltip, Typography } from "antd";
+import { Badge, Button, Modal, Space, Tag, Tooltip, Typography } from "antd";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { AuthButton } from "@/components/auth-button/AuthButton";
@@ -140,7 +140,15 @@ export function OnlineUserPage() {
             <Button
               icon={<ClearOutlined />}
               loading={cleanMutation.isPending}
-              onClick={() => cleanMutation.mutate()}
+              onClick={() => {
+                Modal.confirm({
+                  title: "清理过期会话",
+                  content: "确认清理所有已过期 token 会话吗？",
+                  okText: "清理",
+                  cancelText: "取消",
+                  onOk: () => cleanMutation.mutateAsync(),
+                });
+              }}
             >
               清理过期会话
             </Button>
@@ -156,8 +164,14 @@ export function OnlineUserPage() {
                 loading={kickMutation.isPending}
                 onClick={(event) => {
                   event.stopPropagation();
-                  if (!window.confirm("确认强制下线该会话？")) return;
-                  kickMutation.mutate(record.id);
+                  Modal.confirm({
+                    title: "强制下线",
+                    content: `确认强制下线 ${record.nickname || record.username} 的该会话吗？`,
+                    okText: "强制下线",
+                    okButtonProps: { danger: true },
+                    cancelText: "取消",
+                    onOk: () => kickMutation.mutateAsync(record.id),
+                  });
                 }}
               />
             </Tooltip>

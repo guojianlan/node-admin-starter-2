@@ -1,7 +1,8 @@
 "use client";
 
-import { Drawer, Grid, Layout } from "antd";
+import { Alert, Drawer, Grid, Layout } from "antd";
 import { useState } from "react";
+import { useAuthStore } from "@/stores/auth";
 import { useAdminPreferences } from "@/ui/preferences";
 import { AdminHeader } from "./AdminHeader";
 import { AdminMenu } from "./AdminMenu";
@@ -13,6 +14,20 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const useTopMenu = layoutMode === "top";
+  const mustChangePassword = useAuthStore((state) => state.user?.mustChangePassword);
+  const content = (
+    <>
+      {mustChangePassword ? (
+        <Alert
+          showIcon
+          type="warning"
+          message="必须修改密码后继续使用系统"
+          className="xin-force-password-alert"
+        />
+      ) : null}
+      {children}
+    </>
+  );
 
   return (
     <Layout className={`xin-shell xin-layout-${layoutMode}`}>
@@ -32,7 +47,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <AdminMenu mode="horizontal" />
           </div>
           <Layout className="xin-main-layout">
-            <Layout.Content className="xin-content">{children}</Layout.Content>
+            <Layout.Content className="xin-content">{content}</Layout.Content>
             <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
           </Layout>
         </>
@@ -49,7 +64,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <AdminMenu />
           </Layout.Sider>
           <Layout className="xin-main-layout">
-            <Layout.Content className="xin-content">{children}</Layout.Content>
+            <Layout.Content className="xin-content">{content}</Layout.Content>
             <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
           </Layout>
         </Layout>
@@ -66,7 +81,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       </Drawer>
       {isMobile ? (
         <Layout className="xin-main-layout">
-          <Layout.Content className="xin-content">{children}</Layout.Content>
+          <Layout.Content className="xin-content">{content}</Layout.Content>
           <Layout.Footer className="xin-footer">Admin Base ©2026</Layout.Footer>
         </Layout>
       ) : null}

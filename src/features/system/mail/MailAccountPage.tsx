@@ -170,9 +170,17 @@ export function MailAccountPage() {
                   type="primary"
                   icon={<CheckCircleOutlined />}
                   loading={defaultMutation.isPending}
-                  onClick={async () => {
-                    await defaultMutation.mutateAsync(record.id);
-                    reload();
+                  onClick={() => {
+                    Modal.confirm({
+                      title: "切换默认邮件账号",
+                      content: `确认将 ${record.name} 设为默认邮件账号吗？后续系统邮件会优先使用该账号。`,
+                      okText: "设为默认",
+                      cancelText: "取消",
+                      onOk: async () => {
+                        await defaultMutation.mutateAsync(record.id);
+                        reload();
+                      },
+                    });
                   }}
                 />
               </Tooltip>

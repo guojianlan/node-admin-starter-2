@@ -635,6 +635,94 @@ describe("framework completeness coverage", () => {
     expect(infoBody.data?.user.mustChangePassword).toBe(true);
   });
 
+  it("blocks non-profile APIs during forced password change and releases after change", async () => {
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'true' WHERE key = 'security.force_change_on_first_login'")
+      .run();
+    const { token: adminToken } = await login();
+    const create = await app.request("/api/system/user", {
+      method: "POST",
+      headers: authHeaders(adminToken),
+      body: JSON.stringify({
+        username: "first-login",
+        password: "first-login-123",
+        nickname: "First Login",
+        email: "first-login@example.com",
+        status: 1,
+        roleIds: [],
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const firstLogin = await login("first-login", "first-login-123");
+    expect(firstLogin.response.status).toBe(200);
+    expect(firstLogin.body.data?.mustChangePassword).toBe(true);
+
+    const blocked = await app.request("/api/system/dashboard/summary", {
+      headers: { authorization: `Bearer ${firstLogin.token}` },
+    });
+    expect(blocked.status).toBe(423);
+
+    const profile = await app.request("/api/system/profile", {
+      headers: { authorization: `Bearer ${firstLogin.token}` },
+    });
+    expect(profile.status).toBe(200);
+
+    const change = await app.request("/api/system/profile/password", {
+      method: "PUT",
+      headers: authHeaders(firstLogin.token),
+      body: JSON.stringify({
+        oldPassword: "first-login-123",
+        newPassword: "first-login-456",
+      }),
+    });
+    expect(change.status).toBe(200);
+    const afterChangeInfo = await app.request("/api/system/info", {
+      headers: { authorization: `Bearer ${firstLogin.token}` },
+    });
+    const afterChangeBody = await readJson<{ user: { mustChangePassword?: boolean } }>(
+      afterChangeInfo,
+    );
+    expect(afterChangeBody.data?.user.mustChangePassword).toBe(false);
+    const dashboard = await app.request("/api/system/dashboard/summary", {
+      headers: { authorization: `Bearer ${firstLogin.token}` },
+    });
+    expect(dashboard.status).toBe(200);
+  });
+
+  it("requires captcha after configured failed login attempts", async () => {
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'false' WHERE key = 'login.captcha_enabled'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = '1' WHERE key = 'login.captcha_after_failures'")
+      .run();
+
+    expect((await login("demo", "bad-password")).response.status).toBe(500);
+    const requiresCaptcha = await app.request("/api/system/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "demo", password: "123456" }),
+    });
+    const requiresCaptchaBody = await readJson(requiresCaptcha);
+    expect(requiresCaptcha.status).toBe(500);
+    expect(requiresCaptchaBody.msg).toBe("请输入验证码");
+
+    const captcha = await app.request("/api/system/login/captcha");
+    const captchaBody = await readJson<{ captchaId: string; debugCode?: string }>(captcha);
+    const passed = await app.request("/api/system/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "demo",
+        password: "123456",
+        captchaId: captchaBody.data?.captchaId,
+        captchaCode: captchaBody.data?.debugCode,
+      }),
+    });
+    expect(passed.status).toBe(200);
+  });
+
   it("records high-value operations and protects log export and cleanup permissions", async () => {
     const admin = await login();
     const failedLogin = await app.request("/api/system/login", {

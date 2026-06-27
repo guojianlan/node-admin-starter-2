@@ -149,9 +149,10 @@ export function ProfilePage() {
         method: "PUT",
         body: { oldPassword: values.oldPassword, newPassword: values.newPassword },
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       passwordForm.resetFields();
       feedback.success("密码已更新");
+      await initSession(true);
     },
   });
 
@@ -195,6 +196,33 @@ export function ProfilePage() {
   });
 
   const profile = profileQuery.data;
+
+  function submitProfile(values: ProfileFormValues) {
+    const sensitiveChanged =
+      (values.email ?? "") !== (profile?.email ?? "") ||
+      (values.mobile ?? "") !== (profile?.mobile ?? "");
+    if (!sensitiveChanged) {
+      saveMutation.mutate(values);
+      return;
+    }
+    Modal.confirm({
+      title: "确认修改联系方式",
+      content: "邮箱或手机号属于敏感资料，确认保存本次修改吗？",
+      okText: "保存",
+      cancelText: "取消",
+      onOk: () => saveMutation.mutateAsync(values),
+    });
+  }
+
+  function submitPassword(values: PasswordFormValues) {
+    Modal.confirm({
+      title: "确认修改密码",
+      content: "修改成功后，当前账号的其他登录会话将失效。",
+      okText: "修改密码",
+      cancelText: "取消",
+      onOk: () => passwordMutation.mutateAsync(values),
+    });
+  }
 
   return (
     <PageScaffold title={t("profile")} description={t("profileSubtitle")}>
@@ -276,7 +304,7 @@ export function ProfilePage() {
                       className="profile-form"
                       form={profileForm}
                       layout="vertical"
-                      onFinish={(values) => saveMutation.mutate(values)}
+                      onFinish={submitProfile}
                     >
                       <Row gutter={16}>
                         <Col xs={24} md={12}>
@@ -324,7 +352,7 @@ export function ProfilePage() {
                     <Form
                       form={passwordForm}
                       layout="vertical"
-                      onFinish={(values) => passwordMutation.mutate(values)}
+                      onFinish={submitPassword}
                     >
                       <Row gutter={16}>
                         <Col xs={24} md={12}>

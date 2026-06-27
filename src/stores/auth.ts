@@ -59,7 +59,7 @@ type AuthState = {
   loading: boolean;
   login: (payload: LoginPayload) => Promise<void>;
   logout: () => Promise<void>;
-  initSession: () => Promise<void>;
+  initSession: (force?: boolean) => Promise<void>;
   initMenus: () => Promise<void>;
   hasAccess: (auth?: string) => boolean;
 };
@@ -117,14 +117,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  async initSession() {
+  async initSession(force = false) {
     const token = getAuthToken();
     if (!token) {
       set({ token: null, user: null, access: [], menus: [], initialized: false, loading: false });
       return;
     }
 
-    if (get().initialized && get().user) return;
+    if (!force && get().initialized && get().user) return;
 
     set({ loading: true, token });
     try {

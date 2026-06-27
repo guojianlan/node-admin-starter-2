@@ -35,6 +35,21 @@ const resetPasswordSchema = z.object({
   password: z.string().min(1),
 });
 
+async function shouldRequireCaptcha(username: string) {
+  const policy = await getSecurityPolicy();
+  if (policy.captchaEnabled) return true;
+  if (policy.captchaAfterFailures <= 0) return false;
+  const row = (await sqlite
+    .prepare(
+      `SELECT failed_login_attempts AS failedLoginAttempts
+       FROM sys_user
+       WHERE username = ? AND deleted_at IS NULL
+       LIMIT 1`,
+    )
+    .get(username)) as { failedLoginAttempts: number } | undefined;
+  return Number(row?.failedLoginAttempts ?? 0) >= policy.captchaAfterFailures;
+}
+
 export const authRoutes = new Hono<{ Variables: HonoVariables }>();
 
 authRoutes.get("/login/options", async (c) => {
@@ -128,12 +143,11 @@ authRoutes.get("/oauth/:provider/callback", async (c) => {
 authRoutes.post("/login", async (c) => {
   const payload = loginSchema.parse(await c.req.json());
   try {
-    const policy = await getSecurityPolicy();
-    if (
-      policy.captchaEnabled &&
-      !verifyLoginCaptcha({ captchaId: payload.captchaId, captchaCode: payload.captchaCode })
-    ) {
-      throw new Error("验证码错误或已过期");
+    if (await shouldRequireCaptcha(payload.username)) {
+      if (!payload.captchaId || !payload.captchaCode) throw new Error("请输入验证码");
+      if (!verifyLoginCaptcha({ captchaId: payload.captchaId, captchaCode: payload.captchaCode })) {
+        throw new Error("验证码错误或已过期");
+      }
     }
     const result = await login({
       ...payload,
