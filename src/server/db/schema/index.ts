@@ -347,6 +347,9 @@ export const sysOperationLog = pgTable(
     requestId: text("request_id"),
     status: integer("status").notNull(),
     success: boolean("success").notNull(),
+    riskLevel: text("risk_level", { enum: ["low", "medium", "high", "critical"] })
+      .notNull()
+      .default("low"),
     message: text("message"),
     durationMs: integer("duration_ms"),
     detailsJson: text("details_json"),
@@ -358,6 +361,7 @@ export const sysOperationLog = pgTable(
     index("sys_operation_log_module_action_idx").on(table.module, table.action),
     index("sys_operation_log_success_created_at_idx").on(table.success, table.createdAt),
     index("sys_operation_log_request_id_idx").on(table.requestId),
+    index("sys_operation_log_risk_level_created_at_idx").on(table.riskLevel, table.createdAt),
   ],
 );
 

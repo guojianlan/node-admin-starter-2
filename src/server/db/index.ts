@@ -63,6 +63,7 @@ const aliasMap: Record<string, string> = {
   readstatus: "readStatus",
   requestid: "requestId",
   resourceid: "resourceId",
+  risklevel: "riskLevel",
   roleids: "roleIds",
   rolenames: "roleNames",
   ruleids: "ruleIds",

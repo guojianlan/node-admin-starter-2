@@ -934,6 +934,14 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0016_operation_log_risk_level",
+    sql: `
+ALTER TABLE sys_operation_log ADD COLUMN IF NOT EXISTS risk_level TEXT NOT NULL DEFAULT 'low';
+CREATE INDEX IF NOT EXISTS sys_operation_log_risk_level_created_at_idx
+  ON sys_operation_log(risk_level, created_at);
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

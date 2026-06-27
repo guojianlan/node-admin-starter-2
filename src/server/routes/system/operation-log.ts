@@ -7,6 +7,7 @@ import { db, sqlite } from "@/server/db";
 import { sysOperationLog } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { recordOperationLog, runWithOperationLog } from "@/server/services/operation-log-service";
 import { z } from "zod";
 
 const noopSchema = z.object({});
@@ -37,6 +38,7 @@ const operationLogCrud = createCrudRoutes({
       requestId: sysOperationLog.requestId,
       status: sysOperationLog.status,
       success: sysOperationLog.success,
+      riskLevel: sysOperationLog.riskLevel,
       message: sysOperationLog.message,
       durationMs: sysOperationLog.durationMs,
       detailsJson: sysOperationLog.detailsJson,
@@ -52,8 +54,10 @@ const operationLogCrud = createCrudRoutes({
       method: "=",
       path: "like",
       requestId: "like",
+      ip: "like",
       status: "=",
       success: "=",
+      riskLevel: "=",
       createdAt: "betweenDate",
     },
     quickSearchFields: ["username", "module", "action", "resource", "path", "requestId"],
@@ -63,6 +67,54 @@ const operationLogCrud = createCrudRoutes({
 });
 
 export const operationLogRoutes = new Hono<{ Variables: HonoVariables }>();
+
+function buildOperationLogWhere(params: URLSearchParams) {
+  const conditions: string[] = [];
+  const values: Array<string | number | boolean> = [];
+  const likeFields: Record<string, string> = {
+    username: "username",
+    module: "module",
+    action: "action",
+    requestId: "request_id",
+    ip: "ip",
+  };
+  for (const [param, column] of Object.entries(likeFields)) {
+    const value = params.get(param)?.trim();
+    if (value) {
+      conditions.push(`${column} ILIKE ?`);
+      values.push(`%${value}%`);
+    }
+  }
+  const success = params.get("success");
+  if (success === "true" || success === "false") {
+    conditions.push("success = ?");
+    values.push(success === "true");
+  }
+  const riskLevel = params.get("riskLevel");
+  if (riskLevel) {
+    conditions.push("risk_level = ?");
+    values.push(riskLevel);
+  }
+  const status = params.get("status");
+  if (status) {
+    conditions.push("status = ?");
+    values.push(Number(status));
+  }
+  const createdAtStart = params.get("createdAtStart") || params.get("createdAt[0]");
+  const createdAtEnd = params.get("createdAtEnd") || params.get("createdAt[1]");
+  if (createdAtStart) {
+    conditions.push("created_at >= ?");
+    values.push(createdAtStart);
+  }
+  if (createdAtEnd) {
+    conditions.push("created_at <= ?");
+    values.push(createdAtEnd);
+  }
+  return {
+    where: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
+    values,
+  };
+}
 
 operationLogRoutes.get(
   "/operation/log/stats",
@@ -98,7 +150,8 @@ operationLogRoutes.get(
   "/operation/log/export",
   authRequired(),
   ability("system.operationLog.export"),
-  async () => {
+  async (c) => {
+    const { values, where } = buildOperationLogWhere(new URL(c.req.url).searchParams);
     const rows = (await sqlite
       .prepare(
         `SELECT
@@ -106,6 +159,7 @@ operationLogRoutes.get(
           username,
           module,
           action,
+          risk_level AS riskLevel,
           method,
           path,
           status,
@@ -114,15 +168,24 @@ operationLogRoutes.get(
           ip,
           created_at AS createdAt
          FROM sys_operation_log
+         ${where}
          ORDER BY created_at DESC
          LIMIT 5000`,
       )
-      .all()) as Array<Record<string, unknown>>;
+      .all(...values)) as Array<Record<string, unknown>>;
+    await recordOperationLog(c, {
+      module: "system.operationLog",
+      action: "export",
+      resource: "/operation/log",
+      riskLevel: "high",
+      details: { filters: Object.fromEntries(new URL(c.req.url).searchParams.entries()) },
+    });
     const headers = [
       "id",
       "username",
       "module",
       "action",
+      "riskLevel",
       "method",
       "path",
       "status",
@@ -151,6 +214,8 @@ operationLogRoutes.delete(
       .object({
         before: z.coerce.date().optional(),
         success: z.coerce.boolean().optional(),
+        module: z.string().optional(),
+        riskLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
       })
       .parse(await c.req.json().catch(() => ({})));
     const conditions: string[] = [];
@@ -163,10 +228,30 @@ operationLogRoutes.delete(
       conditions.push("success = ?");
       params.push(payload.success);
     }
+    if (payload.module) {
+      conditions.push("module = ?");
+      params.push(payload.module);
+    }
+    if (payload.riskLevel) {
+      conditions.push("risk_level = ?");
+      params.push(payload.riskLevel);
+    }
     if (!conditions.length) throw new Error("请选择清理条件");
-    await sqlite
-      .prepare(`DELETE FROM sys_operation_log WHERE ${conditions.join(" AND ")}`)
-      .run(...params);
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.operationLog",
+        action: "clean",
+        resource: "/operation/log",
+        riskLevel: "critical",
+        details: payload as Record<string, unknown>,
+      },
+      async () => {
+        await sqlite
+          .prepare(`DELETE FROM sys_operation_log WHERE ${conditions.join(" AND ")}`)
+          .run(...params);
+      },
+    );
     return c.json(success(null, "清理成功"));
   },
 );

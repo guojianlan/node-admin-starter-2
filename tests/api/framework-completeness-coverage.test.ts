@@ -77,14 +77,20 @@ async function countLoginRecords(message: string) {
 async function latestOperation(module: string, action: string) {
   return (await sqlite
     .prepare(
-      `SELECT request_id AS requestId, details_json AS detailsJson, success, status
+      `SELECT request_id AS requestId, details_json AS detailsJson, success, status, risk_level AS riskLevel
        FROM sys_operation_log
        WHERE module = ? AND action = ?
        ORDER BY id DESC
        LIMIT 1`,
     )
     .get(module, action)) as
-    | { requestId: string | null; detailsJson: string | null; success: boolean; status: number }
+    | {
+        requestId: string | null;
+        detailsJson: string | null;
+        success: boolean;
+        status: number;
+        riskLevel: string;
+      }
     | undefined;
 }
 
@@ -764,7 +770,10 @@ describe("framework completeness coverage", () => {
       body: JSON.stringify({ status: 0 }),
     });
     expect(cleanLoginLog.status).toBe(200);
-    expect(await latestOperation("system.loginLog", "clean")).toMatchObject({ success: true });
+    expect(await latestOperation("system.loginLog", "clean")).toMatchObject({
+      success: true,
+      riskLevel: "critical",
+    });
 
     const demo = await login("demo", "123456");
     const online = await app.request("/api/system/online/user?userId=2", {
@@ -777,7 +786,10 @@ describe("framework completeness coverage", () => {
       body: JSON.stringify({}),
     });
     expect(kick.status).toBe(200);
-    expect(await latestOperation("system.onlineUser", "kick")).toMatchObject({ success: true });
+    expect(await latestOperation("system.onlineUser", "kick")).toMatchObject({
+      success: true,
+      riskLevel: "high",
+    });
     expect(
       await app.request("/api/system/info", {
         headers: { authorization: `Bearer ${demo.token}` },
@@ -831,6 +843,10 @@ describe("framework completeness coverage", () => {
     });
     expect(exportResponse.status).toBe(200);
     expect(exportResponse.headers.get("content-type")).toContain("text/csv");
+    expect(await latestOperation("system.operationLog", "export")).toMatchObject({
+      success: true,
+      riskLevel: "high",
+    });
 
     const cleanDenied = await app.request("/api/system/operation/log/clean", {
       method: "DELETE",
@@ -844,6 +860,16 @@ describe("framework completeness coverage", () => {
       body: JSON.stringify({}),
     });
     expect(cleanWithoutCondition.status).toBe(500);
+    const cleanByRisk = await app.request("/api/system/operation/log/clean", {
+      method: "DELETE",
+      headers: authHeaders(admin.token),
+      body: JSON.stringify({ riskLevel: "low" }),
+    });
+    expect(cleanByRisk.status).toBe(200);
+    expect(await latestOperation("system.operationLog", "clean")).toMatchObject({
+      success: true,
+      riskLevel: "critical",
+    });
   });
 
   it("saves business settings with settings permission and applies upload policy immediately", async () => {

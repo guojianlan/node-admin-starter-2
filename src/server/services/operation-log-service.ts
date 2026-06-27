@@ -12,6 +12,7 @@ type OperationLogInput = {
   resourceId?: string | number | null;
   status?: number;
   success?: boolean;
+  riskLevel?: "low" | "medium" | "high" | "critical";
   message?: string | null;
   durationMs?: number | null;
   details?: Record<string, unknown> | null;
@@ -27,6 +28,42 @@ function toErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function inferRiskLevel(input: OperationLogInput): "low" | "medium" | "high" | "critical" {
+  if (input.riskLevel) return input.riskLevel;
+  const action = input.action.toLowerCase();
+  if (
+    action.includes("clean") ||
+    action.includes("forcedelete") ||
+    action.includes("destroy")
+  ) {
+    return "critical";
+  }
+  if (
+    action.includes("delete") ||
+    action.includes("resetpassword") ||
+    action.includes("kick") ||
+    action.includes("publish") ||
+    action.includes("revoke") ||
+    action.includes("setdefault") ||
+    action.includes("setrule") ||
+    action.includes("authorize") ||
+    action.includes("unbind")
+  ) {
+    return "high";
+  }
+  if (
+    action.includes("create") ||
+    action.includes("update") ||
+    action.includes("upload") ||
+    action.includes("test") ||
+    action.includes("save") ||
+    action.includes("bind")
+  ) {
+    return "medium";
+  }
+  return input.success === false ? "medium" : "low";
+}
+
 export async function recordOperationLog(
   c: Context<{ Variables: HonoVariables }>,
   input: OperationLogInput,
@@ -35,15 +72,16 @@ export async function recordOperationLog(
   const user = c.get("user");
   const url = new URL(c.req.url);
   const detailsJson = input.details ? JSON.stringify(input.details) : null;
+  const riskLevel = inferRiskLevel(input);
 
   try {
     await dbClient
       .prepare(
         `INSERT INTO sys_operation_log
           (user_id, username, module, action, resource, resource_id, method, path, ip, user_agent,
-           request_id, status, success, message, duration_ms, details_json)
+           request_id, status, success, risk_level, message, duration_ms, details_json)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.userId ?? user?.id ?? null,
@@ -59,6 +97,7 @@ export async function recordOperationLog(
         c.get("requestId") ?? null,
         input.status ?? 200,
         input.success ?? true,
+        riskLevel,
         input.message ?? null,
         input.durationMs == null ? null : Math.round(input.durationMs),
         detailsJson,

@@ -3,14 +3,20 @@
 import {
   CodeOutlined,
   CopyOutlined,
+  ClearOutlined,
+  DownloadOutlined,
   EyeOutlined,
   LinkOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
-import { Badge, Button, Descriptions, Drawer, Space, Tag, Tooltip, Typography } from "antd";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Badge, Button, DatePicker, Descriptions, Drawer, Modal, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import { AuthButton } from "@/components/auth-button/AuthButton";
+import { getAuthToken } from "@/lib/auth-token";
+import { request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
@@ -30,6 +36,7 @@ type OperationLogRecord = {
   requestId?: string | null;
   status: number;
   success: boolean;
+  riskLevel: "low" | "medium" | "high" | "critical";
   message?: string | null;
   durationMs?: number | null;
   detailsJson?: string | null;
@@ -78,6 +85,20 @@ const actionOptions = [
   { label: "上传头像", value: "uploadAvatar" },
 ];
 
+const riskOptions = [
+  { label: "低", value: "low" },
+  { label: "中", value: "medium" },
+  { label: "高", value: "high" },
+  { label: "严重", value: "critical" },
+];
+
+const riskColors: Record<OperationLogRecord["riskLevel"], string> = {
+  low: "default",
+  medium: "blue",
+  high: "orange",
+  critical: "red",
+};
+
 const methodColors: Record<string, string> = {
   GET: "blue",
   POST: "green",
@@ -96,9 +117,31 @@ function formatJson(value?: string | null) {
 
 export function OperationLogPage() {
   const navigation = useNavigationAdapter();
+  const queryClient = useQueryClient();
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeLog, setActiveLog] = useState<OperationLogRecord | null>(null);
+  const [cleanOpen, setCleanOpen] = useState(false);
+  const [cleanForm, setCleanForm] = useState<{
+    before?: string;
+    module?: string;
+    riskLevel?: OperationLogRecord["riskLevel"];
+    success?: boolean;
+  }>({});
   const activeJson = useMemo(() => formatJson(activeLog?.detailsJson), [activeLog]);
+
+  const cleanMutation = useMutation({
+    mutationFn: () =>
+      request("/api/system/operation/log/clean", {
+        method: "DELETE",
+        body: cleanForm,
+      }),
+    onSuccess: async () => {
+      feedback.success("清理成功");
+      setCleanOpen(false);
+      setCleanForm({});
+      await queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/operation/log"] });
+    },
+  });
 
   async function copyText(value: string, label: string) {
     if (!value) return;
@@ -112,6 +155,26 @@ export function OperationLogPage() {
     params.set("page", "1");
     params.set("requestId", requestId);
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
+  }
+
+  async function exportLogs() {
+    const token = getAuthToken();
+    const response = await fetch(`/api/system/operation/log/export${navigation.search || ""}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      feedback.error("导出失败");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `operation-log-${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   const columns: AdminDataTableColumn<OperationLogRecord>[] = [
@@ -135,6 +198,18 @@ export function OperationLogPage() {
       options: moduleOptions,
       width: 128,
       render: (value) => <Tag color="blue">{String(value)}</Tag>,
+    },
+    {
+      title: "风险",
+      dataIndex: "riskLevel",
+      valueType: "select",
+      options: riskOptions,
+      width: 88,
+      render: (value) => (
+        <Tag color={riskColors[String(value) as OperationLogRecord["riskLevel"]] ?? "default"}>
+          {riskOptions.find((item) => item.value === value)?.label ?? String(value)}
+        </Tag>
+      ),
     },
     {
       title: "动作",
@@ -291,6 +366,20 @@ export function OperationLogPage() {
         enableDelete={false}
         defaultPageSize={20}
         toolbarTitle="审计事件"
+        actionBarRender={() => (
+          <Space>
+            <AuthButton auth="system.operationLog.export">
+              <Button icon={<DownloadOutlined />} onClick={() => void exportLogs()}>
+                导出
+              </Button>
+            </AuthButton>
+            <AuthButton auth="system.operationLog.clean">
+              <Button danger icon={<ClearOutlined />} onClick={() => setCleanOpen(true)}>
+                清理
+              </Button>
+            </AuthButton>
+          </Space>
+        )}
         operateRender={(record) => (
           <>
             <Tooltip title="查看详情">
@@ -374,6 +463,9 @@ export function OperationLogPage() {
               <Descriptions.Item label="动作">
                 <Tag color="purple">{activeLog.action}</Tag>
               </Descriptions.Item>
+              <Descriptions.Item label="风险等级">
+                <Tag color={riskColors[activeLog.riskLevel]}>{activeLog.riskLevel}</Tag>
+              </Descriptions.Item>
               <Descriptions.Item label="操作人">
                 {activeLog.username ? `${activeLog.username} #${activeLog.userId ?? "-"}` : "-"}
               </Descriptions.Item>
@@ -442,6 +534,62 @@ export function OperationLogPage() {
           </Space>
         ) : null}
       </Drawer>
+      <Modal
+        title="清理操作日志"
+        open={cleanOpen}
+        okText="确认清理"
+        okButtonProps={{ danger: true }}
+        confirmLoading={cleanMutation.isPending}
+        onOk={() => {
+          if (!cleanForm.before && !cleanForm.module && !cleanForm.riskLevel && cleanForm.success === undefined) {
+            feedback.warning("请选择至少一个清理条件");
+            return;
+          }
+          void cleanMutation.mutateAsync();
+        }}
+        onCancel={() => setCleanOpen(false)}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            清理动作会记录为 critical 操作日志。建议至少选择时间或模块条件。
+          </Typography.Text>
+          <DatePicker
+            showTime
+            style={{ width: "100%" }}
+            placeholder="清理该时间之前的日志"
+            onChange={(value) =>
+              setCleanForm((current) => ({ ...current, before: value?.toISOString() }))
+            }
+          />
+          <Select
+            allowClear
+            placeholder="模块"
+            options={moduleOptions}
+            style={{ width: "100%" }}
+            value={cleanForm.module}
+            onChange={(value) => setCleanForm((current) => ({ ...current, module: value }))}
+          />
+          <Select
+            allowClear
+            placeholder="风险等级"
+            options={riskOptions}
+            style={{ width: "100%" }}
+            value={cleanForm.riskLevel}
+            onChange={(value) => setCleanForm((current) => ({ ...current, riskLevel: value }))}
+          />
+          <Select
+            allowClear
+            placeholder="执行结果"
+            options={[
+              { label: "成功", value: true },
+              { label: "失败", value: false },
+            ]}
+            style={{ width: "100%" }}
+            value={cleanForm.success}
+            onChange={(value) => setCleanForm((current) => ({ ...current, success: value }))}
+          />
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }
