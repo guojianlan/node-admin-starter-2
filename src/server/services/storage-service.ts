@@ -54,6 +54,9 @@ type UploadConfig = {
   allowedExtensions: string[];
   deniedExtensions: string[];
   enableSha256Dedupe: boolean;
+  mimeCheckEnabled: boolean;
+  magicCheckEnabled: boolean;
+  dangerousFileStrategy: "reject" | "isolated-download" | "force-download";
 };
 
 const defaultAllowedExtensions = [
@@ -76,6 +79,7 @@ const defaultAllowedExtensions = [
 ];
 
 const defaultDeniedExtensions = ["exe", "bat", "cmd", "sh", "php", "html", "htm", "js", "mjs", "svg"];
+const dangerousExtensions = ["html", "htm", "svg", "js", "mjs", "vbs", "sh", "bat", "cmd", "ps1"];
 
 const mimeRules: Record<string, string[]> = {
   jpg: ["image/jpeg"],
@@ -238,7 +242,10 @@ export async function getUploadConfig(): Promise<UploadConfig> {
            'file.max_upload_size_mb',
            'file.allowed_extensions',
            'file.denied_extensions',
-           'file.enable_sha256_dedupe'
+           'file.enable_sha256_dedupe',
+           'file.mime_check_enabled',
+           'file.magic_check_enabled',
+           'file.dangerous_file_strategy'
          )`,
     )
     .all()) as Array<{ key: string; values: string | null }>;
@@ -254,6 +261,17 @@ export async function getUploadConfig(): Promise<UploadConfig> {
       ? splitExtensions(map.get("file.denied_extensions"))
       : defaultDeniedExtensions,
     enableSha256Dedupe: booleanConfig(map.get("file.enable_sha256_dedupe")),
+    mimeCheckEnabled: map.get("file.mime_check_enabled") == null
+      ? true
+      : booleanConfig(map.get("file.mime_check_enabled")),
+    magicCheckEnabled: map.get("file.magic_check_enabled") == null
+      ? true
+      : booleanConfig(map.get("file.magic_check_enabled")),
+    dangerousFileStrategy: ["reject", "isolated-download", "force-download"].includes(
+      String(map.get("file.dangerous_file_strategy") ?? ""),
+    )
+      ? (String(map.get("file.dangerous_file_strategy")) as UploadConfig["dangerousFileStrategy"])
+      : "reject",
   };
 }
 
@@ -266,18 +284,24 @@ export async function assertUploadAllowed(file: File, ext: string) {
   if (config.deniedExtensions.includes(normalizedExt)) {
     throw new Error("当前文件类型不允许上传");
   }
+  if (
+    config.dangerousFileStrategy === "reject" &&
+    dangerousExtensions.includes(normalizedExt)
+  ) {
+    throw new Error("当前文件类型属于高风险类型，已按策略拒绝上传");
+  }
   if (config.allowedExtensions.length && !config.allowedExtensions.includes(normalizedExt)) {
     throw new Error("当前文件类型不在允许上传范围内");
   }
   const expectedMimes = mimeRules[normalizedExt];
-  if (file.type && expectedMimes?.length) {
+  if (config.mimeCheckEnabled && file.type && expectedMimes?.length) {
     const matched = expectedMimes.some((mime) =>
       mime.endsWith("/") ? file.type.startsWith(mime) : file.type === mime,
     );
     if (!matched) throw new Error("文件扩展名与 MIME 类型不匹配");
   }
   const expectedMagic = magicRules[normalizedExt];
-  if (expectedMagic?.length) {
+  if (config.magicCheckEnabled && expectedMagic?.length) {
     const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
     const matched = expectedMagic.some((signature) =>
       signature.every((byte, index) => bytes[index] === byte),

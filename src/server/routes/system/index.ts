@@ -17,6 +17,7 @@ import { operationLogRoutes } from "./operation-log";
 import { profileRoutes } from "./profile";
 import { roleRoutes } from "./role";
 import { ruleRoutes } from "./rule";
+import { settingsRoutes } from "./settings";
 import { storageRoutes } from "./storage";
 import { userRoutes } from "./user";
 
@@ -33,6 +34,7 @@ systemRoutes.route("/", roleRoutes);
 systemRoutes.route("/", ruleRoutes);
 systemRoutes.route("/", deptRoutes);
 systemRoutes.route("/", dictRoutes);
+systemRoutes.route("/", settingsRoutes);
 systemRoutes.route("/", configRoutes);
 systemRoutes.route("/", fileRoutes);
 systemRoutes.route("/", storageRoutes);

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ApiOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
   LockOutlined,
@@ -11,8 +12,24 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Form, Input, InputNumber, Row, Space, Spin, Switch, Tag, Typography } from "antd";
-import { useEffect, useMemo } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tabs,
+  Tag,
+  Typography,
+} from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { buildQueryString, request } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { useNavigationAdapter } from "@/platform/navigation";
@@ -47,9 +64,17 @@ type MailRecord = {
   fromEmail: string;
 };
 
+type OAuthProviderConfig = {
+  key?: string;
+  name?: string;
+  enabled?: boolean;
+  authUrl?: string;
+};
+
 type ConfigSection = {
   key: string;
   title: string;
+  description: string;
   icon: React.ReactNode;
   keys: string[];
 };
@@ -58,12 +83,14 @@ const sections: ConfigSection[] = [
   {
     key: "basic",
     title: "基础设置",
+    description: "站点名称、Logo 和后台说明。",
     icon: <SettingOutlined />,
     keys: ["site_name", "site_logo", "site_description"],
   },
   {
     key: "security",
     title: "安全策略",
+    description: "控制新密码、重置密码和密码过期策略。",
     icon: <LockOutlined />,
     keys: [
       "security.password_min_length",
@@ -79,6 +106,7 @@ const sections: ConfigSection[] = [
   {
     key: "login",
     title: "登录策略",
+    description: "控制验证码、失败锁定和多端登录策略。",
     icon: <LoginOutlined />,
     keys: [
       "login.captcha_enabled",
@@ -86,12 +114,13 @@ const sections: ConfigSection[] = [
       "login.lock_minutes",
       "login.allow_multi_session",
       "login.max_online_tokens",
-      "login.oauth_providers_json",
+      "login.captcha_after_failures",
     ],
   },
   {
     key: "token",
     title: "Token 策略",
+    description: "控制会话有效期、记住登录和过期清理窗口。",
     icon: <DatabaseOutlined />,
     keys: [
       "token.access_token_ttl_days",
@@ -103,80 +132,302 @@ const sections: ConfigSection[] = [
   {
     key: "file",
     title: "文件上传策略",
+    description: "控制文件大小、扩展名、MIME、文件头和危险文件策略。",
     icon: <UploadOutlined />,
     keys: [
       "file.max_upload_size_mb",
       "file.allowed_extensions",
       "file.denied_extensions",
+      "file.mime_check_enabled",
+      "file.magic_check_enabled",
+      "file.dangerous_file_strategy",
       "file.enable_sha256_dedupe",
     ],
   },
 ];
 
+function isNumberType(type: string) {
+  return type === "digit" || type === "number";
+}
+
 function parseConfigValue(item: ConfigItem) {
   if (item.type === "switch") return item.values === "1" || item.values === "true";
-  if (item.type === "digit") return Number(item.values || 0);
+  if (isNumberType(item.type)) return Number(item.values || 0);
   return item.values ?? "";
 }
 
 function stringifyConfigValue(item: ConfigItem, value: unknown) {
   if (item.type === "switch") return value ? "true" : "false";
-  if (item.type === "digit") return String(Number(value ?? 0));
+  if (isNumberType(item.type)) return String(Number(value ?? 0));
   return value == null ? "" : String(value);
 }
 
+function parseOAuthProviders(value?: string | null) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => item as OAuthProviderConfig);
+  } catch {
+    return [];
+  }
+}
+
 function ConfigControl({ item }: { item: ConfigItem }) {
+  if (item.key === "file.dangerous_file_strategy") {
+    return (
+      <Select
+        options={[
+          { label: "拒绝上传", value: "reject" },
+          { label: "隔离下载", value: "isolated-download" },
+          { label: "强制下载", value: "force-download" },
+        ]}
+      />
+    );
+  }
   if (item.type === "switch") return <Switch checkedChildren="开" unCheckedChildren="关" />;
-  if (item.type === "digit") return <InputNumber min={0} style={{ width: "100%" }} />;
+  if (isNumberType(item.type)) return <InputNumber min={0} style={{ width: "100%" }} />;
   if (item.type === "textarea") return <Input.TextArea rows={5} />;
   return <Input allowClear />;
 }
 
-function ResourceCard({
-  icon,
-  items,
-  path,
-  title,
+function ConfigSectionForm({
+  itemsByKey,
+  section,
 }: {
-  icon: React.ReactNode;
-  items: Array<StorageRecord | MailRecord>;
-  path: string;
-  title: string;
+  itemsByKey: Map<string, ConfigItem>;
+  section: ConfigSection;
 }) {
-  const navigation = useNavigationAdapter();
-  const defaultItem = items.find((item) => item.isDefault);
+  const [form] = Form.useForm<Record<string, unknown>>();
+  const queryClient = useQueryClient();
+  const items = section.keys.map((key) => itemsByKey.get(key)).filter(Boolean) as ConfigItem[];
+  const missingKeys = section.keys.filter((key) => !itemsByKey.has(key));
+
+  useEffect(() => {
+    const values: Record<string, unknown> = {};
+    for (const item of items) values[item.key] = parseConfigValue(item);
+    form.setFieldsValue(values);
+  }, [form, items]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (values: Record<string, unknown>) => {
+      const payload: Record<string, string> = {};
+      for (const item of items) payload[item.key] = stringifyConfigValue(item, values[item.key]);
+      await request("/api/system/settings/config/save", { method: "PUT", body: payload });
+    },
+    onSuccess: () => {
+      feedback.success(`${section.title}已保存`);
+      void queryClient.invalidateQueries({ queryKey: ["system-settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["login", "options"] });
+    },
+  });
+
   return (
     <Card
       title={
         <Space>
-          {icon}
-          {title}
+          {section.icon}
+          {section.title}
         </Space>
       }
-      extra={<Button onClick={() => navigation.push(path)}>管理</Button>}
+      extra={
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          loading={saveMutation.isPending}
+          onClick={() => form.submit()}
+        >
+          保存本组
+        </Button>
+      }
     >
-      {defaultItem ? (
-        <Space direction="vertical" size={8}>
-          <Typography.Text strong>{defaultItem.name}</Typography.Text>
-          <Space wrap>
-            <Tag color="blue">{defaultItem.code}</Tag>
-            <Tag color={defaultItem.status === 1 ? "success" : "error"}>
-              {defaultItem.status === 1 ? "启用" : "停用"}
-            </Tag>
-            {"type" in defaultItem ? <Tag>{defaultItem.type}</Tag> : null}
-            {"host" in defaultItem ? <Tag>{defaultItem.host}</Tag> : null}
-          </Space>
+      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Typography.Text type="secondary">{section.description}</Typography.Text>
+        {missingKeys.length ? (
+          <Alert
+            showIcon
+            type="warning"
+            message="配置项未初始化"
+            description={missingKeys.join(", ")}
+          />
+        ) : null}
+        <Form form={form} layout="vertical" onFinish={(values) => saveMutation.mutate(values)}>
+          <Row gutter={16}>
+            {items.map((item) => (
+              <Col
+                xs={24}
+                md={item.type === "textarea" ? 24 : 12}
+                xl={item.type === "textarea" ? 24 : 8}
+                key={item.key}
+              >
+                <Form.Item
+                  label={item.title}
+                  name={item.key}
+                  extra={item.describe}
+                  valuePropName={item.type === "switch" ? "checked" : "value"}
+                >
+                  <ConfigControl item={item} />
+                </Form.Item>
+              </Col>
+            ))}
+          </Row>
+        </Form>
+      </Space>
+    </Card>
+  );
+}
+
+function ResourceSettings({
+  mailItems,
+  storageItems,
+}: {
+  mailItems: MailRecord[];
+  storageItems: StorageRecord[];
+}) {
+  const navigation = useNavigationAdapter();
+  const [testMailTo, setTestMailTo] = useState("");
+  const defaultStorage = storageItems.find((item) => item.isDefault);
+  const defaultMail = mailItems.find((item) => item.isDefault);
+  const testStorageMutation = useMutation({
+    mutationFn: () =>
+      request("/api/system/storage/test", {
+        method: "POST",
+        body: { id: defaultStorage?.id },
+      }),
+    onSuccess: () => feedback.success("默认存储连接正常"),
+  });
+  const testMailMutation = useMutation({
+    mutationFn: () =>
+      request("/api/system/mail/account/test", {
+        method: "POST",
+        body: {
+          id: defaultMail?.id,
+          to: testMailTo,
+          subject: "Admin Base 测试邮件",
+          text: "这是一封来自系统设置页的测试邮件。",
+        },
+      }),
+    onSuccess: () => feedback.success("测试邮件已发送"),
+  });
+
+  return (
+    <Row gutter={[16, 16]}>
+      <Col xs={24} lg={12}>
+        <Card
+          title={
+            <Space>
+              <CloudServerOutlined />
+              存储配置
+            </Space>
+          }
+          extra={<Button onClick={() => navigation.push("/system/storage")}>管理</Button>}
+        >
+          {defaultStorage ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <Typography.Text strong>{defaultStorage.name}</Typography.Text>
+              <Space wrap>
+                <Tag color="blue">{defaultStorage.code}</Tag>
+                <Tag>{defaultStorage.type}</Tag>
+                <Tag color={defaultStorage.status === 1 ? "success" : "error"}>
+                  {defaultStorage.status === 1 ? "启用" : "停用"}
+                </Tag>
+              </Space>
+              <Button
+                icon={<ApiOutlined />}
+                loading={testStorageMutation.isPending}
+                onClick={() => testStorageMutation.mutate()}
+              >
+                测试默认存储
+              </Button>
+            </Space>
+          ) : (
+            <Alert type="warning" showIcon message="尚未配置默认存储" />
+          )}
+        </Card>
+      </Col>
+      <Col xs={24} lg={12}>
+        <Card
+          title={
+            <Space>
+              <MailOutlined />
+              邮件配置
+            </Space>
+          }
+          extra={<Button onClick={() => navigation.push("/system/mail/account")}>管理</Button>}
+        >
+          {defaultMail ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <Typography.Text strong>{defaultMail.name}</Typography.Text>
+              <Space wrap>
+                <Tag color="blue">{defaultMail.code}</Tag>
+                <Tag>{defaultMail.host}</Tag>
+                <Tag color={defaultMail.status === 1 ? "success" : "error"}>
+                  {defaultMail.status === 1 ? "启用" : "停用"}
+                </Tag>
+              </Space>
+              <Input.Search
+                enterButton="发送测试"
+                placeholder="输入测试收件邮箱"
+                value={testMailTo}
+                loading={testMailMutation.isPending}
+                onChange={(event) => setTestMailTo(event.target.value)}
+                onSearch={() => testMailMutation.mutate()}
+              />
+            </Space>
+          ) : (
+            <Alert type="warning" showIcon message="尚未配置默认邮件账号" />
+          )}
+        </Card>
+      </Col>
+    </Row>
+  );
+}
+
+function LoginMethods({ oauthConfig }: { oauthConfig?: ConfigItem }) {
+  const providers = parseOAuthProviders(oauthConfig?.values);
+  return (
+    <Card
+      title={
+        <Space>
+          <LoginOutlined />
+          登录方式
         </Space>
-      ) : (
-        <Alert type="warning" showIcon message={`尚未配置默认${title}`} />
-      )}
+      }
+    >
+      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Alert
+          showIcon
+          type="info"
+          message="账号密码登录为系统基础能力，始终启用。验证码由登录策略分区控制。"
+        />
+        <div>
+          <Typography.Text strong>第三方登录 Provider</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            {providers.length ? (
+              <Space wrap>
+                {providers.map((provider) => (
+                  <Tag color={provider.enabled ? "success" : "default"} key={provider.key}>
+                    {provider.name || provider.key}
+                    {provider.enabled ? " / 启用" : " / 停用"}
+                  </Tag>
+                ))}
+              </Space>
+            ) : (
+              <Typography.Text type="secondary">尚未配置 OAuth Provider</Typography.Text>
+            )}
+          </div>
+        </div>
+        <Alert
+          showIcon
+          type="warning"
+          message="OAuth Provider 将在第三方登录管理中表单化维护。当前高级 JSON 仍保留在系统配置页，避免在业务设置里直接暴露复杂 JSON。"
+        />
+      </Space>
     </Card>
   );
 }
 
 export function SettingsPage() {
-  const [form] = Form.useForm<Record<string, unknown>>();
-  const queryClient = useQueryClient();
   const configQuery = useQuery({
     queryKey: ["system-settings", "config"],
     queryFn: async () => {
@@ -208,103 +459,57 @@ export function SettingsPage() {
   const itemsByKey = useMemo(() => {
     return new Map((configQuery.data ?? []).map((item) => [item.key, item]));
   }, [configQuery.data]);
-
-  useEffect(() => {
-    const values: Record<string, unknown> = {};
-    for (const item of configQuery.data ?? []) values[item.key] = parseConfigValue(item);
-    form.setFieldsValue(values);
-  }, [configQuery.data, form]);
-
-  const saveMutation = useMutation({
-    mutationFn: async (values: Record<string, unknown>) => {
-      const payload: Record<string, string> = {};
-      for (const section of sections) {
-        for (const key of section.keys) {
-          const item = itemsByKey.get(key);
-          if (item) payload[key] = stringifyConfigValue(item, values[key]);
-        }
-      }
-      await request("/api/system/config/items/save", { method: "PUT", body: payload });
-    },
-    onSuccess: () => {
-      feedback.success("系统设置已保存");
-      void queryClient.invalidateQueries({ queryKey: ["system-settings"] });
-      void queryClient.invalidateQueries({ queryKey: ["login", "options"] });
-    },
-  });
-
   const loading = configQuery.isLoading || storageQuery.isLoading || mailQuery.isLoading;
 
   return (
     <PageScaffold title="系统设置" description="聚合基础参数、安全策略、登录策略、上传策略和资源配置">
       <Spin spinning={loading}>
-        <Form form={form} layout="vertical" onFinish={(values) => saveMutation.mutate(values)}>
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Alert
-              showIcon
-              type="info"
-              message="系统设置只聚合配置入口；存储和邮件仍保持独立资源模型。"
-            />
-            {sections.map((section) => (
-              <Card
-                key={section.key}
-                title={
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message="系统设置是业务化入口；配置项管理、存储、邮件仍保持独立模型和独立权限。"
+          />
+          <Tabs
+            items={[
+              ...sections.map((section) => ({
+                key: section.key,
+                label: (
                   <Space>
                     {section.icon}
                     {section.title}
                   </Space>
-                }
-              >
-                <Row gutter={16}>
-                  {section.keys.map((key) => {
-                    const item = itemsByKey.get(key);
-                    if (!item) return null;
-                    return (
-                      <Col xs={24} md={item.type === "textarea" ? 24 : 12} xl={item.type === "textarea" ? 24 : 8} key={key}>
-                        <Form.Item
-                          label={item.title}
-                          name={item.key}
-                          extra={item.describe}
-                          valuePropName={item.type === "switch" ? "checked" : "value"}
-                        >
-                          <ConfigControl item={item} />
-                        </Form.Item>
-                      </Col>
-                    );
-                  })}
-                </Row>
-              </Card>
-            ))}
-            <Row gutter={16}>
-              <Col xs={24} lg={12}>
-                <ResourceCard
-                  icon={<CloudServerOutlined />}
-                  title="存储配置"
-                  path="/system/storage"
-                  items={storageQuery.data ?? []}
-                />
-              </Col>
-              <Col xs={24} lg={12}>
-                <ResourceCard
-                  icon={<MailOutlined />}
-                  title="邮件配置"
-                  path="/system/mail/account"
-                  items={mailQuery.data ?? []}
-                />
-              </Col>
-            </Row>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Button
-                type="primary"
-                htmlType="submit"
-                icon={<SaveOutlined />}
-                loading={saveMutation.isPending}
-              >
-                保存设置
-              </Button>
-            </div>
-          </Space>
-        </Form>
+                ),
+                children: <ConfigSectionForm itemsByKey={itemsByKey} section={section} />,
+              })),
+              {
+                key: "resources",
+                label: (
+                  <Space>
+                    <CloudServerOutlined />
+                    资源配置
+                  </Space>
+                ),
+                children: (
+                  <ResourceSettings
+                    storageItems={storageQuery.data ?? []}
+                    mailItems={mailQuery.data ?? []}
+                  />
+                ),
+              },
+              {
+                key: "login-methods",
+                label: (
+                  <Space>
+                    <LoginOutlined />
+                    登录方式
+                  </Space>
+                ),
+                children: <LoginMethods oauthConfig={itemsByKey.get("login.oauth_providers_json")} />,
+              },
+            ]}
+          />
+        </Space>
       </Spin>
     </PageScaffold>
   );

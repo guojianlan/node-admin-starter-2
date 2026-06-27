@@ -619,4 +619,77 @@ describe("framework completeness coverage", () => {
     });
     expect(cleanWithoutCondition.status).toBe(500);
   });
+
+  it("saves business settings with settings permission and applies upload policy immediately", async () => {
+    const now = nowIso();
+    const passwordHash = await bcrypt.hash("123456", 10);
+    const roleResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_role
+          (name, code, remark, sort, status, created_at, updated_at)
+         VALUES ('系统设置员', 'settings_manager', '', 30, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(now, now);
+    const roleId = Number(roleResult.lastInsertRowid);
+    const ruleIds = (
+      (await sqlite
+        .prepare(
+          `SELECT id FROM sys_rule
+           WHERE key IN ('system', 'system.settings', 'system.settings.query', 'system.settings.save')
+           ORDER BY id ASC`,
+        )
+        .all()) as Array<{ id: number }>
+    ).map((item) => item.id);
+    for (const ruleId of ruleIds) {
+      await sqlite
+        .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+        .run(roleId, ruleId);
+    }
+    const userResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_user
+          (username, password_hash, nickname, sex, dept_id, status, created_at, updated_at)
+         VALUES ('settings_only', ?, '系统设置员', 0, 1, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(passwordHash, now, now);
+    await sqlite
+      .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)")
+      .run(Number(userResult.lastInsertRowid), roleId);
+
+    const settingsUser = await login("settings_only", "123456");
+    const save = await app.request("/api/system/settings/config/save", {
+      method: "PUT",
+      headers: authHeaders(settingsUser.token),
+      body: JSON.stringify({
+        site_name: "Settings Saved",
+        "file.mime_check_enabled": "false",
+        "file.magic_check_enabled": "false",
+      }),
+    });
+    expect(save.status).toBe(200);
+    const saved = (await sqlite
+      .prepare("SELECT key, \"values\" AS values FROM sys_config_items WHERE key IN (?, ?, ?)")
+      .all("site_name", "file.mime_check_enabled", "file.magic_check_enabled")) as Array<{
+      key: string;
+      values: string;
+    }>;
+    expect(Object.fromEntries(saved.map((item) => [item.key, item.values]))).toMatchObject({
+      site_name: "Settings Saved",
+      "file.mime_check_enabled": "false",
+      "file.magic_check_enabled": "false",
+    });
+    expect(await latestOperation("system.settings", "save")).toMatchObject({ success: true });
+
+    const admin = await login();
+    const form = new FormData();
+    form.append("file", new File(["not a png"], "policy.png", { type: "text/plain" }));
+    const upload = await app.request("/api/system/file/list/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${admin.token}` },
+      body: form,
+    });
+    expect(upload.status).toBe(200);
+  });
 });
