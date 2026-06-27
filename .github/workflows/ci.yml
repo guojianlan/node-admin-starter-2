@@ -47,6 +47,15 @@ jobs:
       - run: pnpm build
       - name: Smoke
         run: |
-          pnpm start > /tmp/admin-base-next.log 2>&1 &
-          npx wait-on http://localhost:3000/api/health
+          NODE_ENV=production pnpm start > /tmp/admin-base-next.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000/api/health >/dev/null; then
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              cat /tmp/admin-base-next.log
+              exit 1
+            fi
+            sleep 1
+          done
           SMOKE_BASE_URL=http://localhost:3000 SMOKE_PASSWORD=ci-admin-password-123 pnpm smoke

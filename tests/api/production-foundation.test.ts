@@ -32,6 +32,21 @@ async function login(username = "admin", password = "123456") {
 
 const originalAdminPassword = process.env.ADMIN_BASE_ADMIN_PASSWORD;
 
+function expectCommandFailureMessage(run: () => void, pattern: RegExp) {
+  try {
+    run();
+  } catch (error) {
+    const output = [
+      error instanceof Error ? error.message : String(error),
+      String((error as { stdout?: Buffer | string }).stdout ?? ""),
+      String((error as { stderr?: Buffer | string }).stderr ?? ""),
+    ].join("\n");
+    expect(output).toMatch(pattern);
+    return;
+  }
+  throw new Error("Expected command to fail");
+}
+
 describe("production foundation", () => {
   beforeEach(async () => {
     delete process.env.ADMIN_BASE_ADMIN_PASSWORD;
@@ -113,5 +128,41 @@ describe("production foundation", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("refuses db reset for production-like targets without destructive confirmation", () => {
+    expectCommandFailureMessage(
+      () =>
+      execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV: "development",
+          DATABASE_URL: "postgres://admin_base:admin_base@prod-db.internal:5432/admin_base",
+          ADMIN_BASE_ALLOW_DB_RESET: "true",
+          ADMIN_BASE_SECRET_KEY: "test-admin-base-secret",
+          ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
+        },
+      }),
+      /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,
+    );
+
+    expectCommandFailureMessage(
+      () =>
+      execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV: "production",
+          DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base_production",
+          ADMIN_BASE_ALLOW_DB_RESET: "true",
+          ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
+          ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
+        },
+      }),
+      /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,
+    );
   });
 });
