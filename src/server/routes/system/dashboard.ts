@@ -50,15 +50,16 @@ dashboardRoutes.get("/dashboard/summary", authRequired(), async (c) => {
       .get(),
     sqlite
       .prepare(
-        `SELECT id, module, action, username, success, created_at AS createdAt
+        `SELECT id, module, action, username, success, risk_level AS "riskLevel", created_at AS "createdAt"
          FROM sys_operation_log
+         WHERE risk_level IN ('high', 'critical')
          ORDER BY created_at DESC
          LIMIT 8`,
       )
       .all(),
     sqlite
       .prepare(
-        `SELECT id, title, type, published_at AS publishedAt
+        `SELECT id, title, type, published_at AS "publishedAt"
          FROM sys_notice
          WHERE deleted_at IS NULL AND status = 1
          ORDER BY published_at DESC NULLS LAST, id DESC

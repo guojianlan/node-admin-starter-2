@@ -1,0 +1,5 @@
+{
+  path: "/system/example",
+  title: "示例模块",
+  auth: "system.example.query",
+}

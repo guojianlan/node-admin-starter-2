@@ -1,0 +1,28 @@
+const exampleRouteRule = {
+  key: "system.example",
+  parentKey: "system",
+  type: "route",
+  title: "示例模块",
+  path: "/system/example",
+  icon: "appstore",
+  sort: 100,
+  status: 1,
+  hidden: false,
+  isSystem: true,
+};
+
+const exampleActionRules = [
+  { key: "system.example.query", title: "查看示例模块", sort: 1 },
+  { key: "system.example.create", title: "新增示例模块", sort: 2 },
+  { key: "system.example.update", title: "编辑示例模块", sort: 3 },
+  { key: "system.example.delete", title: "删除示例模块", sort: 4 },
+  { key: "system.example.batchDelete", title: "批量删除示例模块", sort: 5 },
+  { key: "system.example.export", title: "导出示例模块", sort: 6 },
+].map((rule) => ({
+  ...rule,
+  parentKey: "system.example",
+  type: "action",
+  status: 1,
+  hidden: false,
+  isSystem: true,
+}));

@@ -8,14 +8,18 @@ type ExampleRecord = {
   id: number;
   name: string;
   code: string;
+  remark?: string | null;
   status: number;
   sort: number;
+  deptId?: number | null;
+  ownerId?: number | null;
 };
 
 const columns: AdminDataTableColumn<ExampleRecord>[] = [
   { title: "ID", dataIndex: "id", width: 80, hideInForm: true, hideInSearch: true },
   { title: "名称", dataIndex: "name", required: true },
   { title: "编码", dataIndex: "code", required: true },
+  { title: "备注", dataIndex: "remark", valueType: "textarea", hideInSearch: true },
   { title: "状态", dataIndex: "status", valueType: "switch" },
   { title: "排序", dataIndex: "sort", valueType: "digit" },
 ];

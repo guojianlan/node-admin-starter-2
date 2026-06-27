@@ -13,8 +13,9 @@ import {
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Badge, Card, Col, List, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
+import { Alert, Badge, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
 import { request } from "@/lib/request";
+import { useNavigationAdapter } from "@/platform/navigation";
 
 type DashboardSummary = {
   metrics: {
@@ -33,6 +34,7 @@ type DashboardSummary = {
     action: string;
     username?: string | null;
     success: boolean;
+    riskLevel?: "high" | "critical";
     createdAt: string;
   }>;
   recentNotices: Array<{
@@ -56,6 +58,7 @@ function formatBytes(value: number) {
 }
 
 export function DashboardPage() {
+  const navigation = useNavigationAdapter();
   const summaryQuery = useQuery({
     queryKey: ["dashboard", "summary"],
     queryFn: () => request<DashboardSummary>("/api/system/dashboard/summary"),
@@ -66,6 +69,9 @@ export function DashboardPage() {
   return (
     <Spin spinning={summaryQuery.isLoading}>
       <div className="xin-dashboard">
+        {summaryQuery.isError ? (
+          <Alert type="error" showIcon message="系统状态加载失败" style={{ marginBottom: 16 }} />
+        ) : null}
         <Row gutter={[16, 16]}>
           <Col xs={24} md={12} xl={6}>
             <Card className="admin-card" variant="borderless">
@@ -95,7 +101,9 @@ export function DashboardPage() {
                   <span>默认存储</span>
                   {data?.defaultStorage ? (
                     <>
-                      <Tag>{data.defaultStorage.name}</Tag>
+                      <Tag style={{ cursor: "pointer" }} onClick={() => navigation.push("/system/storage")}>
+                        {data.defaultStorage.name}
+                      </Tag>
                       <Tag color={data.defaultStorage.status === 1 ? "success" : "error"}>
                         {data.defaultStorage.type}
                       </Tag>
@@ -109,7 +117,9 @@ export function DashboardPage() {
                   <span>默认邮件</span>
                   {data?.defaultMail ? (
                     <>
-                      <Tag>{data.defaultMail.name}</Tag>
+                      <Tag style={{ cursor: "pointer" }} onClick={() => navigation.push("/system/mail/account")}>
+                        {data.defaultMail.name}
+                      </Tag>
                       <Tag color={data.defaultMail.status === 1 ? "success" : "error"}>
                         {data.defaultMail.host}
                       </Tag>
@@ -121,7 +131,9 @@ export function DashboardPage() {
                 <Space>
                   <FileOutlined />
                   <span>文件</span>
-                  <Tag>{data?.metrics.fileCount ?? 0} 个</Tag>
+                  <Tag style={{ cursor: "pointer" }} onClick={() => navigation.push("/system/file")}>
+                    {data?.metrics.fileCount ?? 0} 个
+                  </Tag>
                   <Tag>{formatBytes(data?.metrics.fileBytes ?? 0)}</Tag>
                 </Space>
                 <Space>
@@ -135,17 +147,26 @@ export function DashboardPage() {
             </Card>
           </Col>
           <Col xs={24} lg={8}>
-            <Card className="admin-card" title="最近高风险/操作" variant="borderless">
+            <Card className="admin-card" title="最近高风险操作" variant="borderless">
               <List
                 size="small"
                 dataSource={data?.recentOperations ?? []}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无高风险操作" /> }}
                 renderItem={(item) => (
-                  <List.Item>
+                  <List.Item
+                    onClick={() =>
+                      navigation.push(
+                        `/system/operation/log?module=${encodeURIComponent(item.module)}&action=${encodeURIComponent(item.action)}`,
+                      )
+                    }
+                    style={{ cursor: "pointer" }}
+                  >
                     <List.Item.Meta
                       title={
                         <Space>
                           <Badge status={item.success ? "success" : "error"} />
                           <Typography.Text>{item.module}</Typography.Text>
+                          <Tag color={item.riskLevel === "critical" ? "red" : "orange"}>{item.riskLevel}</Tag>
                           <Tag>{item.action}</Tag>
                         </Space>
                       }
@@ -161,8 +182,9 @@ export function DashboardPage() {
               <List
                 size="small"
                 dataSource={data?.recentNotices ?? []}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无公告" /> }}
                 renderItem={(item) => (
-                  <List.Item>
+                  <List.Item onClick={() => navigation.push("/system/notice")} style={{ cursor: "pointer" }}>
                     <List.Item.Meta
                       avatar={<NotificationOutlined />}
                       title={

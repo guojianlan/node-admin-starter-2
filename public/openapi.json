@@ -1,0 +1,168 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Admin Base System API",
+    "version": "1.0.0",
+    "description": "Admin Base 后台框架系统模块 API。响应统一为 { success, msg, data }，分页统一为 { data, total, page, pageSize }。敏感字段只返回 hasPassword、hasSecretKey、hasClientSecret 等状态。"
+  },
+  "servers": [{ "url": "/api" }],
+  "security": [{ "bearerAuth": [] }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "msg": { "type": "string" },
+          "data": {}
+        },
+        "required": ["success", "msg"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "const": false },
+          "msg": { "type": "string" },
+          "data": {}
+        },
+        "required": ["success", "msg"]
+      },
+      "PageResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array", "items": {} },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" }
+        },
+        "required": ["data", "total", "page", "pageSize"]
+      },
+      "RiskLevel": {
+        "type": "string",
+        "enum": ["low", "medium", "high", "critical"]
+      },
+      "DangerousFileStrategy": {
+        "type": "string",
+        "enum": ["reject", "isolated-download", "force-download"]
+      }
+    },
+    "responses": {
+      "OK": { "description": "OK" },
+      "Unauthorized": { "description": "Unauthorized" },
+      "Forbidden": { "description": "Forbidden" },
+      "PasswordChangeRequired": { "description": "Password change required" }
+    }
+  },
+  "tags": [
+    { "name": "auth" },
+    { "name": "system" },
+    { "name": "settings" },
+    { "name": "oauth" },
+    { "name": "profile" },
+    { "name": "notice" },
+    { "name": "file" },
+    { "name": "audit" },
+    { "name": "dashboard" },
+    { "name": "doctor" }
+  ],
+  "paths": {
+    "/health": { "get": { "tags": ["doctor"], "summary": "Basic health check", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/ready": { "get": { "tags": ["doctor"], "summary": "Public readiness check", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/login/options": { "get": { "tags": ["auth"], "summary": "Login options, captcha policy, and public OAuth providers", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/login/captcha": { "get": { "tags": ["auth"], "summary": "Captcha SVG", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/login": { "post": { "tags": ["auth"], "summary": "Password login", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" }, "400": { "$ref": "#/components/responses/OK" } } } },
+    "/system/logout": { "post": { "tags": ["auth"], "summary": "Logout current token", "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/info": { "get": { "tags": ["auth"], "summary": "Current user, permissions, menus, data scope, and mustChangePassword", "responses": { "200": { "$ref": "#/components/responses/OK" }, "401": { "$ref": "#/components/responses/Unauthorized" } } } },
+    "/system/menu": { "get": { "tags": ["auth"], "summary": "Current user menu tree", "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/password-reset/request": { "post": { "tags": ["auth"], "summary": "Request password reset mail", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/system/password-reset/confirm": { "post": { "tags": ["auth"], "summary": "Confirm password reset", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+
+    "/system/user": { "get": { "tags": ["system"], "summary": "User page query" }, "post": { "tags": ["system"], "summary": "Create user" } },
+    "/system/user/{id}": { "put": { "tags": ["system"], "summary": "Update user" }, "delete": { "tags": ["system"], "summary": "Delete user" } },
+    "/system/user/password": { "put": { "tags": ["system"], "summary": "Admin reset user password" } },
+    "/system/role": { "get": { "tags": ["system"], "summary": "Role page query" }, "post": { "tags": ["system"], "summary": "Create role" } },
+    "/system/role/{id}": { "put": { "tags": ["system"], "summary": "Update role" }, "delete": { "tags": ["system"], "summary": "Delete role" } },
+    "/system/role/{id}/rules": { "get": { "tags": ["system"], "summary": "Role permissions" } },
+    "/system/role/rules": { "put": { "tags": ["system"], "summary": "Assign role permissions" } },
+    "/system/role/copy/{id}": { "post": { "tags": ["system"], "summary": "Copy role with optional permissions and data scope" } },
+    "/system/rule": { "get": { "tags": ["system"], "summary": "Rule page query" }, "post": { "tags": ["system"], "summary": "Create rule" } },
+    "/system/rule/status/{id}": { "put": { "tags": ["system"], "summary": "Toggle rule status" } },
+    "/system/rule/hidden/{id}": { "put": { "tags": ["system"], "summary": "Toggle rule visibility" } },
+    "/system/dept": { "get": { "tags": ["system"], "summary": "Department page query" }, "post": { "tags": ["system"], "summary": "Create department" } },
+    "/system/dict/list": { "get": { "tags": ["system"], "summary": "Dictionary group page query" }, "post": { "tags": ["system"], "summary": "Create dictionary group" } },
+    "/system/dict/item": { "get": { "tags": ["system"], "summary": "Dictionary item page query" }, "post": { "tags": ["system"], "summary": "Create dictionary item" } },
+    "/system/config/group": { "get": { "tags": ["settings"], "summary": "Config group page query" } },
+    "/system/config/items": { "get": { "tags": ["settings"], "summary": "Config item page query" }, "post": { "tags": ["settings"], "summary": "Create config item" } },
+    "/system/config/items/save": { "put": { "tags": ["settings"], "summary": "Save config item values" } },
+    "/system/settings/config/save": { "put": { "tags": ["settings"], "summary": "Save aggregated settings into sys_config_items" } },
+
+    "/system/storage": { "get": { "tags": ["settings"], "summary": "Storage resource page query" }, "post": { "tags": ["settings"], "summary": "Create storage resource" } },
+    "/system/storage/{id}": { "put": { "tags": ["settings"], "summary": "Update storage resource" }, "delete": { "tags": ["settings"], "summary": "Delete storage resource" } },
+    "/system/storage/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle storage status" } },
+    "/system/storage/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default storage" } },
+    "/system/storage/test": { "post": { "tags": ["settings"], "summary": "Test storage connection" } },
+    "/system/mail/account": { "get": { "tags": ["settings"], "summary": "Mail account page query" }, "post": { "tags": ["settings"], "summary": "Create mail account" } },
+    "/system/mail/account/{id}": { "put": { "tags": ["settings"], "summary": "Update mail account" }, "delete": { "tags": ["settings"], "summary": "Delete mail account" } },
+    "/system/mail/account/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle mail account status" } },
+    "/system/mail/account/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default mail account" } },
+    "/system/mail/account/test": { "post": { "tags": ["settings"], "summary": "Send test mail" } },
+
+    "/system/oauth/provider": { "get": { "tags": ["oauth"], "summary": "OAuth provider page query" }, "post": { "tags": ["oauth"], "summary": "Create OAuth provider" } },
+    "/system/oauth/provider/{id}": { "put": { "tags": ["oauth"], "summary": "Update OAuth provider" }, "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" } },
+    "/system/oauth/provider/status/{id}": { "put": { "tags": ["oauth"], "summary": "Toggle OAuth provider status" } },
+    "/system/oauth/provider/test": { "post": { "tags": ["oauth"], "summary": "Test OAuth provider configuration" } },
+    "/system/oauth/{provider}/redirect": { "get": { "tags": ["oauth"], "summary": "Start OAuth login", "security": [], "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "302": { "description": "Redirect" } } } },
+    "/system/oauth/{provider}/callback": { "get": { "tags": ["oauth"], "summary": "OAuth callback", "security": [], "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "302": { "description": "Redirect" } } } },
+
+    "/system/profile": { "get": { "tags": ["profile"], "summary": "Current profile" }, "put": { "tags": ["profile"], "summary": "Update current profile" } },
+    "/system/profile/password": { "put": { "tags": ["profile"], "summary": "Change current password" } },
+    "/system/profile/avatar": { "post": { "tags": ["profile"], "summary": "Upload avatar" } },
+    "/system/profile/login-records": { "get": { "tags": ["profile"], "summary": "My login records" } },
+    "/system/profile/oauth/accounts": { "get": { "tags": ["profile"], "summary": "My OAuth accounts" } },
+    "/system/profile/oauth/{provider}/bind": { "post": { "tags": ["profile"], "summary": "Bind OAuth account" } },
+    "/system/profile/oauth/{provider}/unbind": { "delete": { "tags": ["profile"], "summary": "Unbind OAuth account" } },
+
+    "/system/notice": { "get": { "tags": ["notice"], "summary": "Notice page query" }, "post": { "tags": ["notice"], "summary": "Create notice" } },
+    "/system/notice/{id}": { "put": { "tags": ["notice"], "summary": "Update notice" }, "delete": { "tags": ["notice"], "summary": "Delete notice" } },
+    "/system/notice/publish/{id}": { "put": { "tags": ["notice"], "summary": "Publish notice" } },
+    "/system/notice/revoke/{id}": { "put": { "tags": ["notice"], "summary": "Revoke notice" } },
+    "/system/notice/{id}/read-stats": { "get": { "tags": ["notice"], "summary": "Notice read stats" } },
+    "/system/notice/{id}/read-users": { "get": { "tags": ["notice"], "summary": "Notice read detail page query" } },
+    "/system/notice/my": { "get": { "tags": ["notice"], "summary": "My visible notices" } },
+    "/system/notice/my/unread-count": { "get": { "tags": ["notice"], "summary": "My unread notice count" } },
+    "/system/notice/my/{id}/read": { "post": { "tags": ["notice"], "summary": "Mark one notice read" } },
+    "/system/notice/my/read-all": { "post": { "tags": ["notice"], "summary": "Mark all visible notices read" } },
+
+    "/system/file/list/upload": { "post": { "tags": ["file"], "summary": "Normal upload with policy validation" } },
+    "/system/file/list/download/{id}": { "get": { "tags": ["file"], "summary": "Download file with safe headers" } },
+    "/system/file/list/preview/{id}": { "get": { "tags": ["file"], "summary": "Preview file when policy allows" } },
+    "/system/file/list/trash": { "get": { "tags": ["file"], "summary": "File trash page query" } },
+    "/system/file/list/rename/{id}": { "put": { "tags": ["file"], "summary": "Rename file" } },
+    "/system/file/list/move": { "put": { "tags": ["file"], "summary": "Move files" } },
+    "/system/file/list/copy": { "post": { "tags": ["file"], "summary": "Copy files" } },
+    "/system/file/list/clean-trash": { "delete": { "tags": ["file"], "summary": "Clean trash" } },
+    "/system/file/chunk/init": { "post": { "tags": ["file"], "summary": "Initialize chunk upload" } },
+    "/system/file/chunk/part": { "post": { "tags": ["file"], "summary": "Upload chunk part with optional sha256" } },
+    "/system/file/chunk/complete": { "post": { "tags": ["file"], "summary": "Complete chunk upload" } },
+    "/system/file/chunk/{uploadId}": { "delete": { "tags": ["file"], "summary": "Cancel chunk upload" } },
+    "/system/file/chunk/clean-expired": { "delete": { "tags": ["file"], "summary": "Clean expired chunk sessions" } },
+    "/system/file/reference": { "post": { "tags": ["file"], "summary": "Add file reference" }, "delete": { "tags": ["file"], "summary": "Remove file reference" } },
+    "/system/file/{id}/references": { "get": { "tags": ["file"], "summary": "List file references" } },
+
+    "/system/login/log": { "get": { "tags": ["audit"], "summary": "Login log page query" } },
+    "/system/login/log/clean": { "delete": { "tags": ["audit"], "summary": "Clean login logs" } },
+    "/system/online/user": { "get": { "tags": ["audit"], "summary": "Online user sessions" } },
+    "/system/online/user/{id}": { "delete": { "tags": ["audit"], "summary": "Force one token offline" } },
+    "/system/online/user/clean-expired": { "delete": { "tags": ["audit"], "summary": "Clean expired tokens" } },
+    "/system/operation/log": { "get": { "tags": ["audit"], "summary": "Operation log page query with riskLevel, requestId, ip, module, action, success, and time filters" } },
+    "/system/operation/log/stats": { "get": { "tags": ["audit"], "summary": "Operation log stats" } },
+    "/system/operation/log/export": { "get": { "tags": ["audit"], "summary": "Export operation logs as CSV using current filters" } },
+    "/system/operation/log/clean": { "delete": { "tags": ["audit"], "summary": "Clean operation logs by filters" } },
+
+    "/system/dashboard/summary": { "get": { "tags": ["dashboard"], "summary": "Dashboard system status summary" } },
+    "/system/doctor": { "get": { "tags": ["doctor"], "summary": "Authenticated production diagnostics" } }
+  }
+}

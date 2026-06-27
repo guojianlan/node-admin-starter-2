@@ -1,0 +1,31 @@
+CREATE TABLE IF NOT EXISTS sys_example (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  dept_id INTEGER REFERENCES sys_dept(id) ON DELETE SET NULL,
+  owner_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_example_code_uidx
+  ON sys_example(code)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS sys_example_status_idx
+  ON sys_example(status)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS sys_example_dept_id_idx
+  ON sys_example(dept_id)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS sys_example_owner_id_idx
+  ON sys_example(owner_id)
+  WHERE deleted_at IS NULL;

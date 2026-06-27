@@ -1,0 +1,60 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { setupTestApp, requestJson, resetTestDb, signInAsAdmin } from "../helpers";
+
+describe("system example module", () => {
+  beforeEach(async () => {
+    await resetTestDb();
+  });
+
+  it("requires permission for list access", async () => {
+    const app = await setupTestApp();
+    const response = await requestJson(app, "/api/system/example");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("supports create, query, update, and delete", async () => {
+    const app = await setupTestApp();
+    const token = await signInAsAdmin(app);
+
+    const created = await requestJson(app, "/api/system/example", {
+      method: "POST",
+      token,
+      body: { name: "示例", code: "demo", status: 1, sort: 1 },
+    });
+    expect(created.status).toBe(200);
+
+    const list = await requestJson(app, "/api/system/example?keyword=demo", { token });
+    expect(list.status).toBe(200);
+    expect(list.body.data.total).toBeGreaterThanOrEqual(1);
+
+    const id = list.body.data.data[0].id;
+    const updated = await requestJson(app, `/api/system/example/${id}`, {
+      method: "PUT",
+      token,
+      body: { name: "示例更新" },
+    });
+    expect(updated.status).toBe(200);
+
+    const deleted = await requestJson(app, `/api/system/example/${id}`, {
+      method: "DELETE",
+      token,
+    });
+    expect(deleted.status).toBe(200);
+  });
+
+  it("writes operation logs for high-risk writes", async () => {
+    const app = await setupTestApp();
+    const token = await signInAsAdmin(app);
+
+    await requestJson(app, "/api/system/example", {
+      method: "POST",
+      token,
+      body: { name: "审计示例", code: "audit-demo", status: 1, sort: 1 },
+    });
+
+    const logs = await requestJson(app, "/api/system/operation/log?module=system.example", { token });
+    expect(logs.status).toBe(200);
+    expect(logs.body.data.total).toBeGreaterThanOrEqual(1);
+  });
+});

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { sysExample } from "@/server/db/schema";
@@ -5,8 +6,11 @@ import { sysExample } from "@/server/db/schema";
 const exampleSchema = z.object({
   name: z.string().min(1),
   code: z.string().min(1),
+  remark: z.string().optional().nullable(),
   status: z.coerce.number().default(1),
   sort: z.coerce.number().default(0),
+  deptId: z.coerce.number().optional().nullable(),
+  ownerId: z.coerce.number().optional().nullable(),
 });
 
 export const exampleCrud = createCrudRoutes({
@@ -21,13 +25,30 @@ export const exampleCrud = createCrudRoutes({
       id: sysExample.id,
       name: sysExample.name,
       code: sysExample.code,
+      remark: sysExample.remark,
       status: sysExample.status,
       sort: sysExample.sort,
+      deptId: sysExample.deptId,
+      ownerId: sysExample.ownerId,
       createdAt: sysExample.createdAt,
     },
-    searchable: { name: "like", code: "like", status: "=" },
+    searchable: { name: "like", code: "like", status: "=", deptId: "=", ownerId: "=" },
     quickSearchFields: ["name", "code"],
     sortableFields: ["id", "sort", "createdAt"],
     defaultSort: { field: "sort", order: "asc" },
+  },
+  hooks: {
+    beforeList: async (ctx) => {
+      // Replace this with the shared data-scope helper when the module is department or owner scoped.
+      if (!ctx.userId) return sql`1 = 0`;
+      return undefined;
+    },
+    beforeUpdate: async (_ctx, _id, values) => {
+      // Protect is_system records here when key fields, status, or destructive flags are involved.
+      return values;
+    },
+    beforeDelete: async (_ctx, _id) => {
+      // Reject deletion for referenced records or is_system records here.
+    },
   },
 });
