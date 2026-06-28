@@ -44,7 +44,9 @@ import type { MenuProps } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import { useState } from "react";
+import { RichTextContent } from "@/components/rich-text/RichTextContent";
 import { request } from "@/lib/request";
+import { richTextToPlainText } from "@/lib/rich-text";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { useAuthStore } from "@/stores/auth";
 import { useAdminPreferences, type AdminLayoutMode } from "@/ui/preferences";
@@ -233,7 +235,7 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
                 ellipsis={{ rows: 2 }}
                 style={{ marginBottom: 0 }}
               >
-                {item.content}
+                {richTextToPlainText(item.content) || "图片内容"}
               </Typography.Paragraph>
             }
           />
@@ -449,15 +451,7 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
               {selectedNotice.title}
             </Typography.Title>
             <Divider style={{ margin: "12px 0" }} />
-            <Typography.Paragraph
-              style={{
-                marginBottom: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {selectedNotice.content}
-            </Typography.Paragraph>
+            <RichTextContent html={selectedNotice.content} />
           </div>
         ) : null}
       </Modal>

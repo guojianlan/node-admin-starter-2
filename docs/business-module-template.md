@@ -4,6 +4,32 @@ This guide is the delivery checklist for every new Admin Base backend module. A 
 
 Starter files live in [`templates/module-crud`](../templates/module-crud).
 
+## 80% CRUD Generator
+
+Use the project-local generator for ordinary CRUD modules before writing files by hand:
+
+```bash
+corepack pnpm generate:module -- --example > tmp/example.module.json
+corepack pnpm generate:module -- --config tmp/example.module.json
+```
+
+The generator is intentionally conservative. It renders a draft under
+`tmp/generated/modules/<module>` and leaves shared files for manual review:
+
+- `src/server/db/schema/index.ts`
+- `src/server/db/migrations.ts`
+- `src/server/db/seed/default-data.ts`
+- `src/router/route-manifest.ts`
+- `src/server/routes/system/index.ts`
+
+This keeps route IDs, permission grouping, migrations, and route registration explicit. After the
+draft is reviewed, copy the generated backend route, feature page, app route page, and test into the
+target paths, then apply the snippets in the generated README order.
+
+Secret fields need manual handling. Use `select: false` in the generator config so the field is not
+returned by the CRUD list, then add encryption, masking, and "configured" booleans in custom hooks or
+explicit routes.
+
 ## Required Pieces
 
 1. Schema: add the table to `src/server/db/schema` and export it from `src/server/db/schema/index.ts`.

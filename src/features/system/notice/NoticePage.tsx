@@ -16,6 +16,7 @@ import type { AdminDataTableColumn, FieldOption } from "@/components/admin-field
 import { AuthButton } from "@/components/auth-button/AuthButton";
 import { buildQueryString, request } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
+import { richTextToPlainText } from "@/lib/rich-text";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 
@@ -203,14 +204,18 @@ export function NoticePage() {
     {
       title: "内容",
       dataIndex: "content",
-      valueType: "textarea",
+      valueType: "richText",
       required: true,
       width: 320,
       ellipsis: true,
       fullWidth: true,
+      fieldProps: {
+        minHeight: 240,
+        placeholder: "请输入公告正文",
+      },
       render: (value) => (
         <Typography.Text type="secondary" ellipsis style={{ maxWidth: 300 }}>
-          {String(value)}
+          {richTextToPlainText(value) || "图片内容"}
         </Typography.Text>
       ),
     },

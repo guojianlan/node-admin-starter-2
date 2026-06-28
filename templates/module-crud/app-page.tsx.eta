@@ -1,0 +1,5 @@
+import { <%= module.componentName %> } from "<%= module.appPageImportPath %>";
+
+export default function <%= module.pageRouteName %>() {
+  return <<%= module.componentName %> />;
+}

@@ -14,7 +14,7 @@ const moduleRules = [
   {
     route: {
       id: 10,
-      parentId: 2,
+      parentId: 170,
       key: "system.user",
       name: "用户管理",
       path: "/system/user",
@@ -32,7 +32,7 @@ const moduleRules = [
   {
     route: {
       id: 20,
-      parentId: 2,
+      parentId: 170,
       key: "system.role",
       name: "角色管理",
       path: "/system/role",
@@ -52,12 +52,12 @@ const moduleRules = [
   {
     route: {
       id: 30,
-      parentId: 2,
+      parentId: 170,
       key: "system.rule",
       name: "菜单权限",
       path: "/system/rule",
       icon: "rule",
-      order: 30,
+      order: 40,
     },
     actions: [
       ["query", "查询菜单"],
@@ -71,12 +71,12 @@ const moduleRules = [
   {
     route: {
       id: 40,
-      parentId: 2,
+      parentId: 170,
       key: "system.dept",
       name: "部门管理",
       path: "/system/dept",
       icon: "dept",
-      order: 40,
+      order: 30,
     },
     actions: [
       ["query", "查询部门"],
@@ -88,12 +88,12 @@ const moduleRules = [
   {
     route: {
       id: 50,
-      parentId: 2,
+      parentId: 180,
       key: "system.dict",
       name: "字典管理",
       path: "/system/dict",
       icon: "dict",
-      order: 50,
+      order: 30,
     },
     actions: [
       ["query", "查询字典"],
@@ -105,12 +105,12 @@ const moduleRules = [
   {
     route: {
       id: 60,
-      parentId: 2,
+      parentId: 180,
       key: "system.config",
-      name: "系统配置",
+      name: "高级配置",
       path: "/system/config",
       icon: "config",
-      order: 60,
+      order: 20,
     },
     actions: [
       ["query", "查询配置"],
@@ -123,12 +123,12 @@ const moduleRules = [
   {
     route: {
       id: 150,
-      parentId: 2,
+      parentId: 180,
       key: "system.settings",
-      name: "系统设置",
+      name: "设置中心",
       path: "/system/settings",
       icon: "settings",
-      order: 65,
+      order: 10,
     },
     actions: [
       ["query", "查看系统设置"],
@@ -143,7 +143,7 @@ const moduleRules = [
       name: "文件管理",
       path: "/system/file",
       icon: "file",
-      order: 70,
+      order: 30,
     },
     actions: [
       ["query", "查询文件"],
@@ -155,12 +155,12 @@ const moduleRules = [
   {
     route: {
       id: 80,
-      parentId: 2,
+      parentId: 180,
       key: "system.storage",
       name: "存储配置",
       path: "/system/storage",
       icon: "storage",
-      order: 80,
+      order: 40,
     },
     actions: [
       ["query", "查询存储"],
@@ -175,12 +175,12 @@ const moduleRules = [
   {
     route: {
       id: 90,
-      parentId: 2,
+      parentId: 180,
       key: "system.mail",
       name: "邮件配置",
       path: "/system/mail/account",
       icon: "mail",
-      order: 90,
+      order: 50,
     },
     actions: [
       ["query", "查询邮件"],
@@ -195,12 +195,12 @@ const moduleRules = [
   {
     route: {
       id: 160,
-      parentId: 2,
+      parentId: 180,
       key: "system.oauthProvider",
       name: "第三方登录",
       path: "/system/oauth/provider",
       icon: "login",
-      order: 95,
+      order: 60,
     },
     actions: [
       ["query", "查询第三方登录"],
@@ -214,12 +214,12 @@ const moduleRules = [
   {
     route: {
       id: 100,
-      parentId: 2,
+      parentId: 190,
       key: "system.operationLog",
       name: "操作日志",
       path: "/system/operation/log",
       icon: "operationLog",
-      order: 100,
+      order: 10,
     },
     actions: [
       ["query", "查询操作日志"],
@@ -230,12 +230,12 @@ const moduleRules = [
   {
     route: {
       id: 110,
-      parentId: 2,
+      parentId: 190,
       key: "system.loginLog",
       name: "登录日志",
       path: "/system/login/log",
       icon: "loginLog",
-      order: 110,
+      order: 20,
     },
     actions: [
       ["query", "查询登录日志"],
@@ -246,12 +246,12 @@ const moduleRules = [
   {
     route: {
       id: 120,
-      parentId: 2,
+      parentId: 190,
       key: "system.onlineUser",
       name: "在线用户",
       path: "/system/online/user",
       icon: "onlineUser",
-      order: 120,
+      order: 30,
     },
     actions: [
       ["query", "查询在线用户"],
@@ -267,7 +267,7 @@ const moduleRules = [
       name: "通知公告",
       path: "/system/notice",
       icon: "notice",
-      order: 130,
+      order: 40,
     },
     actions: [
       ["query", "查询公告"],
@@ -335,6 +335,33 @@ export const seedRules: SeedRule[] = [
     name: "系统管理",
     icon: "system",
     order: 10,
+  },
+  {
+    id: 170,
+    parentId: 2,
+    type: "menu",
+    key: "system.access",
+    name: "权限与组织",
+    icon: "rule",
+    order: 10,
+  },
+  {
+    id: 180,
+    parentId: 2,
+    type: "menu",
+    key: "system.settingsGroup",
+    name: "系统设置",
+    icon: "settings",
+    order: 20,
+  },
+  {
+    id: 190,
+    parentId: 2,
+    type: "menu",
+    key: "system.audit",
+    name: "审计与会话",
+    icon: "operationLog",
+    order: 50,
   },
   {
     id: 140,

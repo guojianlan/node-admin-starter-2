@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS <%= module.table %> (
+<%= module.blocks.migrationColumns %>
+);
+
+<%= module.blocks.migrationIndexes %>

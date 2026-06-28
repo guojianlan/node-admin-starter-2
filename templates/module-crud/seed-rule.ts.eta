@@ -1,0 +1,14 @@
+{
+  route: {
+    id: <%= module.seedBaseId %>,
+    parentId: <%= module.parentId %>,
+    key: "<%= module.permission %>",
+    name: "<%= module.title %>",
+    path: "<%= module.frontendPath %>",
+    icon: "<%= module.icon %>",
+    order: <%= module.order %>,
+  },
+  actions: [
+<%= module.blocks.actionRules %>
+  ],
+},

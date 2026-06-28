@@ -192,29 +192,66 @@ export async function getUserMenus(userId: number) {
          FROM sys_rule
          WHERE type IN ('menu', 'route', 'nested') AND status = 1 AND deleted_at IS NULL
          ORDER BY "order" ASC, id ASC`
-      : `SELECT DISTINCT
-          sr.id,
-          sr.parent_id AS parentId,
-          sr.type,
-          sr.key,
-          sr.name,
-          sr.path,
-          sr.icon,
-          sr."order",
-          sr.status,
-          sr.hidden,
-          sr.link
-         FROM sys_rule sr
-         INNER JOIN sys_role_rule srr ON srr.rule_id = sr.id
-         INNER JOIN sys_user_role sur ON sur.role_id = srr.role_id
-         INNER JOIN sys_role role ON role.id = sur.role_id
-         WHERE sur.user_id = ?
-           AND role.status = 1
-           AND role.deleted_at IS NULL
-           AND sr.type IN ('menu', 'route', 'nested')
-           AND sr.status = 1
-           AND sr.deleted_at IS NULL
-         ORDER BY sr."order" ASC, sr.id ASC`;
+      : `WITH RECURSIVE menu_tree
+          (id, parentId, type, key, name, path, icon, sortOrder, status, hidden, link)
+         AS (
+          SELECT DISTINCT
+            sr.id,
+            sr.parent_id AS parentId,
+            sr.type,
+            sr.key,
+            sr.name,
+            sr.path,
+            sr.icon,
+            sr."order" AS sortOrder,
+            sr.status,
+            sr.hidden,
+            sr.link
+          FROM sys_rule sr
+          INNER JOIN sys_role_rule srr ON srr.rule_id = sr.id
+          INNER JOIN sys_user_role sur ON sur.role_id = srr.role_id
+          INNER JOIN sys_role role ON role.id = sur.role_id
+          WHERE sur.user_id = ?
+            AND role.status = 1
+            AND role.deleted_at IS NULL
+            AND sr.type IN ('menu', 'route', 'nested')
+            AND sr.status = 1
+            AND sr.deleted_at IS NULL
+
+          UNION
+
+          SELECT
+            parent.id,
+            parent.parent_id AS parentId,
+            parent.type,
+            parent.key,
+            parent.name,
+            parent.path,
+            parent.icon,
+            parent."order" AS sortOrder,
+            parent.status,
+            parent.hidden,
+            parent.link
+          FROM sys_rule parent
+          INNER JOIN menu_tree child ON child.parentId = parent.id
+          WHERE parent.type IN ('menu', 'route', 'nested')
+            AND parent.status = 1
+            AND parent.deleted_at IS NULL
+         )
+         SELECT DISTINCT
+          id,
+          parentId,
+          type,
+          key,
+          name,
+          path,
+          icon,
+          sortOrder AS "order",
+          status,
+          hidden,
+          link
+         FROM menu_tree
+         ORDER BY sortOrder ASC, id ASC`;
 
   const rows =
     userId === 1

@@ -9,6 +9,57 @@ import { runWithOperationLog } from "@/server/services/operation-log-service";
 
 export const settingsRoutes = new Hono<{ Variables: HonoVariables }>();
 
+settingsRoutes.get(
+  "/settings/config/items",
+  authRequired(),
+  ability("system.settings.query"),
+  async (c) => {
+    const searchParams = new URL(c.req.url).searchParams;
+    const query = z
+      .object({
+        page: z.coerce.number().int().positive().default(1),
+        pageSize: z.coerce.number().int().positive().max(500).default(300),
+      })
+      .parse(Object.fromEntries(searchParams));
+    const offset = (query.page - 1) * query.pageSize;
+    const rows = await sqlite
+      .prepare(
+        `SELECT
+          ci.id,
+          ci.group_id AS "groupId",
+          cg.name AS "groupName",
+          ci.key,
+          ci.title,
+          ci.describe,
+          ci.values,
+          ci.type,
+          ci.options_json AS "optionsJson",
+          ci.props_json AS "propsJson",
+          ci.sort,
+          ci.status,
+          ci.is_system AS "isSystem",
+          ci.created_at AS "createdAt"
+         FROM sys_config_items ci
+         LEFT JOIN sys_config_group cg ON cg.id = ci.group_id
+         WHERE ci.deleted_at IS NULL
+         ORDER BY ci.sort ASC, ci.id ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(query.pageSize, offset);
+    const totalRow = (await sqlite
+      .prepare("SELECT COUNT(*) AS total FROM sys_config_items WHERE deleted_at IS NULL")
+      .get()) as { total: number };
+    return c.json(
+      success({
+        data: rows,
+        page: query.page,
+        pageSize: query.pageSize,
+        total: Number(totalRow.total ?? 0),
+      }),
+    );
+  },
+);
+
 settingsRoutes.put(
   "/settings/config/save",
   authRequired(),

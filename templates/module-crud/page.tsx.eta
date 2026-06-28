@@ -1,0 +1,40 @@
+"use client";
+
+import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
+import type { AdminDataTableColumn } from "@/components/admin-fields/types";
+import { PageScaffold } from "@/ui/page/PageScaffold";
+
+type <%= module.pascalName %>Record = {
+  id: number;
+<%= module.blocks.recordFields %>
+<% if (module.includeSystemField) { %>
+  isSystem: boolean;
+<% } %>
+  createdAt: string;
+  updatedAt?: string;
+};
+
+<%= module.blocks.optionConstants %>
+
+const columns: AdminDataTableColumn<<%= module.pascalName %>Record>[] = [
+  { title: "ID", dataIndex: "id", width: 72, hideInForm: true, hideInSearch: true },
+<%= module.blocks.tableColumns %>
+];
+
+export function <%= module.componentName %>() {
+  return (
+    <PageScaffold title="<%= module.title %>"<% if (module.description) { %> description="<%= module.description %>"<% } %>>
+      <AdminDataTable
+        api="<%= module.apiPath %>"
+        accessName="<%= module.permission %>"
+        rowKey="id"
+        columns={columns}
+        createTitle="新增<%= module.title %>"
+        updateTitle="编辑<%= module.title %>"
+<% if (module.includeSystemField) { %>
+        canDelete={(record) => !record.isSystem}
+<% } %>
+      />
+    </PageScaffold>
+  );
+}

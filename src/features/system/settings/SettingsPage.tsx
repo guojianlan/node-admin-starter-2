@@ -30,9 +30,11 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { AuthButton } from "@/components/auth-button/AuthButton";
 import { buildQueryString, request } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { useNavigationAdapter } from "@/platform/navigation";
+import { useAuthStore } from "@/stores/auth";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 
@@ -289,9 +291,13 @@ function ConfigSectionForm({
 function ResourceSettings({
   mailItems,
   storageItems,
+  canQueryMail,
+  canQueryStorage,
 }: {
   mailItems: MailRecord[];
   storageItems: StorageRecord[];
+  canQueryMail: boolean;
+  canQueryStorage: boolean;
 }) {
   const navigation = useNavigationAdapter();
   const [testMailTo, setTestMailTo] = useState("");
@@ -329,9 +335,15 @@ function ResourceSettings({
               存储配置
             </Space>
           }
-          extra={<Button onClick={() => navigation.push("/system/storage")}>管理</Button>}
+          extra={
+            <AuthButton auth="system.storage.query">
+              <Button onClick={() => navigation.push("/system/storage")}>管理</Button>
+            </AuthButton>
+          }
         >
-          {defaultStorage ? (
+          {!canQueryStorage ? (
+            <Alert type="warning" showIcon message="当前角色没有存储配置查看权限" />
+          ) : defaultStorage ? (
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultStorage.name}</Typography.Text>
               <Space wrap>
@@ -341,13 +353,15 @@ function ResourceSettings({
                   {defaultStorage.status === 1 ? "启用" : "停用"}
                 </Tag>
               </Space>
-              <Button
-                icon={<ApiOutlined />}
-                loading={testStorageMutation.isPending}
-                onClick={() => testStorageMutation.mutate()}
-              >
-                测试默认存储
-              </Button>
+              <AuthButton auth="system.storage.test">
+                <Button
+                  icon={<ApiOutlined />}
+                  loading={testStorageMutation.isPending}
+                  onClick={() => testStorageMutation.mutate()}
+                >
+                  测试默认存储
+                </Button>
+              </AuthButton>
             </Space>
           ) : (
             <Alert type="warning" showIcon message="尚未配置默认存储" />
@@ -362,9 +376,15 @@ function ResourceSettings({
               邮件配置
             </Space>
           }
-          extra={<Button onClick={() => navigation.push("/system/mail/account")}>管理</Button>}
+          extra={
+            <AuthButton auth="system.mail.query">
+              <Button onClick={() => navigation.push("/system/mail/account")}>管理</Button>
+            </AuthButton>
+          }
         >
-          {defaultMail ? (
+          {!canQueryMail ? (
+            <Alert type="warning" showIcon message="当前角色没有邮件配置查看权限" />
+          ) : defaultMail ? (
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultMail.name}</Typography.Text>
               <Space wrap>
@@ -374,14 +394,16 @@ function ResourceSettings({
                   {defaultMail.status === 1 ? "启用" : "停用"}
                 </Tag>
               </Space>
-              <Input.Search
-                enterButton="发送测试"
-                placeholder="输入测试收件邮箱"
-                value={testMailTo}
-                loading={testMailMutation.isPending}
-                onChange={(event) => setTestMailTo(event.target.value)}
-                onSearch={() => testMailMutation.mutate()}
-              />
+              <AuthButton auth="system.mail.test">
+                <Input.Search
+                  enterButton="发送测试"
+                  placeholder="输入测试收件邮箱"
+                  value={testMailTo}
+                  loading={testMailMutation.isPending}
+                  onChange={(event) => setTestMailTo(event.target.value)}
+                  onSearch={() => testMailMutation.mutate()}
+                />
+              </AuthButton>
             </Space>
           ) : (
             <Alert type="warning" showIcon message="尚未配置默认邮件账号" />
@@ -393,9 +415,11 @@ function ResourceSettings({
 }
 
 function LoginMethods({
+  canQueryOAuth,
   oauthConfig,
   oauthProviders,
 }: {
+  canQueryOAuth: boolean;
   oauthConfig?: ConfigItem;
   oauthProviders: OAuthProviderRecord[];
 }) {
@@ -425,7 +449,9 @@ function LoginMethods({
         <div>
           <Typography.Text strong>第三方登录 Provider</Typography.Text>
           <div style={{ marginTop: 8 }}>
-            {providers.length ? (
+            {!canQueryOAuth ? (
+              <Alert type="warning" showIcon message="当前角色没有第三方登录配置查看权限" />
+            ) : providers.length ? (
               <Space wrap>
                 {providers.map((provider) => (
                   <Tag
@@ -446,7 +472,11 @@ function LoginMethods({
           showIcon
           type="success"
           message="OAuth Provider 已按资源型配置独立维护；系统设置只聚合入口，不直接暴露复杂 JSON。"
-          action={<Button onClick={() => navigation.push("/system/oauth/provider")}>管理 Provider</Button>}
+          action={
+            <AuthButton auth="system.oauthProvider.query">
+              <Button onClick={() => navigation.push("/system/oauth/provider")}>管理 Provider</Button>
+            </AuthButton>
+          }
         />
       </Space>
     </Card>
@@ -454,11 +484,15 @@ function LoginMethods({
 }
 
 export function SettingsPage() {
+  const hasAccess = useAuthStore((state) => state.hasAccess);
+  const canQueryStorage = hasAccess("system.storage.query");
+  const canQueryMail = hasAccess("system.mail.query");
+  const canQueryOAuth = hasAccess("system.oauthProvider.query");
   const configQuery = useQuery({
     queryKey: ["system-settings", "config"],
     queryFn: async () => {
       const page = await request<PageResult<ConfigItem>>(
-        `/api/system/config/items${buildQueryString({ page: 1, pageSize: 300 })}`,
+        `/api/system/settings/config/items${buildQueryString({ page: 1, pageSize: 300 })}`,
       );
       return page.data;
     },
@@ -471,6 +505,7 @@ export function SettingsPage() {
       );
       return page.data;
     },
+    enabled: canQueryStorage,
   });
   const mailQuery = useQuery({
     queryKey: ["system-settings", "mail"],
@@ -480,6 +515,7 @@ export function SettingsPage() {
       );
       return page.data;
     },
+    enabled: canQueryMail,
   });
   const oauthProviderQuery = useQuery({
     queryKey: ["system-settings", "oauth-provider"],
@@ -489,6 +525,7 @@ export function SettingsPage() {
       );
       return page.data;
     },
+    enabled: canQueryOAuth,
   });
 
   const itemsByKey = useMemo(() => {
@@ -496,9 +533,9 @@ export function SettingsPage() {
   }, [configQuery.data]);
   const loading =
     configQuery.isLoading ||
-    storageQuery.isLoading ||
-    mailQuery.isLoading ||
-    oauthProviderQuery.isLoading;
+    (canQueryStorage && storageQuery.isLoading) ||
+    (canQueryMail && mailQuery.isLoading) ||
+    (canQueryOAuth && oauthProviderQuery.isLoading);
 
   return (
     <PageScaffold title="系统设置" description="聚合基础参数、安全策略、登录策略、上传策略和资源配置">
@@ -531,6 +568,8 @@ export function SettingsPage() {
                 ),
                 children: (
                   <ResourceSettings
+                    canQueryMail={canQueryMail}
+                    canQueryStorage={canQueryStorage}
                     storageItems={storageQuery.data ?? []}
                     mailItems={mailQuery.data ?? []}
                   />
@@ -546,6 +585,7 @@ export function SettingsPage() {
                 ),
                 children: (
                   <LoginMethods
+                    canQueryOAuth={canQueryOAuth}
                     oauthConfig={itemsByKey.get("login.oauth_providers_json")}
                     oauthProviders={oauthProviderQuery.data ?? []}
                   />

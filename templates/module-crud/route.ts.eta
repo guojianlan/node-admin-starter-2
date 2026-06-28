@@ -1,0 +1,38 @@
+import { Hono } from "hono";
+import { z } from "zod";
+import type { HonoVariables } from "@/server/context";
+import { createCrudRoutes } from "@/server/crud/create-crud-routes";
+import { <%= module.schemaName %> } from "@/server/db/schema";
+
+const <%= module.camelName %>Schema = z.object({
+<%= module.blocks.zodFields %>
+});
+
+const <%= module.crudName %> = createCrudRoutes({
+  basePath: "<%= module.backendBasePath %>",
+  table: <%= module.schemaName %>,
+  idColumn: <%= module.schemaName %>.id,
+  createSchema: <%= module.camelName %>Schema,
+  updateSchema: <%= module.camelName %>Schema.partial(),
+  permissions: { prefix: "<%= module.permission %>" },
+  actions: <%= JSON.stringify(module.actions) %>,
+  list: {
+    select: {
+<%= module.blocks.listSelect %>
+    },
+<% if (module.searchableEntries.length) { %>
+    searchable: {
+<%= module.blocks.searchableEntries %>
+    },
+<% } %>
+<% if (module.quickSearchFields.length) { %>
+    quickSearchFields: <%= JSON.stringify(module.quickSearchFields) %>,
+<% } %>
+    sortableFields: <%= JSON.stringify(module.sortableFields) %>,
+    defaultSort: <%= JSON.stringify(module.defaultSort) %>,
+  },
+});
+
+export const <%= module.routeExportName %> = new Hono<{ Variables: HonoVariables }>();
+
+<%= module.routeExportName %>.route("/", <%= module.crudName %>.routes);

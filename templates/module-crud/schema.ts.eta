@@ -1,0 +1,11 @@
+export const <%= module.schemaName %> = pgTable(
+  "<%= module.table %>",
+  {
+    id: serial("id").primaryKey(),
+<%= module.blocks.schemaFields %>
+<%= module.blocks.schemaSpreads %>
+  },
+  (table) => [
+<%= module.blocks.schemaIndexes %>
+  ],
+);

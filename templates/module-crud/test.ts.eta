@@ -1,0 +1,56 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { requestJson, resetTestDb, setupTestApp, signInAsAdmin } from "../helpers";
+
+describe("<%= module.permission %> module", () => {
+  beforeEach(async () => {
+    await resetTestDb();
+  });
+
+  it("requires permission for list access", async () => {
+    const app = await setupTestApp();
+    const response = await requestJson(app, "<%= module.apiPath %>");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("supports create, query, update, and delete", async () => {
+    const app = await setupTestApp();
+    const token = await signInAsAdmin(app);
+
+    const created = await requestJson(app, "<%= module.apiPath %>", {
+      method: "POST",
+      token,
+      body: {
+<% for (const field of module.fields.filter((item) => item.required && item.name !== "id")) { %>
+        <%= field.name %>: <%= field.dbType === "integer" ? field.defaultValue ?? 1 : field.dbType === "boolean" ? field.defaultValue ?? true : JSON.stringify(`${field.label}测试`) %>,
+<% } %>
+      },
+    });
+    expect(created.status).toBe(200);
+
+    const list = await requestJson(app, "<%= module.apiPath %>?page=1&pageSize=10", { token });
+    expect(list.status).toBe(200);
+    expect(list.body.data.total).toBeGreaterThanOrEqual(1);
+
+    const id = list.body.data.data[0].id;
+    const updated = await requestJson(app, `<%= module.apiPath %>/${id}`, {
+      method: "PUT",
+      token,
+      body: {
+<% const firstText = module.fields.find((field) => field.dbType === "text" && field.required); %>
+<% if (firstText) { %>
+        <%= firstText.name %>: "更新<%= firstText.label %>",
+<% } else { %>
+        id,
+<% } %>
+      },
+    });
+    expect(updated.status).toBe(200);
+
+    const deleted = await requestJson(app, `<%= module.apiPath %>/${id}`, {
+      method: "DELETE",
+      token,
+    });
+    expect(deleted.status).toBe(200);
+  });
+});

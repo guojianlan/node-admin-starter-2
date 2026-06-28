@@ -1,0 +1,9 @@
+import { <%= module.componentName %> } from "<%= module.appPageImportPath %>";
+
+{
+  path: "<%= module.frontendPath %>",
+  key: "<%= module.permission %>",
+  title: "<%= module.title %>",
+  auth: "<%= module.permission %>.query",
+  component: <%= module.componentName %>,
+}

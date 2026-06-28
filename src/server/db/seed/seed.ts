@@ -133,6 +133,22 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, true, ?, ?)
      ON CONFLICT DO NOTHING`,
   );
+  const syncSeedRule = dbClient.prepare(
+    `UPDATE sys_rule
+     SET
+      parent_id = ?,
+      type = ?,
+      key = ?,
+      name = ?,
+      path = ?,
+      icon = ?,
+      "order" = ?,
+      hidden = ?,
+      link = 0,
+      is_system = true,
+      updated_at = ?
+     WHERE id = ?`,
+  );
 
   for (const rule of seedRules) {
     await insertRule.run(
@@ -148,6 +164,18 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
       now,
       now,
     );
+    await syncSeedRule.run(
+      rule.parentId,
+      rule.type,
+      rule.key,
+      rule.name,
+      rule.path ?? null,
+      rule.icon ?? null,
+      rule.order,
+      rule.hidden ?? 1,
+      now,
+      rule.id,
+    );
   }
   const seedRuleIds = seedRules.map((rule) => rule.id);
   await dbClient
@@ -162,6 +190,21 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
   for (const rule of seedRules) {
     await insertRoleRule.run(rule.id);
   }
+  await dbClient.exec(`
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT DISTINCT srr.role_id, child.parent_id
+FROM sys_role_rule srr
+INNER JOIN sys_rule child ON child.id = srr.rule_id
+WHERE child.parent_id IN (170, 180, 190)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT DISTINCT srr.role_id, 2
+FROM sys_role_rule srr
+INNER JOIN sys_rule rule ON rule.id = srr.rule_id
+WHERE rule.parent_id = 2 OR rule.id IN (170, 180, 190)
+ON CONFLICT DO NOTHING;
+`);
 
   const insertDict = dbClient.prepare(
     `INSERT INTO sys_dict

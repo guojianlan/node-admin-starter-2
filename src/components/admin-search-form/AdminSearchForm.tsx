@@ -17,7 +17,7 @@ type AdminSearchFormProps<T extends object> = {
 };
 
 function getSearchValueType(valueType?: FieldValueType) {
-  return valueType === "textarea" ? "text" : valueType;
+  return valueType === "textarea" || valueType === "richText" ? "text" : valueType;
 }
 
 function getSearchFieldProps(
@@ -27,13 +27,18 @@ function getSearchFieldProps(
 ) {
   const searchFieldProps = { ...fieldProps };
 
-  if (valueType === "textarea") {
+  if (valueType === "textarea" || valueType === "richText") {
     delete searchFieldProps.rows;
     delete searchFieldProps.autoSize;
   }
+  if (valueType === "richText") {
+    delete searchFieldProps.minHeight;
+    delete searchFieldProps.placeholder;
+  }
 
   return {
-    placeholder: valueType === "textarea" ? `请输入${title}关键词` : title,
+    placeholder:
+      valueType === "textarea" || valueType === "richText" ? `请输入${title}关键词` : title,
     ...searchFieldProps,
   };
 }

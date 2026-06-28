@@ -6,6 +6,7 @@ export type FieldValueType =
   | "text"
   | "password"
   | "textarea"
+  | "richText"
   | "digit"
   | "select"
   | "treeSelect"

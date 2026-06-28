@@ -1,0 +1,3 @@
+import { <%= module.routeExportName %> } from "./<%= module.routeFileName %>";
+
+systemRoutes.route("/", <%= module.routeExportName %>);

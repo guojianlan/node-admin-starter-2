@@ -1,0 +1,80 @@
+{
+  "name": "sms-config",
+  "title": "短信配置",
+  "description": "维护短信服务商、签名和模板参数",
+  "frontendPath": "/system/sms/config",
+  "parentId": 180,
+  "parentKey": "system.settingsGroup",
+  "icon": "message",
+  "order": 70,
+  "fields": [
+    {
+      "name": "name",
+      "label": "配置名称",
+      "type": "text",
+      "required": true,
+      "search": true,
+      "quickSearch": true
+    },
+    {
+      "name": "provider",
+      "label": "服务商",
+      "type": "select",
+      "required": true,
+      "search": true,
+      "options": [{ "label": "Webhook", "value": "webhook" }]
+    },
+    {
+      "name": "endpoint",
+      "label": "Endpoint",
+      "type": "text",
+      "search": true
+    },
+    {
+      "name": "accessKey",
+      "label": "Access Key",
+      "type": "text",
+      "table": false
+    },
+    {
+      "name": "secretKey",
+      "label": "Secret Key",
+      "type": "text",
+      "valueType": "password",
+      "table": false,
+      "select": false
+    },
+    {
+      "name": "signature",
+      "label": "短信签名",
+      "type": "text"
+    },
+    {
+      "name": "status",
+      "label": "状态",
+      "type": "integer",
+      "valueType": "select",
+      "required": true,
+      "default": 1,
+      "search": true,
+      "options": [
+        { "label": "启用", "value": 1 },
+        { "label": "停用", "value": 0 }
+      ]
+    },
+    {
+      "name": "sort",
+      "label": "排序",
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "sortable": true
+    },
+    {
+      "name": "remark",
+      "label": "备注",
+      "type": "textarea",
+      "table": false
+    }
+  ]
+}

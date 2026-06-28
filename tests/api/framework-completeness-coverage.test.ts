@@ -241,6 +241,28 @@ describe("framework completeness coverage", () => {
     expect(await visibleNoticeTitles(demo.token)).not.toContain("指定用户公告");
   });
 
+  it("sanitizes notice rich text content before saving", async () => {
+    const admin = await login();
+    const id = await createNotice(admin.token, {
+      title: "富文本清洗",
+      content:
+        '<h5>五级标题</h5><p><strong>正文</strong><script>alert(1)</script><a href="javascript:alert(1)">危险链接</a><img src="/uploads/demo.png" onerror="alert(1)" /></p>',
+      scope: "all",
+    });
+
+    const row = (await sqlite
+      .prepare("SELECT content FROM sys_notice WHERE id = ?")
+      .get(id)) as { content: string } | undefined;
+
+    expect(row?.content).toContain("<h5>五级标题</h5>");
+    expect(row?.content).toContain("<strong>正文</strong>");
+    expect(row?.content).toContain("危险链接");
+    expect(row?.content).toContain('src="/uploads/demo.png"');
+    expect(row?.content).not.toContain("<script");
+    expect(row?.content).not.toContain("javascript:");
+    expect(row?.content).not.toContain("onerror");
+  });
+
   it("handles OAuth provider redirects, callback failures and successful email binding", async () => {
     await sqlite
       .prepare(

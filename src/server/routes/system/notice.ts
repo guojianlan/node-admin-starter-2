@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { PageResult } from "@/lib/response";
+import { hasMeaningfulRichTextContent, sanitizeRichTextHtml } from "@/lib/rich-text";
 import type { HonoVariables } from "@/server/context";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { sqlite } from "@/server/db";
@@ -33,6 +34,10 @@ const noticeSchema = z.object({
 
 function normalizeNotice(values: z.infer<typeof noticeSchema>) {
   const { expiredAt, publishedAt, targetDeptIds, targetRoleIds, targetUserIds, ...rest } = values;
+  const content = sanitizeRichTextHtml(rest.content);
+  if (!hasMeaningfulRichTextContent(content)) {
+    throw new Error("请输入公告内容");
+  }
   const uniqueTargetUserIds = [...new Set(targetUserIds ?? [])];
   const uniqueTargetRoleIds = [...new Set(targetRoleIds ?? [])];
   const uniqueTargetDeptIds = [...new Set(targetDeptIds ?? [])];
@@ -47,6 +52,7 @@ function normalizeNotice(values: z.infer<typeof noticeSchema>) {
   }
   return {
     ...rest,
+    content,
     targetUserIdsJson:
       rest.scope === "users" ? JSON.stringify(uniqueTargetUserIds) : null,
     targetRoleIdsJson:
@@ -209,6 +215,10 @@ const noticeCrud = createCrudRoutes({
     beforeCreate: (_ctx, values) => normalizeNotice(values),
     beforeUpdate: (_ctx, _id, values) => {
       const { expiredAt, publishedAt, targetDeptIds, targetRoleIds, targetUserIds, ...rest } = values;
+      const content = values.content === undefined ? undefined : sanitizeRichTextHtml(values.content);
+      if (content !== undefined && !hasMeaningfulRichTextContent(content)) {
+        throw new Error("请输入公告内容");
+      }
       const uniqueTargetUserIds = [...new Set(targetUserIds ?? [])];
       const uniqueTargetRoleIds = [...new Set(targetRoleIds ?? [])];
       const uniqueTargetDeptIds = [...new Set(targetDeptIds ?? [])];
@@ -223,6 +233,7 @@ const noticeCrud = createCrudRoutes({
       }
       return {
         ...rest,
+        ...(content !== undefined ? { content } : {}),
         ...(values.scope !== undefined
           ? {
               targetUserIdsJson:

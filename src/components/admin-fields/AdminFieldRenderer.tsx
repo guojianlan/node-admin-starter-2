@@ -2,6 +2,7 @@
 
 import { DatePicker, Input, InputNumber, Radio, Select, Switch, TreeSelect } from "antd";
 import { AdminImageField } from "./AdminImageField";
+import { AdminRichTextField } from "./AdminRichTextField";
 import type { FieldOption, FieldValueType } from "./types";
 
 type AdminFieldRendererProps = {
@@ -31,6 +32,8 @@ export function AdminFieldRenderer({
       return <Input.Password {...mergedFieldProps} />;
     case "textarea":
       return <Input.TextArea rows={4} {...mergedFieldProps} />;
+    case "richText":
+      return <AdminRichTextField {...mergedFieldProps} />;
     case "digit":
       return <InputNumber style={{ width: "100%" }} {...mergedFieldProps} />;
     case "select":
