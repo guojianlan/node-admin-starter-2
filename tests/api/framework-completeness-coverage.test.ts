@@ -585,6 +585,79 @@ describe("framework completeness coverage", () => {
     });
   });
 
+  it("generates CRUD module drafts through the web module generator without editing source files", async () => {
+    const { token } = await login();
+    const generatedRoot = path.join(process.cwd(), "tmp/generated/modules/qa-note");
+    await fs.rm(generatedRoot, { recursive: true, force: true });
+    const manifestBefore = await fs.readFile(
+      path.join(process.cwd(), "src/router/route-manifest.ts"),
+      "utf8",
+    );
+
+    const example = await app.request("/api/system/module/generator/example", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const exampleBody = await readJson<Record<string, unknown>>(example);
+    expect(example.status).toBe(200);
+    expect(exampleBody.data?.name).toBe("sms-config");
+
+    const generate = await app.request("/api/system/module/generator/generate", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        force: true,
+        config: {
+          name: "qa-note",
+          title: "质检记录",
+          description: "验证 Web 端模块生成器",
+          frontendPath: "/system/qa/note",
+          parentId: 180,
+          parentKey: "system.settingsGroup",
+          seedBaseId: 900,
+          icon: "code",
+          fields: [
+            { name: "name", label: "名称", type: "text", required: true, search: true, quickSearch: true },
+            { name: "code", label: "编码", type: "text", required: true, unique: true, search: true },
+            { name: "status", label: "状态", type: "integer", valueType: "select", required: true, default: 1, search: true },
+            { name: "remark", label: "备注", type: "textarea", table: false },
+          ],
+        },
+      }),
+    });
+    const generateBody = await readJson<{
+      module: { permission: string; frontendPath: string };
+      outputRoot: string;
+      files: Array<{ path: string; content: string }>;
+    }>(generate);
+    expect(generate.status).toBe(200);
+    expect(generateBody.data?.module).toMatchObject({
+      permission: "system.qa.note",
+      frontendPath: "/system/qa/note",
+    });
+    expect(generateBody.data?.outputRoot).toBe("tmp/generated/modules/qa-note");
+    expect(generateBody.data?.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining([
+        "tmp/generated/modules/qa-note/README.md",
+        "tmp/generated/modules/qa-note/src/server/routes/system/qa-note.ts",
+        "tmp/generated/modules/qa-note/src/features/system/qa-note/QaNotePage.tsx",
+        "tmp/generated/modules/qa-note/tests/api/qa-note.test.ts",
+      ]),
+    );
+    expect(generateBody.data?.files.some((file) => file.content.includes("system.qa.note"))).toBe(true);
+
+    const manifestAfter = await fs.readFile(
+      path.join(process.cwd(), "src/router/route-manifest.ts"),
+      "utf8",
+    );
+    expect(manifestAfter).toBe(manifestBefore);
+    expect(await latestOperation("system.moduleGenerator", "generate")).toMatchObject({
+      success: true,
+      status: 200,
+    });
+
+    await fs.rm(generatedRoot, { recursive: true, force: true });
+  });
+
   it("rejects unsafe uploads and validates chunk upload failure paths and cleanup", async () => {
     const { token } = await login();
     await sqlite

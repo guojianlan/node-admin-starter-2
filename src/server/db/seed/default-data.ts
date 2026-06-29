@@ -233,6 +233,21 @@ const moduleRules = [
   },
   {
     route: {
+      id: 210,
+      parentId: 180,
+      key: "system.moduleGenerator",
+      name: "模块生成器",
+      path: "/system/module/generator",
+      icon: "code",
+      order: 90,
+    },
+    actions: [
+      ["query", "查看模块生成器"],
+      ["generate", "生成模块草稿"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 190,
       key: "system.operationLog",

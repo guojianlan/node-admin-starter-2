@@ -55,7 +55,7 @@ The backend framework can now support a long-running business project baseline:
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
 - File uploads enforce safety policy and support large upload sessions.
 - Dashboard is a system status center rather than demo metrics.
-- New business modules have a repeatable implementation template and route/permission checks.
+- New business modules have a repeatable implementation template, route/permission checks, CLI draft generator, and Web draft generator.
 
 ## Deferred Scope
 

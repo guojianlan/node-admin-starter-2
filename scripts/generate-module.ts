@@ -6,10 +6,11 @@ import { Eta } from "eta";
 import prettier from "prettier";
 import { z } from "zod";
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
+const scriptPath = fileURLToPath(import.meta.url);
+const scriptDir = dirname(scriptPath);
 const repoRoot = resolve(scriptDir, "..");
 const templateDir = join(repoRoot, "templates/module-crud");
-const defaultOutputRoot = join(repoRoot, "tmp/generated/modules");
+export const defaultOutputRoot = join(repoRoot, "tmp/generated/modules");
 
 const crudActions = [
   "query",
@@ -245,7 +246,7 @@ type TemplateTarget = {
 
 const eta = new Eta({ autoEscape: false, autoTrim: false, useWith: true });
 
-const exampleConfig = {
+export const exampleModuleConfig = {
   name: "sms-config",
   title: "短信配置",
   description: "维护短信服务商、签名和模板参数",
@@ -791,9 +792,8 @@ async function readJson(path: string) {
 }
 
 async function formatOutput(content: string, outputPath: string) {
-  const config = (await prettier.resolveConfig(repoRoot)) ?? {};
   try {
-    return await prettier.format(content, { ...config, filepath: outputPath });
+    return await prettier.format(content, { filepath: outputPath });
   } catch {
     return content.endsWith("\n") ? content : `${content}\n`;
   }
@@ -822,14 +822,13 @@ async function renderTarget(
   return outputPath;
 }
 
-async function generateModule(input: {
-  configPath: string;
-  outDir: string;
-  force: boolean;
+export async function generateModuleDraft(input: {
+  rawConfig: unknown;
+  outDir?: string;
+  force?: boolean;
 }) {
-  const rawConfig = await readJson(input.configPath);
-  const moduleDraft = await normalizeModule(rawConfig);
-  const moduleOutputRoot = join(resolve(input.outDir), moduleDraft.kebabName);
+  const moduleDraft = await normalizeModule(input.rawConfig);
+  const moduleOutputRoot = join(resolve(input.outDir ?? defaultOutputRoot), moduleDraft.kebabName);
   if (await pathExists(moduleOutputRoot)) {
     if (!input.force) {
       throw new Error(`output already exists: ${moduleOutputRoot}. Re-run with --force to replace it.`);
@@ -843,10 +842,37 @@ async function generateModule(input: {
     written.push(await renderTarget(moduleDraft, target, moduleOutputRoot));
   }
 
+  return {
+    module: {
+      name: moduleDraft.name,
+      title: moduleDraft.title,
+      kebabName: moduleDraft.kebabName,
+      schemaName: moduleDraft.schemaName,
+      permission: moduleDraft.permission,
+      frontendPath: moduleDraft.frontendPath,
+      apiPath: moduleDraft.apiPath,
+    },
+    outputRoot: moduleOutputRoot,
+    files: written,
+  };
+}
+
+async function generateModule(input: {
+  configPath: string;
+  outDir: string;
+  force: boolean;
+}) {
+  const rawConfig = await readJson(input.configPath);
+  const result = await generateModuleDraft({
+    rawConfig,
+    outDir: input.outDir,
+    force: input.force,
+  });
+
   console.log(
-    `Generated ${moduleDraft.title} module draft at ${relative(repoRoot, moduleOutputRoot)}`,
+    `Generated ${result.module.title} module draft at ${relative(repoRoot, result.outputRoot)}`,
   );
-  for (const file of written) {
+  for (const file of result.files) {
     console.log(`- ${relative(repoRoot, file)}`);
   }
 }
@@ -871,7 +897,7 @@ async function main() {
   }
 
   if (values.example) {
-    console.log(JSON.stringify(exampleConfig, null, 2));
+    console.log(JSON.stringify(exampleModuleConfig, null, 2));
     return;
   }
 
@@ -893,4 +919,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
+  await main();
+}

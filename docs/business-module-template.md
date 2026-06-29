@@ -13,6 +13,8 @@ corepack pnpm generate:module -- --example > tmp/example.module.json
 corepack pnpm generate:module -- --config tmp/example.module.json
 ```
 
+The same draft-generation flow is available in the admin UI at `/system/module/generator`. The Web page opens a generation window, writes the draft to `tmp/generated/modules/<module>`, and previews the generated files. Production environments reject generation requests.
+
 The generator is intentionally conservative. It renders a draft under
 `tmp/generated/modules/<module>` and leaves shared files for manual review:
 

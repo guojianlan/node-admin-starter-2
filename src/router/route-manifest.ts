@@ -7,6 +7,7 @@ import { DictPage } from "@/features/system/dict/DictPage";
 import { FilePage } from "@/features/system/file/FilePage";
 import { LoginLogPage } from "@/features/system/login-log/LoginLogPage";
 import { MailAccountPage } from "@/features/system/mail/MailAccountPage";
+import { ModuleGeneratorPage } from "@/features/system/module-generator/ModuleGeneratorPage";
 import { NoticePage } from "@/features/system/notice/NoticePage";
 import { OnlineUserPage } from "@/features/system/online-user/OnlineUserPage";
 import { OperationLogPage } from "@/features/system/operation-log/OperationLogPage";
@@ -147,6 +148,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "短信配置",
     auth: "system.smsProvider.query",
     component: SmsProviderPage,
+  },
+  {
+    path: "/system/module/generator",
+    key: "system.moduleGenerator",
+    title: "模块生成器",
+    auth: "system.moduleGenerator.query",
+    component: ModuleGeneratorPage,
   },
   {
     path: "/system/notice",

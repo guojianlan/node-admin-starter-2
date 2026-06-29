@@ -114,6 +114,8 @@
     "/system/sms/provider/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle SMS provider status" } },
     "/system/sms/provider/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default SMS provider" } },
     "/system/sms/provider/test": { "post": { "tags": ["settings"], "summary": "Send test SMS through webhook provider" } },
+    "/system/module/generator/example": { "get": { "tags": ["system"], "summary": "Get CRUD module generator example config" } },
+    "/system/module/generator/generate": { "post": { "tags": ["system"], "summary": "Generate reviewable CRUD module draft under tmp/generated/modules" } },
 
     "/system/oauth/provider": { "get": { "tags": ["oauth"], "summary": "OAuth provider page query" }, "post": { "tags": ["oauth"], "summary": "Create OAuth provider" } },
     "/system/oauth/provider/{id}": { "put": { "tags": ["oauth"], "summary": "Update OAuth provider" }, "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" } },

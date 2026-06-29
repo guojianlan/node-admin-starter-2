@@ -91,6 +91,7 @@ CRUD write actions must declare `permissions.prefix`, apply `is_system` protecti
 | Dict | `/api/system/dict/list`, `/api/system/dict/item` | Dictionary groups and items |
 | Config | `/api/system/config/group`, `/api/system/config/items` | Raw config item maintenance |
 | Notice | `/api/system/notice` | Notice CRUD, publish, revoke, read analytics |
+| Module Generator | `/api/system/module/generator/*` | Development-only CRUD module draft generation |
 
 ## Settings
 
@@ -275,3 +276,21 @@ Doctor checks include environment, database, migration, admin user, admin role, 
 - Explicit side-effect routes must use `ability("<permission>")`.
 - `pnpm admin:check-routes` fails when route manifest, seed rules, API ability codes, or CRUD permissions diverge.
 - Role, user-role, and data-scope changes revoke affected token snapshots so stale permissions cannot continue indefinitely.
+
+## Module Generator
+
+The module generator is exposed as a Web development tool and keeps the same conservative boundary as the CLI generator.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/system/module/generator/example` | Return the example CRUD generator config |
+| POST | `/api/system/module/generator/generate` | Generate a reviewable module draft under `tmp/generated/modules` |
+
+Generation is rejected in production. The API does not edit real source files such as schema exports, migrations, seed rules, route manifest, or route registration. It returns generated file paths and bounded text previews so developers can review the draft from the admin UI before copying snippets into the real codebase.
+
+Required permissions:
+
+```text
+system.moduleGenerator.query
+system.moduleGenerator.generate
+```
