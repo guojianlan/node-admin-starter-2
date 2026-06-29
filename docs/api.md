@@ -284,13 +284,21 @@ The module generator is exposed as a Web development tool and keeps the same con
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/system/module/generator/example` | Return the example CRUD generator config |
-| POST | `/api/system/module/generator/generate` | Generate a reviewable module draft under `tmp/generated/modules` |
+| GET | `/api/system/module/generator/drafts` | List generated modules and whether each is draft or published |
+| POST | `/api/system/module/generator/generate` | Generate a reviewable module draft under `generated/module-drafts` |
+| POST | `/api/system/module/generator/publish` | Publish a draft module into real project integration points |
 
-Generation is rejected in production. The API does not edit real source files such as schema exports, migrations, seed rules, route manifest, or route registration. It returns generated file paths and bounded text previews so developers can review the draft from the admin UI before copying snippets into the real codebase.
+Generation and publish are rejected in production. Generate writes to `generated/module-drafts` and does not go live. Publish applies the reviewed draft to real source files and should be followed by `typecheck`, `lint`, `test`, `admin:check-routes`, and `build`.
+
+Automatic publish currently supports `domain: "system"` only. For a CMS configuration CRUD page, use
+`domain: "system"`, `frontendPath: "/system/cms/config"`, and
+`backendBasePath: "/cms/config"`; the resulting API is `/api/system/cms/config`. Publishing real
+`/api/cms/*` modules requires adding a CMS backend domain mount first.
 
 Required permissions:
 
 ```text
 system.moduleGenerator.query
 system.moduleGenerator.generate
+system.moduleGenerator.publish
 ```

@@ -115,7 +115,9 @@
     "/system/sms/provider/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default SMS provider" } },
     "/system/sms/provider/test": { "post": { "tags": ["settings"], "summary": "Send test SMS through webhook provider" } },
     "/system/module/generator/example": { "get": { "tags": ["system"], "summary": "Get CRUD module generator example config" } },
-    "/system/module/generator/generate": { "post": { "tags": ["system"], "summary": "Generate reviewable CRUD module draft under tmp/generated/modules" } },
+    "/system/module/generator/drafts": { "get": { "tags": ["system"], "summary": "List generated module drafts and publish status" } },
+    "/system/module/generator/generate": { "post": { "tags": ["system"], "summary": "Generate reviewable CRUD module draft under generated/module-drafts" } },
+    "/system/module/generator/publish": { "post": { "tags": ["system"], "summary": "Publish a generated module draft into project source" } },
 
     "/system/oauth/provider": { "get": { "tags": ["oauth"], "summary": "OAuth provider page query" }, "post": { "tags": ["oauth"], "summary": "Create OAuth provider" } },
     "/system/oauth/provider/{id}": { "put": { "tags": ["oauth"], "summary": "Update OAuth provider" }, "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" } },

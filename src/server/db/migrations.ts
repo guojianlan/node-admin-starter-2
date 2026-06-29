@@ -1028,12 +1028,13 @@ INSERT INTO sys_rule
   (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
 VALUES
   (211, 210, 'action', 'system.moduleGenerator.query', '查看模块生成器', 1, 1, 0, 0, true, now(), now()),
-  (212, 210, 'action', 'system.moduleGenerator.generate', '生成模块草稿', 2, 1, 0, 0, true, now(), now())
+  (212, 210, 'action', 'system.moduleGenerator.generate', '生成模块草稿', 2, 1, 0, 0, true, now(), now()),
+  (213, 210, 'action', 'system.moduleGenerator.publish', '发布模块', 3, 1, 0, 0, true, now(), now())
 ON CONFLICT DO NOTHING;
 
 INSERT INTO sys_role_rule (role_id, rule_id)
 SELECT 1, rules.rule_id
-FROM (VALUES (210), (211), (212)) AS rules(rule_id)
+FROM (VALUES (210), (211), (212), (213)) AS rules(rule_id)
 WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
   AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
 ON CONFLICT DO NOTHING;

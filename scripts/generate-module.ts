@@ -277,7 +277,7 @@ Usage:
 
 Options:
   -c, --config <path>   JSON module config.
-      --out-dir <path> Output root. Default: tmp/generated/modules.
+      --out-dir <path> Output root. Default: tmp/generated/modules for CLI, generated/module-drafts in the Web UI.
       --force          Remove the existing generated module directory first.
       --example        Print an example JSON config.
   -h, --help           Show this help.

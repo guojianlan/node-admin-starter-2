@@ -9,9 +9,26 @@ corepack pnpm generate:module -- --example > tmp/sms-config.module.json
 corepack pnpm generate:module -- --config tmp/sms-config.module.json
 ```
 
-The generator writes a reviewable draft under `tmp/generated/modules/<module>`. It does not edit
-`src/server/db/schema/index.ts`, migrations, seed rules, or the route manifest automatically.
-Apply the generated snippets after review.
+The CLI generator writes a reviewable draft under `tmp/generated/modules/<module>` by default. The
+Web generator at `/system/module/generator` writes to `generated/module-drafts/<module>` and keeps
+the module offline until you publish it from the UI.
+
+Publishing a Web draft applies generated files and snippets into the real project source after
+review. The current automatic publish path only supports `domain: "system"` because the app mounts
+system routes today. For a CMS configuration CRUD module, use a system-admin route such as:
+
+```json
+{
+  "name": "cms-config",
+  "title": "CMS 配置",
+  "domain": "system",
+  "frontendPath": "/system/cms/config",
+  "backendBasePath": "/cms/config"
+}
+```
+
+That publishes `/system/cms/config` and `/api/system/cms/config`. A real `/api/cms/*` domain needs a
+separate backend domain mount before it can be published automatically.
 
 For secret fields, set `select: false` in the config and add encryption/masking hooks by hand.
 The generator deliberately does not implement module-specific secret handling.

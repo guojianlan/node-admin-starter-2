@@ -13,10 +13,10 @@ corepack pnpm generate:module -- --example > tmp/example.module.json
 corepack pnpm generate:module -- --config tmp/example.module.json
 ```
 
-The same draft-generation flow is available in the admin UI at `/system/module/generator`. The Web page opens a generation window, writes the draft to `tmp/generated/modules/<module>`, and previews the generated files. Production environments reject generation requests.
+The same draft-generation flow is available in the admin UI at `/system/module/generator`. The Web page opens a generation window, writes the draft to `generated/module-drafts/<module>`, previews generated files, and tracks whether the module is still a draft or has been published. Production environments reject generation and publish requests.
 
 The generator is intentionally conservative. It renders a draft under
-`tmp/generated/modules/<module>` and leaves shared files for manual review:
+`generated/module-drafts/<module>`. When you click publish in the Web UI, the framework applies the generated schema snippet, migration block, seed rule, route manifest entry, route registration, feature page, App Router page, backend route, and test file to the real project. Review the generated files before publishing:
 
 - `src/server/db/schema/index.ts`
 - `src/server/db/migrations.ts`
@@ -24,9 +24,32 @@ The generator is intentionally conservative. It renders a draft under
 - `src/router/route-manifest.ts`
 - `src/server/routes/system/index.ts`
 
-This keeps route IDs, permission grouping, migrations, and route registration explicit. After the
-draft is reviewed, copy the generated backend route, feature page, app route page, and test into the
-target paths, then apply the snippets in the generated README order.
+Automatic publish currently supports `domain: "system"` only. This matches the mounted backend route
+tree (`/api/system/*`) and avoids generating unreachable business-domain APIs. For example, a CMS
+configuration CRUD module should be generated as a system-admin page:
+
+```json
+{
+  "name": "cms-config",
+  "title": "CMS 配置",
+  "description": "维护 CMS 业务配置",
+  "domain": "system",
+  "frontendPath": "/system/cms/config",
+  "backendBasePath": "/cms/config",
+  "parentId": 180,
+  "parentKey": "system.settingsGroup",
+  "fields": [
+    { "name": "name", "label": "名称", "type": "text", "required": true, "search": true },
+    { "name": "code", "label": "编码", "type": "text", "required": true, "unique": true, "search": true },
+    { "name": "value", "label": "配置值", "type": "textarea", "required": true },
+    { "name": "status", "label": "状态", "type": "integer", "valueType": "select", "required": true, "default": 1 }
+  ]
+}
+```
+
+This produces `/system/cms/config` and `/api/system/cms/config`. A future real CMS backend domain such
+as `/api/cms/*` needs a domain mount contract first, then the generator can safely publish
+`domain: "cms"` modules.
 
 Secret fields need manual handling. Use `select: false` in the generator config so the field is not
 returned by the CRUD list, then add encryption, masking, and "configured" booleans in custom hooks or

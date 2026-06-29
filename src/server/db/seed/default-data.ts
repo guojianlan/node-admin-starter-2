@@ -244,6 +244,7 @@ const moduleRules = [
     actions: [
       ["query", "查看模块生成器"],
       ["generate", "生成模块草稿"],
+      ["publish", "发布模块"],
     ],
   },
   {

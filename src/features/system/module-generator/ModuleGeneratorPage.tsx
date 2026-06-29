@@ -1,8 +1,8 @@
 "use client";
 
-import { CodeOutlined, FileTextOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Drawer, Input, List, Modal, Space, Switch, Tag, Typography } from "antd";
+import { CodeOutlined, FileTextOutlined, RocketOutlined, ReloadOutlined } from "@ant-design/icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, Button, Card, Drawer, Input, List, Modal, Space, Switch, Table, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { request } from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
@@ -25,7 +25,19 @@ type GenerateResult = {
     apiPath: string;
   };
   outputRoot: string;
+  drafts?: ModuleDraft[];
   files: GeneratedFile[];
+};
+
+type ModuleDraft = {
+  name: string;
+  title?: string;
+  domain?: string;
+  permission?: string;
+  frontendPath?: string;
+  apiPath?: string;
+  outputRoot: string;
+  status: "draft" | "published";
 };
 
 function prettyJson(value: unknown) {
@@ -33,6 +45,7 @@ function prettyJson(value: unknown) {
 }
 
 export function ModuleGeneratorPage() {
+  const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [force, setForce] = useState(true);
@@ -43,6 +56,10 @@ export function ModuleGeneratorPage() {
   const exampleQuery = useQuery({
     queryKey: ["module-generator", "example"],
     queryFn: () => request<Record<string, unknown>>("/api/system/module/generator/example"),
+  });
+  const draftsQuery = useQuery({
+    queryKey: ["module-generator", "drafts"],
+    queryFn: () => request<ModuleDraft[]>("/api/system/module/generator/drafts"),
   });
 
   const generateMutation = useMutation({
@@ -55,7 +72,19 @@ export function ModuleGeneratorPage() {
       setResult(data);
       setSelectedPath(data.files[0]?.path ?? null);
       setPreviewOpen(true);
+      void queryClient.invalidateQueries({ queryKey: ["module-generator", "drafts"] });
       feedback.success("模块草稿已生成");
+    },
+  });
+  const publishMutation = useMutation({
+    mutationFn: (name: string) =>
+      request("/api/system/module/generator/publish", {
+        method: "POST",
+        body: { name },
+      }),
+    onSuccess: () => {
+      feedback.success("模块已发布，请重新执行验证并重启开发服务确认路由");
+      void queryClient.invalidateQueries({ queryKey: ["module-generator", "drafts"] });
     },
   });
 
@@ -70,8 +99,14 @@ export function ModuleGeneratorPage() {
         <Alert
           showIcon
           type="warning"
-          message="生成器只生成可审查草稿，不直接改共享源码"
-          description="输出目录固定在 tmp/generated/modules。schema、migration、seed rule、route manifest 和路由注册仍需要人工审查后应用。生产环境会拒绝生成。"
+          message="生成器先生成可审查草稿，发布后才会上线"
+          description="生成阶段输出到 generated/module-drafts，不会注册页面或 API；点击发布后才会写入 schema、migration、seed rule、route manifest 和路由注册。生产环境会拒绝生成和发布。"
+        />
+        <Alert
+          showIcon
+          type="info"
+          message="CMS 配置 CRUD 的当前写法"
+          description='现阶段自动发布只支持 domain="system"。例如 CMS 配置可使用 frontendPath="/system/cms/config"、backendBasePath="/cms/config"，上线后接口为 /api/system/cms/config。真正 /api/cms/* 需要先增加业务域后端挂载。'
         />
         <Card className="admin-card" variant="borderless">
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -110,15 +145,79 @@ export function ModuleGeneratorPage() {
                   <Tag>{result.outputRoot}</Tag>
                 </Space>
                 <Typography.Text type="secondary">
-                  已生成 {result.files.length} 个文件。复制生成目录中的业务文件前，请先按 README 顺序审查 snippets。
+                  已生成 {result.files.length} 个草稿文件。确认后可在模块状态表点击发布。
                 </Typography.Text>
               </Space>
             ) : (
               <Typography.Text type="secondary">
-                适合普通 CRUD 模块；涉及密钥、默认实例、连接测试、文件物理操作、发布流程等模块仍应手写显式 route/service。
+                适合普通 CRUD 模块；涉及密钥、默认实例、连接测试、文件物理操作、发布流程等模块仍应在生成草稿后手写显式 route/service。
               </Typography.Text>
             )}
           </Space>
+        </Card>
+        <Card className="admin-card" title="模块状态" variant="borderless">
+          <Table<ModuleDraft>
+            rowKey="name"
+            size="small"
+            loading={draftsQuery.isLoading}
+            dataSource={draftsQuery.data ?? []}
+            pagination={false}
+            columns={[
+              {
+                title: "模块",
+                dataIndex: "title",
+                render: (value, record) => (
+                  <Space>
+                    <Typography.Text strong>{value || record.name}</Typography.Text>
+                    <Tag>{record.name}</Tag>
+                  </Space>
+                ),
+              },
+              { title: "域", dataIndex: "domain", width: 100 },
+              { title: "草稿目录", dataIndex: "outputRoot", ellipsis: true },
+              { title: "权限", dataIndex: "permission" },
+              { title: "前端路由", dataIndex: "frontendPath" },
+              {
+                title: "状态",
+                dataIndex: "status",
+                width: 100,
+                render: (value) => (
+                  <Tag color={value === "published" ? "success" : "warning"}>
+                    {value === "published" ? "已上线" : "草稿"}
+                  </Tag>
+                ),
+              },
+              {
+                title: "操作",
+                width: 120,
+                render: (_, record) =>
+                  record.status === "published" ? (
+                    <Typography.Text type="secondary">已发布</Typography.Text>
+                  ) : (
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<RocketOutlined />}
+                      loading={publishMutation.isPending && publishMutation.variables === record.name}
+                      disabled={publishMutation.isPending && publishMutation.variables !== record.name}
+                      onClick={() => {
+                        Modal.confirm({
+                          title: `发布 ${record.title || record.name}`,
+                          content:
+                            "发布会把该草稿写入真实项目源码，包括 schema、migration、seed rule、route manifest、路由注册、页面、后端 route 和测试文件。发布前请确认草稿内容已经审查。",
+                          okText: "发布",
+                          cancelText: "取消",
+                          okButtonProps: { danger: true },
+                          onOk: () => publishMutation.mutateAsync(record.name),
+                        });
+                      }}
+                    >
+                      发布
+                    </Button>
+                  ),
+              },
+            ]}
+          />
         </Card>
       </Space>
 
@@ -165,7 +264,7 @@ export function ModuleGeneratorPage() {
               showIcon
               type="success"
               message={`已生成到 ${result.outputRoot}`}
-              description="生成器没有修改真实业务源码。请从生成目录复制文件或 snippets，并重新执行 typecheck、lint、test、admin:check-routes。"
+              description="当前仍是草稿状态；点击发布后会写入真实项目集成点。发布后请重新执行 typecheck、lint、test、admin:check-routes。"
             />
             <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
               <List

@@ -585,14 +585,25 @@ describe("framework completeness coverage", () => {
     });
   });
 
-  it("generates CRUD module drafts through the web module generator without editing source files", async () => {
+  it("generates CRUD module drafts and publishes them into project source when requested", async () => {
     const { token } = await login();
-    const generatedRoot = path.join(process.cwd(), "tmp/generated/modules/qa-note");
+    const generatedRoot = path.join(process.cwd(), "generated/module-drafts/qa-note");
+    const integrationFiles = [
+      "src/server/db/schema/index.ts",
+      "src/server/db/migrations.ts",
+      "src/server/db/seed/default-data.ts",
+      "src/server/routes/system/index.ts",
+      "src/router/route-manifest.ts",
+    ].map((item) => path.join(process.cwd(), item));
+    const generatedSourceFiles = [
+      "src/server/routes/system/qa-note.ts",
+      "src/features/system/qa-note/QaNotePage.tsx",
+      "src/app/(admin)/system/qa/note/page.tsx",
+      "tests/api/qa-note.test.ts",
+    ].map((item) => path.join(process.cwd(), item));
+    const backups = new Map<string, string>();
+    for (const file of integrationFiles) backups.set(file, await fs.readFile(file, "utf8"));
     await fs.rm(generatedRoot, { recursive: true, force: true });
-    const manifestBefore = await fs.readFile(
-      path.join(process.cwd(), "src/router/route-manifest.ts"),
-      "utf8",
-    );
 
     const example = await app.request("/api/system/module/generator/example", {
       headers: { authorization: `Bearer ${token}` },
@@ -601,61 +612,93 @@ describe("framework completeness coverage", () => {
     expect(example.status).toBe(200);
     expect(exampleBody.data?.name).toBe("sms-config");
 
-    const generate = await app.request("/api/system/module/generator/generate", {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({
-        force: true,
-        config: {
-          name: "qa-note",
-          title: "质检记录",
-          description: "验证 Web 端模块生成器",
-          frontendPath: "/system/qa/note",
-          parentId: 180,
-          parentKey: "system.settingsGroup",
-          seedBaseId: 900,
-          icon: "code",
-          fields: [
-            { name: "name", label: "名称", type: "text", required: true, search: true, quickSearch: true },
-            { name: "code", label: "编码", type: "text", required: true, unique: true, search: true },
-            { name: "status", label: "状态", type: "integer", valueType: "select", required: true, default: 1, search: true },
-            { name: "remark", label: "备注", type: "textarea", table: false },
-          ],
-        },
-      }),
-    });
-    const generateBody = await readJson<{
-      module: { permission: string; frontendPath: string };
-      outputRoot: string;
-      files: Array<{ path: string; content: string }>;
-    }>(generate);
-    expect(generate.status).toBe(200);
-    expect(generateBody.data?.module).toMatchObject({
-      permission: "system.qa.note",
-      frontendPath: "/system/qa/note",
-    });
-    expect(generateBody.data?.outputRoot).toBe("tmp/generated/modules/qa-note");
-    expect(generateBody.data?.files.map((file) => file.path)).toEqual(
-      expect.arrayContaining([
-        "tmp/generated/modules/qa-note/README.md",
-        "tmp/generated/modules/qa-note/src/server/routes/system/qa-note.ts",
-        "tmp/generated/modules/qa-note/src/features/system/qa-note/QaNotePage.tsx",
-        "tmp/generated/modules/qa-note/tests/api/qa-note.test.ts",
-      ]),
-    );
-    expect(generateBody.data?.files.some((file) => file.content.includes("system.qa.note"))).toBe(true);
+    try {
+      const generate = await app.request("/api/system/module/generator/generate", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          force: true,
+          config: {
+            name: "qa-note",
+            title: "质检记录",
+            description: "验证 Web 端模块生成器",
+            frontendPath: "/system/qa/note",
+            parentId: 180,
+            parentKey: "system.settingsGroup",
+            seedBaseId: 900,
+            icon: "code",
+            fields: [
+              { name: "name", label: "名称", type: "text", required: true, search: true, quickSearch: true },
+              { name: "code", label: "编码", type: "text", required: true, unique: true, search: true },
+              { name: "status", label: "状态", type: "integer", valueType: "select", required: true, default: 1, search: true },
+              { name: "remark", label: "备注", type: "textarea", table: false },
+            ],
+          },
+        }),
+      });
+      const generateBody = await readJson<{
+        module: { permission: string; frontendPath: string };
+        outputRoot: string;
+        files: Array<{ path: string; content: string }>;
+      }>(generate);
+      expect(generate.status).toBe(200);
+      expect(generateBody.data?.module).toMatchObject({
+        permission: "system.qa.note",
+        frontendPath: "/system/qa/note",
+      });
+      expect(generateBody.data?.outputRoot).toBe("generated/module-drafts/qa-note");
+      expect(generateBody.data?.files.map((file) => file.path)).toEqual(
+        expect.arrayContaining([
+          "generated/module-drafts/qa-note/README.md",
+          "generated/module-drafts/qa-note/src/server/routes/system/qa-note.ts",
+          "generated/module-drafts/qa-note/src/features/system/qa-note/QaNotePage.tsx",
+          "generated/module-drafts/qa-note/tests/api/qa-note.test.ts",
+        ]),
+      );
 
-    const manifestAfter = await fs.readFile(
-      path.join(process.cwd(), "src/router/route-manifest.ts"),
-      "utf8",
-    );
-    expect(manifestAfter).toBe(manifestBefore);
-    expect(await latestOperation("system.moduleGenerator", "generate")).toMatchObject({
-      success: true,
-      status: 200,
-    });
+      const drafts = await app.request("/api/system/module/generator/drafts", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const draftsBody = await readJson<Array<{ name: string; status: string }>>(drafts);
+      expect(draftsBody.data).toContainEqual(expect.objectContaining({ name: "qa-note", status: "draft" }));
 
-    await fs.rm(generatedRoot, { recursive: true, force: true });
+      const publish = await app.request("/api/system/module/generator/publish", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "qa-note" }),
+      });
+      expect(publish.status).toBe(200);
+      expect(await fs.readFile(path.join(process.cwd(), "src/router/route-manifest.ts"), "utf8")).toContain(
+        'key: "system.qa.note"',
+      );
+      expect(await fs.readFile(path.join(process.cwd(), "src/server/db/schema/index.ts"), "utf8")).toContain(
+        "export const sysQaNote",
+      );
+      expect(await fs.readFile(path.join(process.cwd(), "src/server/routes/system/index.ts"), "utf8")).toContain(
+        "qaNoteRoutes",
+      );
+      for (const file of generatedSourceFiles) {
+        expect(await fs.stat(file)).toBeTruthy();
+      }
+
+      const draftsAfterPublish = await app.request("/api/system/module/generator/drafts", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const draftsAfterPublishBody = await readJson<Array<{ name: string; status: string }>>(draftsAfterPublish);
+      expect(draftsAfterPublishBody.data).toContainEqual(
+        expect.objectContaining({ name: "qa-note", status: "published" }),
+      );
+      expect(await latestOperation("system.moduleGenerator", "publish")).toMatchObject({
+        success: true,
+        status: 200,
+      });
+    } finally {
+      for (const [file, content] of backups) await fs.writeFile(file, content);
+      for (const file of generatedSourceFiles) await fs.rm(file, { force: true });
+      await fs.rm(path.join(process.cwd(), "src/app/(admin)/system/qa"), { recursive: true, force: true });
+      await fs.rm(path.join(process.cwd(), "src/features/system/qa-note"), { recursive: true, force: true });
+      await fs.rm(generatedRoot, { recursive: true, force: true });
+    }
   });
 
   it("rejects unsafe uploads and validates chunk upload failure paths and cleanup", async () => {
