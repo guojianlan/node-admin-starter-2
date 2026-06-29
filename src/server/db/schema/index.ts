@@ -715,3 +715,84 @@ export const sysSmsProvider = pgTable(
     index("sys_sms_provider_status_sort_idx").on(table.status, table.sort),
   ],
 );
+
+export const sysAiProvider = pgTable(
+  "sys_ai_provider",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    providerType: text("provider_type").notNull().default("openai-compatible"),
+    baseUrl: text("base_url"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    organization: text("organization"),
+    project: text("project"),
+    isDefault: boolean("is_default").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    optionsJson: text("options_json"),
+    remark: text("remark"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_provider_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("sys_ai_provider_default_active_unique")
+      .on(table.isDefault)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
+    index("sys_ai_provider_type_status_idx").on(table.providerType, table.status),
+    index("sys_ai_provider_status_sort_idx").on(table.status, table.sort),
+  ],
+);
+
+export const sysAiModel = pgTable(
+  "sys_ai_model",
+  {
+    id: serial("id").primaryKey(),
+    providerId: integer("provider_id")
+      .notNull()
+      .references(() => sysAiProvider.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    modelId: text("model_id").notNull(),
+    modelType: text("model_type", { enum: ["chat", "embedding", "image", "rerank"] })
+      .notNull()
+      .default("chat"),
+    capabilitiesJson: text("capabilities_json"),
+    contextWindow: integer("context_window"),
+    maxOutputTokens: integer("max_output_tokens"),
+    inputPrice: text("input_price"),
+    outputPrice: text("output_price"),
+    currency: text("currency").notNull().default("USD"),
+    isDefaultChat: boolean("is_default_chat").notNull().default(false),
+    isDefaultStructured: boolean("is_default_structured").notNull().default(false),
+    isDefaultEmbedding: boolean("is_default_embedding").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    remark: text("remark"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_model_provider_model_active_unique")
+      .on(table.providerId, table.modelId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("sys_ai_model_default_chat_active_unique")
+      .on(table.isDefaultChat)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefaultChat} = true`),
+    uniqueIndex("sys_ai_model_default_structured_active_unique")
+      .on(table.isDefaultStructured)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefaultStructured} = true`),
+    uniqueIndex("sys_ai_model_default_embedding_active_unique")
+      .on(table.isDefaultEmbedding)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefaultEmbedding} = true`),
+    index("sys_ai_model_provider_id_idx").on(table.providerId),
+    index("sys_ai_model_type_status_idx").on(table.modelType, table.status),
+    index("sys_ai_model_status_sort_idx").on(table.status, table.sort),
+  ],
+);

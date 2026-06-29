@@ -1040,6 +1040,139 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0020_ai_provider_resource",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_provider (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  provider_type TEXT NOT NULL DEFAULT 'openai-compatible',
+  base_url TEXT,
+  api_key_encrypted TEXT,
+  organization TEXT,
+  project TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  options_json TEXT,
+  remark TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_provider_code_active_unique
+  ON sys_ai_provider(code)
+  WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_provider_default_active_unique
+  ON sys_ai_provider(is_default)
+  WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_ai_provider_type_status_idx
+  ON sys_ai_provider(provider_type, status);
+CREATE INDEX IF NOT EXISTS sys_ai_provider_status_sort_idx
+  ON sys_ai_provider(status, sort);
+
+CREATE TABLE IF NOT EXISTS sys_ai_model (
+  id SERIAL PRIMARY KEY,
+  provider_id INTEGER NOT NULL REFERENCES sys_ai_provider(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  model_type TEXT NOT NULL DEFAULT 'chat',
+  capabilities_json TEXT,
+  context_window INTEGER,
+  max_output_tokens INTEGER,
+  input_price TEXT,
+  output_price TEXT,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  is_default_chat BOOLEAN NOT NULL DEFAULT false,
+  is_default_structured BOOLEAN NOT NULL DEFAULT false,
+  is_default_embedding BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  remark TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_model_provider_model_active_unique
+  ON sys_ai_model(provider_id, model_id)
+  WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_model_default_chat_active_unique
+  ON sys_ai_model(is_default_chat)
+  WHERE deleted_at IS NULL AND is_default_chat = true;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_model_default_structured_active_unique
+  ON sys_ai_model(is_default_structured)
+  WHERE deleted_at IS NULL AND is_default_structured = true;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_model_default_embedding_active_unique
+  ON sys_ai_model(is_default_embedding)
+  WHERE deleted_at IS NULL AND is_default_embedding = true;
+CREATE INDEX IF NOT EXISTS sys_ai_model_provider_id_idx
+  ON sys_ai_model(provider_id);
+CREATE INDEX IF NOT EXISTS sys_ai_model_type_status_idx
+  ON sys_ai_model(model_type, status);
+CREATE INDEX IF NOT EXISTS sys_ai_model_status_sort_idx
+  ON sys_ai_model(status, sort);
+
+INSERT INTO sys_ai_provider
+  (id, name, code, provider_type, base_url, is_default, status, sort, remark, is_system, created_at, updated_at)
+VALUES
+  (1, 'OpenAI Compatible', 'openai-compatible', 'openai-compatible', 'https://api.openai.com/v1', false, 0, 1, '内置模板：配置 API Key 并启用后可作为业务默认 AI Provider', true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_ai_model
+  (id, provider_id, name, model_id, model_type, capabilities_json, context_window, max_output_tokens, status, sort, remark, is_system, created_at, updated_at)
+VALUES
+  (1, 1, 'GPT-4.1 Mini', 'gpt-4.1-mini', 'chat', '{"chat":true,"structured":true,"toolCalling":true}', 1047576, 32768, 0, 1, '内置 Chat/Structured 模型模板', true, now(), now()),
+  (2, 1, 'Text Embedding 3 Small', 'text-embedding-3-small', 'embedding', '{"embedding":true}', 8191, NULL, 0, 2, '内置 Embedding 模型模板', true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (230, 180, 'route', 'system.aiProvider', 'AI Provider', '/system/ai/provider', 'api', 80, 1, 1, 0, true, now(), now()),
+  (240, 180, 'route', 'system.aiModel', 'AI 模型', '/system/ai/model', 'api', 81, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (231, 230, 'action', 'system.aiProvider.query', '查询 AI Provider', 1, 1, 0, 0, true, now(), now()),
+  (232, 230, 'action', 'system.aiProvider.create', '新增 AI Provider', 2, 1, 0, 0, true, now(), now()),
+  (233, 230, 'action', 'system.aiProvider.update', '编辑 AI Provider', 3, 1, 0, 0, true, now(), now()),
+  (234, 230, 'action', 'system.aiProvider.delete', '删除 AI Provider', 4, 1, 0, 0, true, now(), now()),
+  (235, 230, 'action', 'system.aiProvider.status', '启停 AI Provider', 5, 1, 0, 0, true, now(), now()),
+  (236, 230, 'action', 'system.aiProvider.setDefault', '设为默认 AI Provider', 6, 1, 0, 0, true, now(), now()),
+  (237, 230, 'action', 'system.aiProvider.test', '测试 AI Provider', 7, 1, 0, 0, true, now(), now()),
+  (241, 240, 'action', 'system.aiModel.query', '查询 AI 模型', 1, 1, 0, 0, true, now(), now()),
+  (242, 240, 'action', 'system.aiModel.create', '新增 AI 模型', 2, 1, 0, 0, true, now(), now()),
+  (243, 240, 'action', 'system.aiModel.update', '编辑 AI 模型', 3, 1, 0, 0, true, now(), now()),
+  (244, 240, 'action', 'system.aiModel.delete', '删除 AI 模型', 4, 1, 0, 0, true, now(), now()),
+  (245, 240, 'action', 'system.aiModel.status', '启停 AI 模型', 5, 1, 0, 0, true, now(), now()),
+  (246, 240, 'action', 'system.aiModel.setDefault', '设为默认 AI 模型', 6, 1, 0, 0, true, now(), now()),
+  (247, 240, 'action', 'system.aiModel.test', '测试 AI 模型', 7, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES
+  (230), (231), (232), (233), (234), (235), (236), (237),
+  (240), (241), (242), (243), (244), (245), (246), (247)
+) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

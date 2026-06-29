@@ -249,6 +249,46 @@ const moduleRules = [
   },
   {
     route: {
+      id: 230,
+      parentId: 180,
+      key: "system.aiProvider",
+      name: "AI Provider",
+      path: "/system/ai/provider",
+      icon: "api",
+      order: 80,
+    },
+    actions: [
+      ["query", "查询 AI Provider"],
+      ["create", "新增 AI Provider"],
+      ["update", "编辑 AI Provider"],
+      ["delete", "删除 AI Provider"],
+      ["status", "启停 AI Provider"],
+      ["setDefault", "设为默认 AI Provider"],
+      ["test", "测试 AI Provider"],
+    ],
+  },
+  {
+    route: {
+      id: 240,
+      parentId: 180,
+      key: "system.aiModel",
+      name: "AI 模型",
+      path: "/system/ai/model",
+      icon: "api",
+      order: 81,
+    },
+    actions: [
+      ["query", "查询 AI 模型"],
+      ["create", "新增 AI 模型"],
+      ["update", "编辑 AI 模型"],
+      ["delete", "删除 AI 模型"],
+      ["status", "启停 AI 模型"],
+      ["setDefault", "设为默认 AI 模型"],
+      ["test", "测试 AI 模型"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 190,
       key: "system.operationLog",

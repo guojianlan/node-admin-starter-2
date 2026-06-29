@@ -1,5 +1,7 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { AiModelPage } from "@/features/system/ai-model/AiModelPage";
+import { AiProviderPage } from "@/features/system/ai-provider/AiProviderPage";
 import { ConfigPage } from "@/features/system/config/ConfigPage";
 import { DictItemPage } from "@/features/system/dict/DictItemPage";
 import { DeptPage } from "@/features/system/dept/DeptPage";
@@ -148,6 +150,20 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "短信配置",
     auth: "system.smsProvider.query",
     component: SmsProviderPage,
+  },
+  {
+    path: "/system/ai/provider",
+    key: "system.aiProvider",
+    title: "AI Provider",
+    auth: "system.aiProvider.query",
+    component: AiProviderPage,
+  },
+  {
+    path: "/system/ai/model",
+    key: "system.aiModel",
+    title: "AI 模型",
+    auth: "system.aiModel.query",
+    component: AiModelPage,
   },
   {
     path: "/system/module/generator",

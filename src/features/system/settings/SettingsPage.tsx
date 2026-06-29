@@ -76,6 +76,29 @@ type SmsProviderRecord = {
   status: number;
 };
 
+type AiProviderRecord = {
+  id: number;
+  name: string;
+  code: string;
+  providerType: string;
+  isDefault: boolean;
+  status: number;
+  hasApiKey?: boolean;
+};
+
+type AiModelRecord = {
+  id: number;
+  providerId: number;
+  providerName?: string;
+  name: string;
+  modelId: string;
+  modelType: string;
+  isDefaultChat: boolean;
+  isDefaultStructured: boolean;
+  isDefaultEmbedding: boolean;
+  status: number;
+};
+
 type OAuthProviderConfig = {
   key?: string;
   name?: string;
@@ -299,16 +322,24 @@ function ConfigSectionForm({
 }
 
 function ResourceSettings({
+  aiModels,
+  aiProviders,
   mailItems,
   smsItems,
   storageItems,
+  canQueryAiModel,
+  canQueryAiProvider,
   canQueryMail,
   canQuerySms,
   canQueryStorage,
 }: {
+  aiModels: AiModelRecord[];
+  aiProviders: AiProviderRecord[];
   mailItems: MailRecord[];
   smsItems: SmsProviderRecord[];
   storageItems: StorageRecord[];
+  canQueryAiModel: boolean;
+  canQueryAiProvider: boolean;
   canQueryMail: boolean;
   canQuerySms: boolean;
   canQueryStorage: boolean;
@@ -319,6 +350,10 @@ function ResourceSettings({
   const defaultStorage = storageItems.find((item) => item.isDefault);
   const defaultMail = mailItems.find((item) => item.isDefault);
   const defaultSms = smsItems.find((item) => item.isDefault);
+  const defaultAiProvider = aiProviders.find((item) => item.isDefault);
+  const defaultChatModel = aiModels.find((item) => item.isDefaultChat);
+  const defaultStructuredModel = aiModels.find((item) => item.isDefaultStructured);
+  const defaultEmbeddingModel = aiModels.find((item) => item.isDefaultEmbedding);
   const testStorageMutation = useMutation({
     mutationFn: () =>
       request("/api/system/storage/test", {
@@ -351,6 +386,14 @@ function ResourceSettings({
         },
       }),
     onSuccess: () => feedback.success("测试短信已发送"),
+  });
+  const testAiMutation = useMutation({
+    mutationFn: () =>
+      request("/api/system/ai/provider/test", {
+        method: "POST",
+        body: { id: defaultAiProvider?.id },
+      }),
+    onSuccess: () => feedback.success("默认 AI Provider 连接正常"),
   });
 
   return (
@@ -480,6 +523,68 @@ function ResourceSettings({
           )}
         </Card>
       </Col>
+      <Col xs={24} lg={8}>
+        <Card
+          title={
+            <Space>
+              <ApiOutlined />
+              AI 配置
+            </Space>
+          }
+          extra={
+            <Space>
+              <AuthButton auth="system.aiProvider.query">
+                <Button onClick={() => navigation.push("/system/ai/provider")}>Provider</Button>
+              </AuthButton>
+              <AuthButton auth="system.aiModel.query">
+                <Button onClick={() => navigation.push("/system/ai/model")}>模型</Button>
+              </AuthButton>
+            </Space>
+          }
+        >
+          {!canQueryAiProvider ? (
+            <Alert type="warning" showIcon message="当前角色没有 AI Provider 查看权限" />
+          ) : defaultAiProvider ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <Typography.Text strong>{defaultAiProvider.name}</Typography.Text>
+              <Space wrap>
+                <Tag color="blue">{defaultAiProvider.code}</Tag>
+                <Tag>{defaultAiProvider.providerType}</Tag>
+                <Tag color={defaultAiProvider.status === 1 ? "success" : "error"}>
+                  {defaultAiProvider.status === 1 ? "启用" : "停用"}
+                </Tag>
+                <Tag color={defaultAiProvider.hasApiKey ? "success" : "default"}>
+                  {defaultAiProvider.hasApiKey ? "Key 已配置" : "Key 未配置"}
+                </Tag>
+              </Space>
+              {canQueryAiModel ? (
+                <Space wrap size={6}>
+                  <Tag color={defaultChatModel ? "gold" : "default"}>
+                    Chat: {defaultChatModel?.modelId ?? "未设置"}
+                  </Tag>
+                  <Tag color={defaultStructuredModel ? "purple" : "default"}>
+                    结构化: {defaultStructuredModel?.modelId ?? "未设置"}
+                  </Tag>
+                  <Tag color={defaultEmbeddingModel ? "cyan" : "default"}>
+                    Embedding: {defaultEmbeddingModel?.modelId ?? "未设置"}
+                  </Tag>
+                </Space>
+              ) : null}
+              <AuthButton auth="system.aiProvider.test">
+                <Button
+                  icon={<ApiOutlined />}
+                  loading={testAiMutation.isPending}
+                  onClick={() => testAiMutation.mutate()}
+                >
+                  测试默认 Provider
+                </Button>
+              </AuthButton>
+            </Space>
+          ) : (
+            <Alert type="warning" showIcon message="尚未配置默认 AI Provider" />
+          )}
+        </Card>
+      </Col>
     </Row>
   );
 }
@@ -558,6 +663,8 @@ export function SettingsPage() {
   const canQueryStorage = hasAccess("system.storage.query");
   const canQueryMail = hasAccess("system.mail.query");
   const canQuerySms = hasAccess("system.smsProvider.query");
+  const canQueryAiProvider = hasAccess("system.aiProvider.query");
+  const canQueryAiModel = hasAccess("system.aiModel.query");
   const canQueryOAuth = hasAccess("system.oauthProvider.query");
   const configQuery = useQuery({
     queryKey: ["system-settings", "config"],
@@ -608,6 +715,26 @@ export function SettingsPage() {
     },
     enabled: canQuerySms,
   });
+  const aiProviderQuery = useQuery({
+    queryKey: ["system-settings", "ai-provider"],
+    queryFn: async () => {
+      const page = await request<PageResult<AiProviderRecord>>(
+        `/api/system/ai/provider${buildQueryString({ page: 1, pageSize: 100 })}`,
+      );
+      return page.data;
+    },
+    enabled: canQueryAiProvider,
+  });
+  const aiModelQuery = useQuery({
+    queryKey: ["system-settings", "ai-model"],
+    queryFn: async () => {
+      const page = await request<PageResult<AiModelRecord>>(
+        `/api/system/ai/model${buildQueryString({ page: 1, pageSize: 100 })}`,
+      );
+      return page.data;
+    },
+    enabled: canQueryAiModel,
+  });
 
   const itemsByKey = useMemo(() => {
     return new Map((configQuery.data ?? []).map((item) => [item.key, item]));
@@ -617,6 +744,8 @@ export function SettingsPage() {
     (canQueryStorage && storageQuery.isLoading) ||
     (canQueryMail && mailQuery.isLoading) ||
     (canQuerySms && smsProviderQuery.isLoading) ||
+    (canQueryAiProvider && aiProviderQuery.isLoading) ||
+    (canQueryAiModel && aiModelQuery.isLoading) ||
     (canQueryOAuth && oauthProviderQuery.isLoading);
 
   return (
@@ -650,6 +779,10 @@ export function SettingsPage() {
                 ),
                 children: (
                   <ResourceSettings
+                    aiModels={aiModelQuery.data ?? []}
+                    aiProviders={aiProviderQuery.data ?? []}
+                    canQueryAiModel={canQueryAiModel}
+                    canQueryAiProvider={canQueryAiProvider}
                     canQueryMail={canQueryMail}
                     canQuerySms={canQuerySms}
                     canQueryStorage={canQueryStorage}

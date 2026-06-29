@@ -27,6 +27,10 @@ async function syncSequences(dbClient: DbClient) {
     "sys_file_group",
     "sys_file",
     "sys_mail_account",
+    "sys_oauth_provider",
+    "sys_sms_provider",
+    "sys_ai_provider",
+    "sys_ai_model",
     "sys_notice",
   ];
 
@@ -619,6 +623,41 @@ ON CONFLICT DO NOTHING;
        ON CONFLICT DO NOTHING`,
     )
     .run(now, now, now, now);
+
+  await dbClient
+    .prepare(
+      `INSERT INTO sys_ai_provider
+        (id, name, code, provider_type, base_url, is_default, status, sort, remark, is_system, created_at, updated_at)
+       VALUES
+        (1, 'OpenAI Compatible', 'openai-compatible', 'openai-compatible', 'https://api.openai.com/v1', false, 0, 1, '内置模板：配置 API Key 并启用后可作为业务默认 AI Provider', true, ?, ?)
+       ON CONFLICT DO NOTHING`,
+    )
+    .run(now, now);
+  await dbClient
+    .prepare(
+      `UPDATE sys_ai_provider
+       SET is_system = true
+       WHERE id = 1`,
+    )
+    .run();
+
+  await dbClient
+    .prepare(
+      `INSERT INTO sys_ai_model
+        (id, provider_id, name, model_id, model_type, capabilities_json, context_window, max_output_tokens, status, sort, remark, is_system, created_at, updated_at)
+       VALUES
+        (1, 1, 'GPT-4.1 Mini', 'gpt-4.1-mini', 'chat', '{"chat":true,"structured":true,"toolCalling":true}', 1047576, 32768, 0, 1, '内置 Chat/Structured 模型模板', true, ?, ?),
+        (2, 1, 'Text Embedding 3 Small', 'text-embedding-3-small', 'embedding', '{"embedding":true}', 8191, NULL, 0, 2, '内置 Embedding 模型模板', true, ?, ?)
+       ON CONFLICT DO NOTHING`,
+    )
+    .run(now, now, now, now);
+  await dbClient
+    .prepare(
+      `UPDATE sys_ai_model
+       SET is_system = true
+       WHERE id IN (1, 2)`,
+    )
+    .run();
 
   await dbClient
     .prepare(
