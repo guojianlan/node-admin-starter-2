@@ -27,8 +27,17 @@ const supportedProviderTypes = [
   "openai",
   "anthropic",
   "google",
+  "deepseek",
+  "qwen",
+  "moonshot",
+  "zhipu",
+  "siliconflow",
+  "openrouter",
+  "ollama",
   "custom",
 ] as const;
+
+type ProviderTestMode = "listModels" | "chat" | "embedding";
 
 const aiProviderSchema = z.object({
   name: z.string().min(1),
@@ -65,6 +74,24 @@ const aiModelSchema = z.object({
 
 const setDefaultModelSchema = z.object({
   usage: z.enum(["chat", "structured", "embedding"]),
+});
+
+const aiProviderTestSchema = z.object({
+  id: z.coerce.number(),
+  mode: z.enum(["listModels", "chat", "embedding"]).default("listModels"),
+  modelId: optionalText,
+  input: z.preprocess(
+    (value) => (value === "" || value == null ? "请用一句话回复 OK。" : value),
+    z.string().min(1),
+  ),
+});
+
+const aiModelTestSchema = z.object({
+  id: z.coerce.number(),
+  input: z.preprocess(
+    (value) => (value === "" || value == null ? "请用一句话回复 OK。" : value),
+    z.string().min(1),
+  ),
 });
 
 type AiProviderRow = {
@@ -108,12 +135,31 @@ type AiModelRow = {
   updatedAt: string;
 };
 
+type AiTestResult = {
+  mode: ProviderTestMode;
+  endpoint: string;
+  status: number;
+  preview: string;
+};
+
 function assertJson(value?: string | null, message = "扩展配置必须是合法 JSON") {
   if (!value) return;
   try {
     JSON.parse(value);
   } catch {
     throw new Error(message);
+  }
+}
+
+function parseJsonObject(value?: string | null) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
   }
 }
 
@@ -170,34 +216,172 @@ function normalizeBaseUrl(value: string) {
   return value.replace(/\/+$/, "");
 }
 
-function providerHeaders(provider: Pick<AiProviderRow, "apiKeyEncrypted" | "organization" | "project">) {
+function providerOptions(provider: Pick<AiProviderRow, "optionsJson">) {
+  return parseJsonObject(provider.optionsJson);
+}
+
+function stringRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => typeof item === "string")
+      .map(([key, item]) => [key, item as string]),
+  );
+}
+
+function providerRequiresApiKey(provider: Pick<AiProviderRow, "providerType" | "optionsJson">) {
+  const options = providerOptions(provider);
+  if (options.authRequired === false) return false;
+  return provider.providerType !== "ollama";
+}
+
+function providerApiKey(provider: Pick<AiProviderRow, "apiKeyEncrypted" | "providerType" | "optionsJson">) {
   const apiKey = decryptSecret(provider.apiKeyEncrypted);
-  if (!apiKey) throw new Error("AI Provider API Key 未配置");
+  if (!apiKey && providerRequiresApiKey(provider)) throw new Error("AI Provider API Key 未配置");
+  return apiKey;
+}
+
+function providerHeaders(
+  provider: Pick<
+    AiProviderRow,
+    "apiKeyEncrypted" | "organization" | "project" | "providerType" | "optionsJson"
+  >,
+) {
+  const apiKey = providerApiKey(provider);
+  const options = providerOptions(provider);
+  const extraHeaders = stringRecord(options.headers);
+  if (provider.providerType === "google") return extraHeaders;
+  if (provider.providerType === "anthropic") {
+    return {
+      ...(apiKey ? { "x-api-key": apiKey } : {}),
+      "anthropic-version": String(options.anthropicVersion || "2023-06-01"),
+      ...extraHeaders,
+    };
+  }
   return {
-    authorization: `Bearer ${apiKey}`,
+    ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
     ...(provider.organization ? { "openai-organization": provider.organization } : {}),
     ...(provider.project ? { "openai-project": provider.project } : {}),
+    ...extraHeaders,
   };
 }
 
-function assertOpenAiCompatible(providerType: string) {
-  if (["openai-compatible", "openai", "custom"].includes(providerType)) return;
-  throw new Error("当前 v1 仅支持测试 OpenAI-compatible / OpenAI / Custom Provider");
+function providerProtocol(providerType: string): "openai" | "anthropic" | "google" {
+  if (providerType === "anthropic") return "anthropic";
+  if (providerType === "google") return "google";
+  return "openai";
 }
 
-async function testProviderConnection(provider: AiProviderRow) {
+function googleModelPath(modelId: string) {
+  return modelId.startsWith("models/") ? modelId : `models/${modelId}`;
+}
+
+function googleUrl(provider: AiProviderRow, path: string) {
+  if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
+  const url = new URL(`${normalizeBaseUrl(provider.baseUrl)}/${path.replace(/^\/+/, "")}`);
+  const apiKey = providerApiKey(provider);
+  if (apiKey) url.searchParams.set("key", apiKey);
+  return url.toString();
+}
+
+async function parseTestResponse(response: Response, mode: ProviderTestMode, endpoint: string): Promise<AiTestResult> {
+  const text = await response.text().catch(() => "");
+  const preview = (() => {
+    if (!text) return "";
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2).slice(0, 3000);
+    } catch {
+      return text.slice(0, 3000);
+    }
+  })();
+  if (!response.ok) {
+    throw new Error(`AI 测试失败：${response.status}${preview ? ` ${preview}` : ""}`);
+  }
+  return {
+    mode,
+    endpoint,
+    status: response.status,
+    preview,
+  };
+}
+
+async function testProviderConnection(provider: AiProviderRow, input: z.infer<typeof aiProviderTestSchema>) {
   if (provider.status !== 1) throw new Error("停用的 AI Provider 不能测试连接");
   if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
-  assertOpenAiCompatible(provider.providerType);
-  const response = await fetch(`${normalizeBaseUrl(provider.baseUrl)}/models`, {
-    method: "GET",
-    headers: providerHeaders(provider),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`AI Provider 测试失败：${response.status}${text ? ` ${text}` : ""}`);
+  const protocol = providerProtocol(provider.providerType);
+  const baseUrl = normalizeBaseUrl(provider.baseUrl);
+  const headers = providerHeaders(provider);
+  const mode = input.mode;
+  if (mode !== "listModels" && !input.modelId) throw new Error("请输入用于测试的模型 ID");
+
+  if (protocol === "google") {
+    const endpoint =
+      mode === "listModels"
+        ? googleUrl(provider, "/models")
+        : googleUrl(
+            provider,
+            mode === "embedding"
+              ? `/${googleModelPath(String(input.modelId))}:embedContent`
+              : `/${googleModelPath(String(input.modelId))}:generateContent`,
+          );
+    const response =
+      mode === "listModels"
+        ? await fetch(endpoint, { method: "GET", headers, signal: AbortSignal.timeout(15000) })
+        : await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...headers },
+            body:
+              mode === "embedding"
+                ? JSON.stringify({ content: { parts: [{ text: input.input }] } })
+                : JSON.stringify({
+                    contents: [{ role: "user", parts: [{ text: input.input }] }],
+                    generationConfig: { maxOutputTokens: 64 },
+                  }),
+            signal: AbortSignal.timeout(15000),
+          });
+    return parseTestResponse(response, mode, endpoint);
   }
+
+  if (protocol === "anthropic") {
+    if (mode === "embedding") throw new Error("Anthropic Provider 不支持 Embedding 测试");
+    const endpoint = `${baseUrl}${mode === "listModels" ? "/models" : "/messages"}`;
+    const response =
+      mode === "listModels"
+        ? await fetch(endpoint, { method: "GET", headers, signal: AbortSignal.timeout(15000) })
+        : await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...headers },
+            body: JSON.stringify({
+              model: input.modelId,
+              max_tokens: 64,
+              messages: [{ role: "user", content: input.input }],
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+    return parseTestResponse(response, mode, endpoint);
+  }
+
+  const endpoint =
+    mode === "listModels"
+      ? `${baseUrl}/models`
+      : `${baseUrl}${mode === "embedding" ? "/embeddings" : "/chat/completions"}`;
+  const response =
+    mode === "listModels"
+      ? await fetch(endpoint, { method: "GET", headers, signal: AbortSignal.timeout(15000) })
+      : await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body:
+            mode === "embedding"
+              ? JSON.stringify({ model: input.modelId, input: input.input })
+              : JSON.stringify({
+                  model: input.modelId,
+                  messages: [{ role: "user", content: input.input }],
+                  max_tokens: 64,
+                }),
+          signal: AbortSignal.timeout(15000),
+        });
+  return parseTestResponse(response, mode, endpoint);
 }
 
 async function getModelRow(id: number) {
@@ -245,40 +429,77 @@ function ensureDefaultUsageCompatible(model: AiModelRow, usage: AiModelUsage) {
   }
 }
 
-async function testModelConnection(model: AiModelRow) {
+async function testModelConnection(model: AiModelRow, input: z.infer<typeof aiModelTestSchema>) {
   const provider = await getProviderRow(model.providerId);
   if (!provider) throw new Error("AI Provider 不存在");
   if (provider.status !== 1) throw new Error("停用的 AI Provider 不能测试模型");
   if (model.status !== 1) throw new Error("停用的 AI 模型不能测试");
   if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
-  assertOpenAiCompatible(provider.providerType);
+  const protocol = providerProtocol(provider.providerType);
   const url = normalizeBaseUrl(provider.baseUrl);
   const headers = {
     "content-type": "application/json",
     ...providerHeaders(provider),
   };
+
+  if (protocol === "google") {
+    const endpoint = googleUrl(
+      provider,
+      model.modelType === "embedding"
+        ? `/${googleModelPath(model.modelId)}:embedContent`
+        : `/${googleModelPath(model.modelId)}:generateContent`,
+    );
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body:
+        model.modelType === "embedding"
+          ? JSON.stringify({ content: { parts: [{ text: input.input }] } })
+          : JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: input.input }] }],
+              generationConfig: { maxOutputTokens: 64 },
+            }),
+      signal: AbortSignal.timeout(15000),
+    });
+    return parseTestResponse(response, model.modelType === "embedding" ? "embedding" : "chat", endpoint);
+  }
+
+  if (protocol === "anthropic") {
+    if (model.modelType === "embedding") throw new Error("Anthropic Provider 不支持 Embedding 测试");
+    const endpoint = `${url}/messages`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: model.modelId,
+        max_tokens: 64,
+        messages: [{ role: "user", content: input.input }],
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    return parseTestResponse(response, "chat", endpoint);
+  }
+
+  const endpoint = `${url}${model.modelType === "embedding" ? "/embeddings" : "/chat/completions"}`;
   const response =
     model.modelType === "embedding"
-      ? await fetch(`${url}/embeddings`, {
+      ? await fetch(endpoint, {
           method: "POST",
           headers,
-          body: JSON.stringify({ model: model.modelId, input: "Admin Base AI model test" }),
+          body: JSON.stringify({ model: model.modelId, input: input.input }),
           signal: AbortSignal.timeout(15000),
         })
-      : await fetch(`${url}/chat/completions`, {
+      : await fetch(endpoint, {
           method: "POST",
           headers,
           body: JSON.stringify({
             model: model.modelId,
-            messages: [{ role: "user", content: "Reply with OK." }],
-            max_tokens: 8,
+            messages: [{ role: "user", content: input.input }],
+            max_tokens: 64,
           }),
           signal: AbortSignal.timeout(15000),
         });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`AI 模型测试失败：${response.status}${text ? ` ${text}` : ""}`);
-  }
+  return parseTestResponse(response, model.modelType === "embedding" ? "embedding" : "chat", endpoint);
 }
 
 const aiProviderCrud = createCrudRoutes({
@@ -389,7 +610,9 @@ aiRoutes.put(
         if (!row) throw new Error("AI Provider 不存在");
         if (row.status !== 1) throw new Error("停用的 AI Provider 不能设为默认");
         if (!row.baseUrl) throw new Error("AI Provider Base URL 未配置");
-        if (!decryptSecret(row.apiKeyEncrypted)) throw new Error("AI Provider API Key 未配置");
+        if (!decryptSecret(row.apiKeyEncrypted) && providerRequiresApiKey(row)) {
+          throw new Error("AI Provider API Key 未配置");
+        }
         await sqlite.transaction(async (tx) => {
           await tx.prepare("UPDATE sys_ai_provider SET is_default = false, updated_at = now()").run();
           await tx
@@ -407,7 +630,8 @@ aiRoutes.post(
   authRequired(),
   ability("system.aiProvider.test"),
   async (c) => {
-    const payload = z.object({ id: z.coerce.number() }).parse(await c.req.json());
+    const payload = aiProviderTestSchema.parse(await c.req.json());
+    let result: AiTestResult | null = null;
     await runWithOperationLog(
       c,
       {
@@ -415,14 +639,15 @@ aiRoutes.post(
         action: "test",
         resource: "/ai/provider",
         resourceId: payload.id,
+        details: { mode: payload.mode, modelId: payload.modelId },
       },
       async () => {
         const row = await getProviderRow(payload.id);
         if (!row) throw new Error("AI Provider 不存在");
-        await testProviderConnection(row);
+        result = await testProviderConnection(row, payload);
       },
     );
-    return c.json(success(null, "连接正常"));
+    return c.json(success(result, "测试完成"));
   },
 );
 
@@ -727,7 +952,8 @@ aiRoutes.post(
   authRequired(),
   ability("system.aiModel.test"),
   async (c) => {
-    const payload = z.object({ id: z.coerce.number() }).parse(await c.req.json());
+    const payload = aiModelTestSchema.parse(await c.req.json());
+    let result: AiTestResult | null = null;
     await runWithOperationLog(
       c,
       {
@@ -735,14 +961,15 @@ aiRoutes.post(
         action: "test",
         resource: "/ai/model",
         resourceId: payload.id,
+        details: { inputPreview: payload.input.slice(0, 120) },
       },
       async () => {
         const row = await getModelRow(payload.id);
         if (!row) throw new Error("AI 模型不存在");
-        await testModelConnection(row);
+        result = await testModelConnection(row, payload);
       },
     );
-    return c.json(success(null, "模型调用正常"));
+    return c.json(success(result, "模型调用正常"));
   },
 );
 
@@ -761,7 +988,7 @@ aiRoutes.get(
           name: runtimeConfig.provider.name,
           providerType: runtimeConfig.provider.providerType,
           baseUrl: runtimeConfig.provider.baseUrl,
-          hasApiKey: true,
+          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
         },
         model: runtimeConfig.model,
       }),

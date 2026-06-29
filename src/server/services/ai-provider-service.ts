@@ -10,7 +10,7 @@ export type AiProviderRuntimeConfig = {
     name: string;
     providerType: string;
     baseUrl: string;
-    apiKey: string;
+    apiKey: string | null;
     organization?: string | null;
     project?: string | null;
     options?: Record<string, unknown>;
@@ -67,6 +67,12 @@ function parseOptions(value?: string | null) {
   }
 }
 
+function providerRequiresApiKey(provider: Pick<AiProviderRow, "providerType" | "optionsJson">) {
+  const options = parseOptions(provider.optionsJson);
+  if (options.authRequired === false) return false;
+  return provider.providerType !== "ollama";
+}
+
 function providerSelectSql(extraWhere: string) {
   return `SELECT
     id,
@@ -108,7 +114,7 @@ function requireActiveProvider(provider?: AiProviderRow | null) {
   const baseUrl = provider.baseUrl;
   if (!baseUrl) throw new Error("AI Provider Base URL 未配置");
   const apiKey = decryptSecret(provider.apiKeyEncrypted);
-  if (!apiKey) throw new Error("AI Provider API Key 未配置");
+  if (!apiKey && providerRequiresApiKey(provider)) throw new Error("AI Provider API Key 未配置");
   return { ...provider, baseUrl, apiKey };
 }
 

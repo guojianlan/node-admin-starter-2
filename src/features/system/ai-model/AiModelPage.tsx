@@ -2,7 +2,8 @@
 
 import { ApiOutlined, CheckCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Modal, Space, Switch, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Input, Modal, Space, Switch, Tag, Tooltip, Typography } from "antd";
+import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { buildQueryString, request } from "@/lib/request";
@@ -40,6 +41,13 @@ type AiModelRecord = {
   sort: number;
   remark?: string | null;
   isSystem: boolean;
+};
+
+type AiTestResult = {
+  mode: "listModels" | "chat" | "embedding";
+  endpoint: string;
+  status: number;
+  preview: string;
 };
 
 const modelTypeOptions = [
@@ -86,6 +94,9 @@ function capabilityTags(value?: string | null) {
 
 export function AiModelPage() {
   const queryClient = useQueryClient();
+  const [testModel, setTestModel] = useState<AiModelRecord | null>(null);
+  const [testInput, setTestInput] = useState("请用一句话回复 OK。");
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null);
   const providerQuery = useQuery({
     queryKey: ["system-ai-provider-options"],
     queryFn: async () => {
@@ -132,12 +143,13 @@ export function AiModelPage() {
   });
 
   const testMutation = useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: ({ id, input }: { id: number; input: string }) =>
       request("/api/system/ai/model/test", {
         method: "POST",
-        body: { id },
+        body: { id, input },
       }),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      setTestResult(result as AiTestResult);
       feedback.success("模型调用正常");
     },
   });
@@ -295,9 +307,15 @@ export function AiModelPage() {
               <Button
                 size="small"
                 icon={<ApiOutlined />}
-                loading={testMutation.isPending}
-                onClick={async () => {
-                  await testMutation.mutateAsync(record.id);
+                loading={testMutation.isPending && testModel?.id === record.id}
+                onClick={() => {
+                  setTestModel(record);
+                  setTestInput(
+                    record.modelType === "embedding"
+                      ? "Admin Base AI embedding test"
+                      : "请用一句话回复 OK。",
+                  );
+                  setTestResult(null);
                 }}
               />
             </Tooltip>
@@ -338,6 +356,55 @@ export function AiModelPage() {
           </>
         )}
       />
+      <Modal
+        title="测试 AI 模型"
+        open={Boolean(testModel)}
+        width={760}
+        okText="开始测试"
+        cancelText="关闭"
+        confirmLoading={testMutation.isPending}
+        onOk={() => {
+          if (!testModel) return;
+          if (!testInput.trim()) {
+            feedback.warning("请输入测试内容");
+            return;
+          }
+          void testMutation.mutateAsync({ id: testModel.id, input: testInput.trim() });
+        }}
+        onCancel={() => {
+          setTestModel(null);
+          setTestResult(null);
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          {testModel ? (
+            <Alert
+              showIcon
+              type="info"
+              message={`${testModel.name} / ${testModel.modelId}`}
+              description={`${testModel.providerName ?? testModel.providerId} / ${testModel.modelType}`}
+            />
+          ) : null}
+          <Input.TextArea
+            rows={5}
+            value={testInput}
+            onChange={(event) => setTestInput(event.target.value)}
+            placeholder={testModel?.modelType === "embedding" ? "输入要向量化的文本" : "输入测试 prompt"}
+          />
+          {testResult ? (
+            <Alert
+              showIcon
+              type="success"
+              message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
+              description={
+                <Typography.Paragraph code style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                  {testResult.preview || "测试接口无响应正文"}
+                </Typography.Paragraph>
+              }
+            />
+          ) : null}
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }

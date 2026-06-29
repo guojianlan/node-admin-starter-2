@@ -2,7 +2,8 @@
 
 import { ApiOutlined, CheckCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Modal, Space, Switch, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Input, Modal, Select, Space, Switch, Tag, Tooltip, Typography } from "antd";
+import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { request } from "@/lib/request";
@@ -28,12 +29,49 @@ type AiProviderRecord = {
   isSystem: boolean;
 };
 
+type AiTestMode = "listModels" | "chat" | "embedding";
+
+type AiTestResult = {
+  mode: AiTestMode;
+  endpoint: string;
+  status: number;
+  preview: string;
+};
+
 const providerTypeOptions = [
-  { label: "OpenAI-compatible", value: "openai-compatible" },
+  { label: "OpenAI-compatible 网关", value: "openai-compatible" },
   { label: "OpenAI", value: "openai" },
-  { label: "Anthropic", value: "anthropic" },
+  { label: "Anthropic Claude", value: "anthropic" },
   { label: "Google Gemini", value: "google" },
+  { label: "DeepSeek compatible", value: "deepseek" },
+  { label: "Qwen / DashScope compatible", value: "qwen" },
+  { label: "Moonshot / Kimi compatible", value: "moonshot" },
+  { label: "Zhipu GLM compatible", value: "zhipu" },
+  { label: "SiliconFlow compatible", value: "siliconflow" },
+  { label: "OpenRouter compatible", value: "openrouter" },
+  { label: "Ollama / Local compatible", value: "ollama" },
   { label: "Custom", value: "custom" },
+];
+
+const providerTypeExamples: Record<string, string> = {
+  "openai-compatible": "https://api.example.com/v1",
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  google: "https://generativelanguage.googleapis.com/v1beta",
+  deepseek: "https://api.deepseek.com/v1",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  moonshot: "https://api.moonshot.cn/v1",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  siliconflow: "https://api.siliconflow.cn/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+  ollama: "http://localhost:11434/v1",
+  custom: "https://gateway.example.com/v1",
+};
+
+const testModeOptions = [
+  { label: "列出模型", value: "listModels" },
+  { label: "Chat 调用", value: "chat" },
+  { label: "Embedding 调用", value: "embedding" },
 ];
 
 function normalizePayload(values: Record<string, unknown>) {
@@ -45,6 +83,11 @@ function normalizePayload(values: Record<string, unknown>) {
 
 export function AiProviderPage() {
   const queryClient = useQueryClient();
+  const [testProvider, setTestProvider] = useState<AiProviderRecord | null>(null);
+  const [testMode, setTestMode] = useState<AiTestMode>("listModels");
+  const [testModelId, setTestModelId] = useState("");
+  const [testInput, setTestInput] = useState("请用一句话回复 OK。");
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/ai/provider"] });
@@ -73,13 +116,19 @@ export function AiProviderPage() {
   });
 
   const testMutation = useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (payload: {
+      id: number;
+      mode: AiTestMode;
+      modelId?: string;
+      input?: string;
+    }) =>
       request("/api/system/ai/provider/test", {
         method: "POST",
-        body: { id },
+        body: payload,
       }),
-    onSuccess: () => {
-      feedback.success("连接正常");
+    onSuccess: (result) => {
+      setTestResult(result as AiTestResult);
+      feedback.success("测试完成");
     },
   });
 
@@ -118,7 +167,8 @@ export function AiProviderPage() {
       title: "Base URL",
       dataIndex: "baseUrl",
       width: 280,
-      formHelp: "OpenAI-compatible 接口地址，例如 https://api.openai.com/v1 或本地网关 /v1。",
+      formHelp:
+        "OpenAI-compatible 使用 /v1；Claude 使用 Anthropic /v1；Gemini 使用 Google Generative Language API /v1beta。",
     },
     {
       title: "API Key",
@@ -203,9 +253,13 @@ export function AiProviderPage() {
               <Button
                 size="small"
                 icon={<ApiOutlined />}
-                loading={testMutation.isPending}
-                onClick={async () => {
-                  await testMutation.mutateAsync(record.id);
+                loading={testMutation.isPending && testProvider?.id === record.id}
+                onClick={() => {
+                  setTestProvider(record);
+                  setTestMode("listModels");
+                  setTestModelId("");
+                  setTestInput("请用一句话回复 OK。");
+                  setTestResult(null);
                 }}
               />
             </Tooltip>
@@ -238,6 +292,75 @@ export function AiProviderPage() {
           </>
         )}
       />
+      <Modal
+        title="测试 AI Provider"
+        open={Boolean(testProvider)}
+        width={760}
+        okText="开始测试"
+        cancelText="关闭"
+        confirmLoading={testMutation.isPending}
+        onOk={() => {
+          if (!testProvider) return;
+          if (testMode !== "listModels" && !testModelId.trim()) {
+            feedback.warning("请输入模型 ID");
+            return;
+          }
+          void testMutation.mutateAsync({
+            id: testProvider.id,
+            mode: testMode,
+            modelId: testModelId.trim() || undefined,
+            input: testInput.trim() || undefined,
+          });
+        }}
+        onCancel={() => {
+          setTestProvider(null);
+          setTestResult(null);
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            message={testProvider ? `${testProvider.name} / ${testProvider.providerType}` : ""}
+            description={`Base URL 示例：${providerTypeExamples[testProvider?.providerType ?? "custom"] ?? providerTypeExamples.custom}`}
+          />
+          <Select
+            value={testMode}
+            options={testModeOptions}
+            onChange={(value) => {
+              setTestMode(value);
+              setTestResult(null);
+            }}
+          />
+          {testMode !== "listModels" ? (
+            <>
+              <Input
+                value={testModelId}
+                onChange={(event) => setTestModelId(event.target.value)}
+                placeholder="模型 ID，例如 gpt-4.1-mini / deepseek-chat / qwen-plus / gemini-2.5-flash"
+              />
+              <Input.TextArea
+                rows={4}
+                value={testInput}
+                onChange={(event) => setTestInput(event.target.value)}
+                placeholder="测试输入内容"
+              />
+            </>
+          ) : null}
+          {testResult ? (
+            <Alert
+              showIcon
+              type="success"
+              message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
+              description={
+                <Typography.Paragraph code style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                  {testResult.preview || "测试接口无响应正文"}
+                </Typography.Paragraph>
+              }
+            />
+          ) : null}
+        </Space>
+      </Modal>
     </PageScaffold>
   );
 }

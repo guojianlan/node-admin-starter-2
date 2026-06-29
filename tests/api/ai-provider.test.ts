@@ -143,6 +143,37 @@ describe("AI provider configuration", () => {
       status: 200,
       riskLevel: "medium",
     });
+
+    const chatFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://ai-gateway.test/v1/chat/completions");
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer ai-secret");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: "test-chat",
+        messages: [{ role: "user", content: "请返回 OK" }],
+      });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", chatFetchMock);
+
+    const chatTest = await app.request("/api/system/ai/provider/test", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        id: provider.id,
+        mode: "chat",
+        modelId: "test-chat",
+        input: "请返回 OK",
+      }),
+    });
+    const chatTestBody = await readJson<{ endpoint: string; preview: string }>(chatTest);
+    expect(chatTest.status).toBe(200);
+    expect(chatFetchMock).toHaveBeenCalledTimes(1);
+    expect(chatTestBody.data?.endpoint).toBe("https://ai-gateway.test/v1/chat/completions");
+    expect(chatTestBody.data?.preview).toContain("OK");
   });
 
   it("manages default models and exposes runtime config for future business agents", async () => {
@@ -272,7 +303,10 @@ describe("AI provider configuration", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://business-ai.test/v1/chat/completions");
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer business-secret");
-      expect(JSON.parse(String(init?.body))).toMatchObject({ model: "business-chat" });
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: "business-chat",
+        messages: [{ role: "user", content: "请返回 OK" }],
+      });
       return new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -283,7 +317,7 @@ describe("AI provider configuration", () => {
     const testModel = await app.request("/api/system/ai/model/test", {
       method: "POST",
       headers: { ...authHeaders(token), "x-request-id": "ai-model-test" },
-      body: JSON.stringify({ id: chatModel.id }),
+      body: JSON.stringify({ id: chatModel.id, input: "请返回 OK" }),
     });
     expect(testModel.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);

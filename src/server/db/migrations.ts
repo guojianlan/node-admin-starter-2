@@ -1173,6 +1173,25 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0021_ai_provider_templates",
+    sql: `
+INSERT INTO sys_ai_provider
+  (id, name, code, provider_type, base_url, is_default, status, sort, remark, is_system, created_at, updated_at)
+VALUES
+  (2, 'OpenAI', 'openai', 'openai', 'https://api.openai.com/v1', false, 0, 2, 'OpenAI 官方接口模板，配置 API Key 后启用', true, now(), now()),
+  (3, 'Anthropic Claude', 'anthropic', 'anthropic', 'https://api.anthropic.com/v1', false, 0, 3, 'Anthropic Claude 原生接口模板', true, now(), now()),
+  (4, 'Google Gemini', 'gemini', 'google', 'https://generativelanguage.googleapis.com/v1beta', false, 0, 4, 'Google Gemini 原生接口模板', true, now(), now()),
+  (5, 'DeepSeek', 'deepseek', 'deepseek', 'https://api.deepseek.com/v1', false, 0, 5, 'DeepSeek OpenAI-compatible 接口模板', true, now(), now()),
+  (6, 'Qwen / DashScope', 'qwen', 'qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', false, 0, 6, '通义千问 DashScope OpenAI-compatible 接口模板', true, now(), now()),
+  (7, 'Moonshot / Kimi', 'moonshot', 'moonshot', 'https://api.moonshot.cn/v1', false, 0, 7, 'Moonshot Kimi OpenAI-compatible 接口模板', true, now(), now()),
+  (8, 'Zhipu GLM', 'zhipu', 'zhipu', 'https://open.bigmodel.cn/api/paas/v4', false, 0, 8, '智谱 GLM OpenAI-compatible 接口模板', true, now(), now()),
+  (9, 'SiliconFlow', 'siliconflow', 'siliconflow', 'https://api.siliconflow.cn/v1', false, 0, 9, 'SiliconFlow OpenAI-compatible 网关模板', true, now(), now()),
+  (10, 'OpenRouter', 'openrouter', 'openrouter', 'https://openrouter.ai/api/v1', false, 0, 10, 'OpenRouter OpenAI-compatible 网关模板', true, now(), now()),
+  (11, 'Ollama Local', 'ollama', 'ollama', 'http://localhost:11434/v1', false, 0, 11, '本地 Ollama OpenAI-compatible 模板，可在 optionsJson 设置 {"authRequired":false}', true, now(), now())
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {
