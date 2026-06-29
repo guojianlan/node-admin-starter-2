@@ -107,10 +107,10 @@ Configuration boundaries:
 | Type | Storage | Examples |
 | --- | --- | --- |
 | Ordinary parameters | `sys_config_items` | site name, security policy, login policy, upload policy, operation log retention |
-| Resource configuration | Dedicated tables | `sys_storage`, `sys_mail_account`, `sys_oauth_provider` |
+| Resource configuration | Dedicated tables | `sys_storage`, `sys_mail_account`, `sys_sms_provider`, `sys_oauth_provider` |
 | Runtime environment | `.env` | `DATABASE_URL`, `ADMIN_BASE_SECRET_KEY`, production-only secrets |
 
-## Storage And Mail
+## Storage, Mail, And SMS
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -124,8 +124,16 @@ Configuration boundaries:
 | PUT | `/api/system/mail/account/status/:id` | Toggle mail account status |
 | PUT | `/api/system/mail/account/default/:id` | Set default mail account with protection |
 | POST | `/api/system/mail/account/test` | Send test mail |
+| GET/POST | `/api/system/sms/provider` | Query and create SMS providers |
+| PUT | `/api/system/sms/provider/:id` | Update SMS provider |
+| DELETE | `/api/system/sms/provider/:id` | Delete SMS provider when not default/system |
+| PUT | `/api/system/sms/provider/status/:id` | Toggle SMS provider status |
+| PUT | `/api/system/sms/provider/default/:id` | Set default SMS provider with protection |
+| POST | `/api/system/sms/provider/test` | Send test SMS through provider |
 
 Default resources are unique. Disabling the active default resource is rejected. Secrets are stored encrypted and returned as boolean flags only.
+
+SMS provider v1 supports a generic `webhook` provider. Test sending posts JSON to the configured endpoint with the target phone, content, signature, template code, and variables. Cloud-vendor SDK adapters can be added later behind the same `sys_sms_provider` model.
 
 ## OAuth
 

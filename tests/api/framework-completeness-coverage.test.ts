@@ -503,6 +503,88 @@ describe("framework completeness coverage", () => {
     });
   });
 
+  it("manages SMS provider resources without leaking secrets and tests webhook sending", async () => {
+    const { token } = await login();
+    const create = await app.request("/api/system/sms/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "Webhook SMS",
+        code: "webhook",
+        provider: "webhook",
+        endpoint: "https://sms.example.test/send",
+        accessKey: "sms-access",
+        secretKey: "sms-secret",
+        signature: "Admin Base",
+        templateCode: "SMS_TEST",
+        status: 1,
+        sort: 1,
+        optionsJson: '{"timeout":3000}',
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const list = await app.request("/api/system/sms/provider?keyword=webhook", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listBody = await readJson<Page<Record<string, unknown>>>(list);
+    expect(list.status).toBe(200);
+    expect(listBody.data?.data[0]).toMatchObject({
+      code: "webhook",
+      provider: "webhook",
+      hasSecretKey: true,
+      accessKey: "sms-access",
+    });
+    expect(listBody.data?.data[0]).not.toHaveProperty("secretKey");
+    expect(listBody.data?.data[0]).not.toHaveProperty("secretKeyEncrypted");
+
+    const provider = listBody.data?.data[0] as { id: number };
+    const setDefault = await app.request(`/api/system/sms/provider/default/${provider.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+    expect(setDefault.status).toBe(200);
+
+    const disableDefault = await app.request(`/api/system/sms/provider/status/${provider.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ status: 0 }),
+    });
+    expect(disableDefault.status).toBe(500);
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://sms.example.test/send");
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>)["x-admin-base-sms-access-key"]).toBe("sms-access");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer sms-secret");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        to: "13800138000",
+        content: "测试短信",
+        signature: "Admin Base",
+        templateCode: "SMS_TEST",
+      });
+      return new Response("ok", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const test = await app.request("/api/system/sms/provider/test", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        id: provider.id,
+        to: "13800138000",
+        content: "测试短信",
+      }),
+    });
+    expect(test.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await latestOperation("system.smsProvider", "test")).toMatchObject({
+      success: true,
+      status: 200,
+    });
+  });
+
   it("rejects unsafe uploads and validates chunk upload failure paths and cleanup", async () => {
     const { token } = await login();
     await sqlite

@@ -31,7 +31,7 @@ This document records the final handoff status for the Admin Base backend framew
 - CRUD factory remains the default for ordinary modules.
 - Password, token, OAuth, file physical operations, publish/revoke, and connection tests remain explicit route/service workflows.
 - `sys_config_items` stores ordinary parameters and policy parameters only.
-- Storage, mail, and OAuth providers remain resource configuration tables with independent APIs.
+- Storage, mail, SMS, and OAuth providers remain resource configuration tables with independent APIs.
 - Secrets are hashed or encrypted at rest and are always masked in responses.
 
 ## Production Readiness
@@ -49,7 +49,7 @@ The production path now has these guardrails:
 
 The backend framework can now support a long-running business project baseline:
 
-- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, OAuth providers, notices, files, login logs, online sessions, and operation logs.
+- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, SMS providers, OAuth providers, notices, files, login logs, online sessions, and operation logs.
 - End users can manage profile data, password, avatar, login records, OAuth bindings, and message reads.
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
@@ -65,7 +65,6 @@ These capabilities remain intentionally out of the current core mainline:
 | --- | --- |
 | Multi-tenant architecture | Requires tenant isolation across auth, data scope, storage, and audit; this would change many core contracts. |
 | Task scheduler center | Notice scheduled visibility currently works by query-time filtering; scheduler introduces runtime and retry semantics outside the core baseline. |
-| SMS provider | Similar to mail/OAuth as a future resource provider, but not required for the current backend framework baseline. |
 | AI provider | Provider management and quota/audit design should be handled as a separate product module. |
 | Full plugin marketplace | Requires packaging, install, trust, version, and permission models that exceed the current admin framework. |
 | Field-level permission UI | Data scope and action permission are complete enough for the baseline; field-level UI can be added later as an extension point. |

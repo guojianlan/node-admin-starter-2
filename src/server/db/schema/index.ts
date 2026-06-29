@@ -681,3 +681,37 @@ export const sysMailAccount = pgTable(
     index("sys_mail_account_status_sort_idx").on(table.status, table.sort),
   ],
 );
+
+export const sysSmsProvider = pgTable(
+  "sys_sms_provider",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    provider: text("provider").notNull().default("webhook"),
+    endpoint: text("endpoint"),
+    accessKey: text("access_key"),
+    secretKeyEncrypted: text("secret_key_encrypted"),
+    signature: text("signature"),
+    templateCode: text("template_code"),
+    isDefault: boolean("is_default").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    optionsJson: text("options_json"),
+    remark: text("remark"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_sms_provider_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("sys_sms_provider_default_active_unique")
+      .on(table.isDefault)
+      .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
+    index("sys_sms_provider_provider_status_idx").on(table.provider, table.status),
+    index("sys_sms_provider_status_sort_idx").on(table.status, table.sort),
+  ],
+);

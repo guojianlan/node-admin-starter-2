@@ -109,6 +109,11 @@
     "/system/mail/account/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle mail account status" } },
     "/system/mail/account/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default mail account" } },
     "/system/mail/account/test": { "post": { "tags": ["settings"], "summary": "Send test mail" } },
+    "/system/sms/provider": { "get": { "tags": ["settings"], "summary": "SMS provider page query" }, "post": { "tags": ["settings"], "summary": "Create SMS provider" } },
+    "/system/sms/provider/{id}": { "put": { "tags": ["settings"], "summary": "Update SMS provider" }, "delete": { "tags": ["settings"], "summary": "Delete SMS provider" } },
+    "/system/sms/provider/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle SMS provider status" } },
+    "/system/sms/provider/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default SMS provider" } },
+    "/system/sms/provider/test": { "post": { "tags": ["settings"], "summary": "Send test SMS through webhook provider" } },
 
     "/system/oauth/provider": { "get": { "tags": ["oauth"], "summary": "OAuth provider page query" }, "post": { "tags": ["oauth"], "summary": "Create OAuth provider" } },
     "/system/oauth/provider/{id}": { "put": { "tags": ["oauth"], "summary": "Update OAuth provider" }, "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" } },

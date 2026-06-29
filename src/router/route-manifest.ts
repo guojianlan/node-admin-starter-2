@@ -15,6 +15,7 @@ import { ProfilePage } from "@/features/profile/ProfilePage";
 import { RolePage } from "@/features/system/role/RolePage";
 import { RulePage } from "@/features/system/rule/RulePage";
 import { SettingsPage } from "@/features/system/settings/SettingsPage";
+import { SmsProviderPage } from "@/features/system/sms-provider/SmsProviderPage";
 import { StoragePage } from "@/features/system/storage/StoragePage";
 import { UserPage } from "@/features/system/user/UserPage";
 
@@ -139,6 +140,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "第三方登录",
     auth: "system.oauthProvider.query",
     component: OAuthProviderPage,
+  },
+  {
+    path: "/system/sms/provider",
+    key: "system.smsProvider",
+    title: "短信配置",
+    auth: "system.smsProvider.query",
+    component: SmsProviderPage,
   },
   {
     path: "/system/notice",

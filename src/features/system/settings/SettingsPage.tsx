@@ -7,6 +7,7 @@ import {
   LockOutlined,
   LoginOutlined,
   MailOutlined,
+  MessageOutlined,
   SaveOutlined,
   SettingOutlined,
   UploadOutlined,
@@ -64,6 +65,15 @@ type MailRecord = {
   isDefault: boolean;
   status: number;
   fromEmail: string;
+};
+
+type SmsProviderRecord = {
+  id: number;
+  name: string;
+  code: string;
+  provider: string;
+  isDefault: boolean;
+  status: number;
 };
 
 type OAuthProviderConfig = {
@@ -290,19 +300,25 @@ function ConfigSectionForm({
 
 function ResourceSettings({
   mailItems,
+  smsItems,
   storageItems,
   canQueryMail,
+  canQuerySms,
   canQueryStorage,
 }: {
   mailItems: MailRecord[];
+  smsItems: SmsProviderRecord[];
   storageItems: StorageRecord[];
   canQueryMail: boolean;
+  canQuerySms: boolean;
   canQueryStorage: boolean;
 }) {
   const navigation = useNavigationAdapter();
   const [testMailTo, setTestMailTo] = useState("");
+  const [testSmsTo, setTestSmsTo] = useState("");
   const defaultStorage = storageItems.find((item) => item.isDefault);
   const defaultMail = mailItems.find((item) => item.isDefault);
+  const defaultSms = smsItems.find((item) => item.isDefault);
   const testStorageMutation = useMutation({
     mutationFn: () =>
       request("/api/system/storage/test", {
@@ -324,10 +340,22 @@ function ResourceSettings({
       }),
     onSuccess: () => feedback.success("测试邮件已发送"),
   });
+  const testSmsMutation = useMutation({
+    mutationFn: () =>
+      request("/api/system/sms/provider/test", {
+        method: "POST",
+        body: {
+          id: defaultSms?.id,
+          to: testSmsTo,
+          content: "这是一条来自系统设置页的测试短信。",
+        },
+      }),
+    onSuccess: () => feedback.success("测试短信已发送"),
+  });
 
   return (
     <Row gutter={[16, 16]}>
-      <Col xs={24} lg={12}>
+      <Col xs={24} lg={8}>
         <Card
           title={
             <Space>
@@ -368,7 +396,7 @@ function ResourceSettings({
           )}
         </Card>
       </Col>
-      <Col xs={24} lg={12}>
+      <Col xs={24} lg={8}>
         <Card
           title={
             <Space>
@@ -407,6 +435,48 @@ function ResourceSettings({
             </Space>
           ) : (
             <Alert type="warning" showIcon message="尚未配置默认邮件账号" />
+          )}
+        </Card>
+      </Col>
+      <Col xs={24} lg={8}>
+        <Card
+          title={
+            <Space>
+              <MessageOutlined />
+              短信配置
+            </Space>
+          }
+          extra={
+            <AuthButton auth="system.smsProvider.query">
+              <Button onClick={() => navigation.push("/system/sms/provider")}>管理</Button>
+            </AuthButton>
+          }
+        >
+          {!canQuerySms ? (
+            <Alert type="warning" showIcon message="当前角色没有短信配置查看权限" />
+          ) : defaultSms ? (
+            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+              <Typography.Text strong>{defaultSms.name}</Typography.Text>
+              <Space wrap>
+                <Tag color="blue">{defaultSms.code}</Tag>
+                <Tag>{defaultSms.provider}</Tag>
+                <Tag color={defaultSms.status === 1 ? "success" : "error"}>
+                  {defaultSms.status === 1 ? "启用" : "停用"}
+                </Tag>
+              </Space>
+              <AuthButton auth="system.smsProvider.test">
+                <Input.Search
+                  enterButton="发送测试"
+                  placeholder="输入测试手机号"
+                  value={testSmsTo}
+                  loading={testSmsMutation.isPending}
+                  onChange={(event) => setTestSmsTo(event.target.value)}
+                  onSearch={() => testSmsMutation.mutate()}
+                />
+              </AuthButton>
+            </Space>
+          ) : (
+            <Alert type="warning" showIcon message="尚未配置默认短信配置" />
           )}
         </Card>
       </Col>
@@ -487,6 +557,7 @@ export function SettingsPage() {
   const hasAccess = useAuthStore((state) => state.hasAccess);
   const canQueryStorage = hasAccess("system.storage.query");
   const canQueryMail = hasAccess("system.mail.query");
+  const canQuerySms = hasAccess("system.smsProvider.query");
   const canQueryOAuth = hasAccess("system.oauthProvider.query");
   const configQuery = useQuery({
     queryKey: ["system-settings", "config"],
@@ -527,6 +598,16 @@ export function SettingsPage() {
     },
     enabled: canQueryOAuth,
   });
+  const smsProviderQuery = useQuery({
+    queryKey: ["system-settings", "sms-provider"],
+    queryFn: async () => {
+      const page = await request<PageResult<SmsProviderRecord>>(
+        `/api/system/sms/provider${buildQueryString({ page: 1, pageSize: 100 })}`,
+      );
+      return page.data;
+    },
+    enabled: canQuerySms,
+  });
 
   const itemsByKey = useMemo(() => {
     return new Map((configQuery.data ?? []).map((item) => [item.key, item]));
@@ -535,6 +616,7 @@ export function SettingsPage() {
     configQuery.isLoading ||
     (canQueryStorage && storageQuery.isLoading) ||
     (canQueryMail && mailQuery.isLoading) ||
+    (canQuerySms && smsProviderQuery.isLoading) ||
     (canQueryOAuth && oauthProviderQuery.isLoading);
 
   return (
@@ -569,9 +651,11 @@ export function SettingsPage() {
                 children: (
                   <ResourceSettings
                     canQueryMail={canQueryMail}
+                    canQuerySms={canQuerySms}
                     canQueryStorage={canQueryStorage}
                     storageItems={storageQuery.data ?? []}
                     mailItems={mailQuery.data ?? []}
+                    smsItems={smsProviderQuery.data ?? []}
                   />
                 ),
               },

@@ -213,6 +213,26 @@ const moduleRules = [
   },
   {
     route: {
+      id: 200,
+      parentId: 180,
+      key: "system.smsProvider",
+      name: "短信配置",
+      path: "/system/sms/provider",
+      icon: "message",
+      order: 70,
+    },
+    actions: [
+      ["query", "查询短信配置"],
+      ["create", "新增短信配置"],
+      ["update", "编辑短信配置"],
+      ["delete", "删除短信配置"],
+      ["status", "启停短信配置"],
+      ["setDefault", "设为默认短信配置"],
+      ["test", "测试短信配置"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 190,
       key: "system.operationLog",

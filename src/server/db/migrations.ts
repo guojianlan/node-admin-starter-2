@@ -951,6 +951,70 @@ CREATE INDEX IF NOT EXISTS sys_file_reference_resource_type_idx
   ON sys_file_reference(resource_type);
 `,
   },
+  {
+    id: "0018_sms_provider_resource",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_sms_provider (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'webhook',
+  endpoint TEXT,
+  access_key TEXT,
+  secret_key_encrypted TEXT,
+  signature TEXT,
+  template_code TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  options_json TEXT,
+  remark TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_sms_provider_code_active_unique
+  ON sys_sms_provider(code)
+  WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_sms_provider_default_active_unique
+  ON sys_sms_provider(is_default)
+  WHERE deleted_at IS NULL AND is_default = true;
+CREATE INDEX IF NOT EXISTS sys_sms_provider_provider_status_idx
+  ON sys_sms_provider(provider, status);
+CREATE INDEX IF NOT EXISTS sys_sms_provider_status_sort_idx
+  ON sys_sms_provider(status, sort);
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (200, 180, 'route', 'system.smsProvider', '短信配置', '/system/sms/provider', 'message', 70, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (201, 200, 'action', 'system.smsProvider.query', '查询短信配置', 1, 1, 0, 0, true, now(), now()),
+  (202, 200, 'action', 'system.smsProvider.create', '新增短信配置', 2, 1, 0, 0, true, now(), now()),
+  (203, 200, 'action', 'system.smsProvider.update', '编辑短信配置', 3, 1, 0, 0, true, now(), now()),
+  (204, 200, 'action', 'system.smsProvider.delete', '删除短信配置', 4, 1, 0, 0, true, now(), now()),
+  (205, 200, 'action', 'system.smsProvider.status', '启停短信配置', 5, 1, 0, 0, true, now(), now()),
+  (206, 200, 'action', 'system.smsProvider.setDefault', '设为默认短信配置', 6, 1, 0, 0, true, now(), now()),
+  (207, 200, 'action', 'system.smsProvider.test', '测试短信配置', 7, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (200), (201), (202), (203), (204), (205), (206), (207)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

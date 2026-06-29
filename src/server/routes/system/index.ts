@@ -19,6 +19,7 @@ import { profileRoutes } from "./profile";
 import { roleRoutes } from "./role";
 import { ruleRoutes } from "./rule";
 import { settingsRoutes } from "./settings";
+import { smsProviderRoutes } from "./sms-provider";
 import { storageRoutes } from "./storage";
 import { userRoutes } from "./user";
 
@@ -40,6 +41,7 @@ systemRoutes.route("/", configRoutes);
 systemRoutes.route("/", fileRoutes);
 systemRoutes.route("/", storageRoutes);
 systemRoutes.route("/", mailRoutes);
+systemRoutes.route("/", smsProviderRoutes);
 systemRoutes.route("/", operationLogRoutes);
 systemRoutes.route("/", loginLogRoutes);
 systemRoutes.route("/", onlineUserRoutes);
