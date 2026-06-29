@@ -6,4 +6,4 @@ import { <%= module.componentName %> } from "<%= module.appPageImportPath %>";
   title: "<%= module.title %>",
   auth: "<%= module.permission %>.query",
   component: <%= module.componentName %>,
-}
+},

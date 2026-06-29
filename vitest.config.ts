@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
-    exclude: ["tests/e2e/**", "node_modules/**", ".next/**", "tmp/**"],
+    exclude: ["tests/e2e/**", "node_modules/**", ".next/**", "tmp/**", "generated/module-drafts/**"],
     fileParallelism: false,
     pool: "forks",
   },

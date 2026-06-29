@@ -668,8 +668,10 @@ describe("framework completeness coverage", () => {
         body: JSON.stringify({ name: "qa-note" }),
       });
       expect(publish.status).toBe(200);
-      expect(await fs.readFile(path.join(process.cwd(), "src/router/route-manifest.ts"), "utf8")).toContain(
-        'key: "system.qa.note"',
+      const routeManifest = await fs.readFile(path.join(process.cwd(), "src/router/route-manifest.ts"), "utf8");
+      expect(routeManifest).toContain('key: "system.qa.note"');
+      expect(routeManifest).toContain(
+        "  component: QaNotePage,\n},\n// admin-base-generator:end qa-note",
       );
       expect(await fs.readFile(path.join(process.cwd(), "src/server/db/schema/index.ts"), "utf8")).toContain(
         "export const sysQaNote",

@@ -162,6 +162,11 @@ function splitSnippetImport(content: string) {
   return { importLine, body };
 }
 
+function ensureArrayEntryComma(content: string) {
+  const trimmed = content.trimEnd();
+  return trimmed.endsWith(",") ? trimmed : `${trimmed},`;
+}
+
 async function insertImportAndRoute(input: {
   filePath: string;
   name: string;
@@ -309,7 +314,7 @@ async function publishDraft(name: string) {
       filePath: repoPath("src/router/route-manifest.ts"),
       name,
       importLine: manifestParts.importLine,
-      routeLine: manifestParts.body,
+      routeLine: ensureArrayEntryComma(manifestParts.body),
       routeBefore: "  {\n    path: \"/profile\",",
       alreadyIncludes: `key: "${config.permission}"`,
     })
