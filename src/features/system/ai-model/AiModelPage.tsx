@@ -1,12 +1,29 @@
 "use client";
 
-import { ApiOutlined, CheckCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {
+  ApiOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Input, Modal, Space, Switch, Tag, Tooltip, Typography } from "antd";
-import { useState } from "react";
+import {
+  Alert,
+  Button,
+  Input,
+  InputNumber,
+  Modal,
+  Space,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import { useRef, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
-import { buildQueryString, request } from "@/lib/request";
+import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
+import { buildQueryString, request, requestTextStream } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
@@ -96,7 +113,15 @@ export function AiModelPage() {
   const queryClient = useQueryClient();
   const [testModel, setTestModel] = useState<AiModelRecord | null>(null);
   const [testInput, setTestInput] = useState("请用一句话回复 OK。");
+  const [testMaxOutputTokens, setTestMaxOutputTokens] = useState(4096);
+  const [testTimeoutMs, setTestTimeoutMs] = useState(60000);
   const [testResult, setTestResult] = useState<AiTestResult | null>(null);
+  const [streamContent, setStreamContent] = useState("");
+  const [streamEndpoint, setStreamEndpoint] = useState("");
+  const [streamStatus, setStreamStatus] = useState<number | null>(null);
+  const [streamError, setStreamError] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamControllerRef = useRef<AbortController | null>(null);
   const providerQuery = useQuery({
     queryKey: ["system-ai-provider-options"],
     queryFn: async () => {
@@ -154,6 +179,70 @@ export function AiModelPage() {
     },
   });
 
+  const resetStreamState = () => {
+    streamControllerRef.current?.abort();
+    streamControllerRef.current = null;
+    setStreamContent("");
+    setStreamEndpoint("");
+    setStreamStatus(null);
+    setStreamError("");
+    setIsStreaming(false);
+  };
+
+  const runStreamTest = async () => {
+    if (!testModel) return;
+    if (!testInput.trim()) {
+      feedback.warning("请输入测试内容");
+      return;
+    }
+    if (testModel.modelType !== "chat") {
+      feedback.warning("只有 Chat 模型支持流式测试");
+      return;
+    }
+    const controller = new AbortController();
+    streamControllerRef.current = controller;
+    setTestResult(null);
+    setStreamContent("");
+    setStreamEndpoint("");
+    setStreamStatus(null);
+    setStreamError("");
+    setIsStreaming(true);
+    try {
+      await requestTextStream("/api/system/ai/model/test/stream", {
+        method: "POST",
+        body: {
+          id: testModel.id,
+          input: testInput.trim(),
+          maxOutputTokens: testMaxOutputTokens,
+          timeoutMs: testTimeoutMs,
+        },
+        signal: controller.signal,
+        silent: true,
+        onResponse: (response) => {
+          setStreamStatus(response.status);
+          setStreamEndpoint(response.headers.get("x-ai-test-endpoint") ?? "");
+        },
+        onChunk: (chunk) => {
+          setStreamContent((previous) => previous + chunk);
+        },
+      });
+      feedback.success("流式测试完成");
+    } catch (error) {
+      if (controller.signal.aborted) {
+        feedback.info("已停止流式测试");
+      } else {
+        const message = error instanceof Error ? error.message : "流式测试失败";
+        setStreamError(message);
+        feedback.error(message);
+      }
+    } finally {
+      if (streamControllerRef.current === controller) {
+        streamControllerRef.current = null;
+      }
+      setIsStreaming(false);
+    }
+  };
+
   const columns: AdminDataTableColumn<AiModelRecord>[] = [
     { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
     {
@@ -206,7 +295,8 @@ export function AiModelPage() {
       valueType: "textarea",
       hideInSearch: true,
       width: 220,
-      formHelp: '例如 {"chat":true,"structured":true,"toolCalling":true}，后续 agent 会读取这里做能力判断。',
+      formHelp:
+        '例如 {"chat":true,"structured":true,"toolCalling":true}，后续 agent 会读取这里做能力判断。',
       render: (value) => {
         const tags = capabilityTags(value ? String(value) : "");
         return tags.length ? (
@@ -220,8 +310,20 @@ export function AiModelPage() {
         );
       },
     },
-    { title: "上下文窗口", dataIndex: "contextWindow", valueType: "digit", hideInSearch: true, width: 120 },
-    { title: "最大输出", dataIndex: "maxOutputTokens", valueType: "digit", hideInSearch: true, width: 110 },
+    {
+      title: "上下文窗口",
+      dataIndex: "contextWindow",
+      valueType: "digit",
+      hideInSearch: true,
+      width: 120,
+    },
+    {
+      title: "最大输出",
+      dataIndex: "maxOutputTokens",
+      valueType: "digit",
+      hideInSearch: true,
+      width: 110,
+    },
     { title: "输入价格", dataIndex: "inputPrice", hideInSearch: true, width: 100 },
     { title: "输出价格", dataIndex: "outputPrice", hideInSearch: true, width: 100 },
     { title: "币种", dataIndex: "currency", hideInSearch: true, width: 88 },
@@ -315,7 +417,10 @@ export function AiModelPage() {
                       ? "Admin Base AI embedding test"
                       : "请用一句话回复 OK。",
                   );
+                  setTestMaxOutputTokens(record.maxOutputTokens ?? 4096);
+                  setTestTimeoutMs(60000);
                   setTestResult(null);
+                  resetStreamState();
                 }}
               />
             </Tooltip>
@@ -360,18 +465,24 @@ export function AiModelPage() {
         title="测试 AI 模型"
         open={Boolean(testModel)}
         width={760}
-        okText="开始测试"
+        okText={testModel?.modelType === "chat" ? "开始流式测试" : "开始测试"}
         cancelText="关闭"
-        confirmLoading={testMutation.isPending}
+        confirmLoading={testMutation.isPending || isStreaming}
+        okButtonProps={{ disabled: isStreaming }}
         onOk={() => {
           if (!testModel) return;
           if (!testInput.trim()) {
             feedback.warning("请输入测试内容");
             return;
           }
+          if (testModel.modelType === "chat") {
+            void runStreamTest();
+            return;
+          }
           void testMutation.mutateAsync({ id: testModel.id, input: testInput.trim() });
         }}
         onCancel={() => {
+          resetStreamState();
           setTestModel(null);
           setTestResult(null);
         }}
@@ -389,15 +500,75 @@ export function AiModelPage() {
             rows={5}
             value={testInput}
             onChange={(event) => setTestInput(event.target.value)}
-            placeholder={testModel?.modelType === "embedding" ? "输入要向量化的文本" : "输入测试 prompt"}
+            placeholder={
+              testModel?.modelType === "embedding" ? "输入要向量化的文本" : "输入测试 prompt"
+            }
           />
+          {testModel?.modelType === "chat" ? (
+            <Space size={12} wrap>
+              <Space direction="vertical" size={4}>
+                <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
+                <InputNumber
+                  min={16}
+                  max={32768}
+                  step={512}
+                  value={testMaxOutputTokens}
+                  onChange={(value) => setTestMaxOutputTokens(Number(value ?? 4096))}
+                />
+              </Space>
+              <Space direction="vertical" size={4}>
+                <Typography.Text type="secondary">超时 ms</Typography.Text>
+                <InputNumber
+                  min={5000}
+                  max={300000}
+                  step={5000}
+                  value={testTimeoutMs}
+                  onChange={(value) => setTestTimeoutMs(Number(value ?? 60000))}
+                />
+              </Space>
+            </Space>
+          ) : null}
+          {testModel?.modelType === "chat" && (isStreaming || streamContent || streamError) ? (
+            <Alert
+              showIcon
+              type={streamError ? "error" : isStreaming ? "info" : "success"}
+              message={
+                streamEndpoint
+                  ? `AI SDK stream / ${streamStatus ?? "-"} / ${streamEndpoint}`
+                  : `AI SDK stream / ${streamStatus ?? "-"}`
+              }
+              action={
+                isStreaming ? (
+                  <Button
+                    size="small"
+                    danger
+                    icon={<CloseCircleOutlined />}
+                    onClick={() => streamControllerRef.current?.abort()}
+                  >
+                    停止
+                  </Button>
+                ) : null
+              }
+              description={
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  {streamError ? (
+                    <Typography.Text type="danger">{streamError}</Typography.Text>
+                  ) : null}
+                  <StreamingMarkdown content={streamContent} />
+                </Space>
+              }
+            />
+          ) : null}
           {testResult ? (
             <Alert
               showIcon
               type="success"
               message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
               description={
-                <Typography.Paragraph code style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                <Typography.Paragraph
+                  code
+                  style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}
+                >
                   {testResult.preview || "测试接口无响应正文"}
                 </Typography.Paragraph>
               }

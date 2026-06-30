@@ -6,7 +6,7 @@
 
 本地需要准备：
 
-- Node.js 20 或更高版本。
+- Node.js 22 或更高版本。
 - pnpm。
 - PostgreSQL 14 或更高版本。
 

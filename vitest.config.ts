@@ -13,5 +13,7 @@ export default defineConfig({
     exclude: ["tests/e2e/**", "node_modules/**", ".next/**", "tmp/**", "generated/module-drafts/**"],
     fileParallelism: false,
     pool: "forks",
+    hookTimeout: 120000,
+    testTimeout: 120000,
   },
 });

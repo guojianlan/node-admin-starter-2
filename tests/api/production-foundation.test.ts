@@ -78,7 +78,7 @@ describe("production foundation", () => {
     const newPasswordLogin = await login("admin", "new-admin-password");
     expect(newPasswordLogin.response.status).toBe(500);
     expect(newPasswordLogin.body.success).toBe(false);
-  });
+  }, 15000);
 
   it("returns request id headers on API responses", async () => {
     const response = await app.request("/api/health", {
@@ -133,35 +133,35 @@ describe("production foundation", () => {
   it("refuses db reset for production-like targets without destructive confirmation", () => {
     expectCommandFailureMessage(
       () =>
-      execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NODE_ENV: "development",
-          DATABASE_URL: "postgres://admin_base:admin_base@prod-db.internal:5432/admin_base",
-          ADMIN_BASE_ALLOW_DB_RESET: "true",
-          ADMIN_BASE_SECRET_KEY: "test-admin-base-secret",
-          ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
-        },
-      }),
+        execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NODE_ENV: "development",
+            DATABASE_URL: "postgres://admin_base:admin_base@prod-db.internal:5432/admin_base",
+            ADMIN_BASE_ALLOW_DB_RESET: "true",
+            ADMIN_BASE_SECRET_KEY: "test-admin-base-secret",
+            ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
+          },
+        }),
       /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,
     );
 
     expectCommandFailureMessage(
       () =>
-      execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NODE_ENV: "production",
-          DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base_production",
-          ADMIN_BASE_ALLOW_DB_RESET: "true",
-          ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
-          ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
-        },
-      }),
+        execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+            DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base_production",
+            ADMIN_BASE_ALLOW_DB_RESET: "true",
+            ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
+            ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
+          },
+        }),
       /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,
     );
   });

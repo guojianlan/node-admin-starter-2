@@ -1,5 +1,6 @@
 import { sql as drizzleSql } from "drizzle-orm";
 import { Hono } from "hono";
+import { streamText } from "ai";
 import { z } from "zod";
 import { success, type PageResult } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -10,6 +11,7 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import type { AiModelUsage } from "@/server/services/ai-provider-service";
 import { getAiProvider, getAiRuntimeConfig } from "@/server/services/ai-provider-service";
+import { buildAiSdkChatRuntime } from "@/server/services/ai-sdk-runtime";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { assertSystemCodeUnchanged } from "@/server/services/protected-records";
 import { decryptSecret, encryptSecret } from "@/server/services/secret";
@@ -84,6 +86,8 @@ const aiProviderTestSchema = z.object({
     (value) => (value === "" || value == null ? "请用一句话回复 OK。" : value),
     z.string().min(1),
   ),
+  maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
+  timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
 });
 
 const aiModelTestSchema = z.object({
@@ -92,6 +96,8 @@ const aiModelTestSchema = z.object({
     (value) => (value === "" || value == null ? "请用一句话回复 OK。" : value),
     z.string().min(1),
   ),
+  maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
+  timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
 });
 
 type AiProviderRow = {
@@ -235,7 +241,9 @@ function providerRequiresApiKey(provider: Pick<AiProviderRow, "providerType" | "
   return provider.providerType !== "ollama";
 }
 
-function providerApiKey(provider: Pick<AiProviderRow, "apiKeyEncrypted" | "providerType" | "optionsJson">) {
+function providerApiKey(
+  provider: Pick<AiProviderRow, "apiKeyEncrypted" | "providerType" | "optionsJson">,
+) {
   const apiKey = decryptSecret(provider.apiKeyEncrypted);
   if (!apiKey && providerRequiresApiKey(provider)) throw new Error("AI Provider API Key 未配置");
   return apiKey;
@@ -284,7 +292,11 @@ function googleUrl(provider: AiProviderRow, path: string) {
   return url.toString();
 }
 
-async function parseTestResponse(response: Response, mode: ProviderTestMode, endpoint: string): Promise<AiTestResult> {
+async function parseTestResponse(
+  response: Response,
+  mode: ProviderTestMode,
+  endpoint: string,
+): Promise<AiTestResult> {
   const text = await response.text().catch(() => "");
   const preview = (() => {
     if (!text) return "";
@@ -305,7 +317,10 @@ async function parseTestResponse(response: Response, mode: ProviderTestMode, end
   };
 }
 
-async function testProviderConnection(provider: AiProviderRow, input: z.infer<typeof aiProviderTestSchema>) {
+async function testProviderConnection(
+  provider: AiProviderRow,
+  input: z.infer<typeof aiProviderTestSchema>,
+) {
   if (provider.status !== 1) throw new Error("停用的 AI Provider 不能测试连接");
   if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
   const protocol = providerProtocol(provider.providerType);
@@ -461,11 +476,16 @@ async function testModelConnection(model: AiModelRow, input: z.infer<typeof aiMo
             }),
       signal: AbortSignal.timeout(15000),
     });
-    return parseTestResponse(response, model.modelType === "embedding" ? "embedding" : "chat", endpoint);
+    return parseTestResponse(
+      response,
+      model.modelType === "embedding" ? "embedding" : "chat",
+      endpoint,
+    );
   }
 
   if (protocol === "anthropic") {
-    if (model.modelType === "embedding") throw new Error("Anthropic Provider 不支持 Embedding 测试");
+    if (model.modelType === "embedding")
+      throw new Error("Anthropic Provider 不支持 Embedding 测试");
     const endpoint = `${url}/messages`;
     const response = await fetch(endpoint, {
       method: "POST",
@@ -499,7 +519,72 @@ async function testModelConnection(model: AiModelRow, input: z.infer<typeof aiMo
           }),
           signal: AbortSignal.timeout(15000),
         });
-  return parseTestResponse(response, model.modelType === "embedding" ? "embedding" : "chat", endpoint);
+  return parseTestResponse(
+    response,
+    model.modelType === "embedding" ? "embedding" : "chat",
+    endpoint,
+  );
+}
+
+function buildTextStreamResponse(
+  runtime: ReturnType<typeof buildAiSdkChatRuntime>,
+  input: string,
+  abortSignal: AbortSignal,
+  options: { maxOutputTokens?: number; timeoutMs?: number } = {},
+) {
+  const maxOutputTokens = options.maxOutputTokens ?? runtime.maxOutputTokens;
+  const result = streamText({
+    model: runtime.model,
+    prompt: input,
+    maxOutputTokens,
+    timeout: options.timeoutMs ?? 60000,
+    abortSignal,
+  });
+  return result.toTextStreamResponse({
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-ai-test-endpoint": runtime.endpointHint,
+      "x-ai-test-stream": "text",
+      "x-ai-test-max-output-tokens": String(maxOutputTokens),
+      "x-ai-test-timeout-ms": String(options.timeoutMs ?? 60000),
+    },
+  });
+}
+
+async function testProviderChatStream(
+  provider: AiProviderRow,
+  input: z.infer<typeof aiProviderTestSchema>,
+  abortSignal: AbortSignal,
+) {
+  if (provider.status !== 1) throw new Error("停用的 AI Provider 不能测试连接");
+  if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
+  if (input.mode !== "chat") throw new Error("流式测试仅支持 Chat 调用");
+  if (!input.modelId) throw new Error("请输入用于测试的模型 ID");
+  const runtime = buildAiSdkChatRuntime(provider, {
+    modelId: input.modelId,
+    modelType: "chat",
+    maxOutputTokens: input.maxOutputTokens ?? null,
+  });
+  return buildTextStreamResponse(runtime, input.input, abortSignal, {
+    maxOutputTokens: input.maxOutputTokens,
+    timeoutMs: input.timeoutMs,
+  });
+}
+
+async function testModelChatStream(
+  model: AiModelRow,
+  input: z.infer<typeof aiModelTestSchema>,
+  abortSignal: AbortSignal,
+) {
+  const provider = await getProviderRow(model.providerId);
+  if (!provider) throw new Error("AI Provider 不存在");
+  if (provider.status !== 1) throw new Error("停用的 AI Provider 不能测试模型");
+  if (model.status !== 1) throw new Error("停用的 AI 模型不能测试");
+  const runtime = buildAiSdkChatRuntime(provider, model);
+  return buildTextStreamResponse(runtime, input.input, abortSignal, {
+    maxOutputTokens: input.maxOutputTokens,
+    timeoutMs: input.timeoutMs,
+  });
 }
 
 const aiProviderCrud = createCrudRoutes({
@@ -614,9 +699,13 @@ aiRoutes.put(
           throw new Error("AI Provider API Key 未配置");
         }
         await sqlite.transaction(async (tx) => {
-          await tx.prepare("UPDATE sys_ai_provider SET is_default = false, updated_at = now()").run();
           await tx
-            .prepare("UPDATE sys_ai_provider SET is_default = true, updated_at = now() WHERE id = ?")
+            .prepare("UPDATE sys_ai_provider SET is_default = false, updated_at = now()")
+            .run();
+          await tx
+            .prepare(
+              "UPDATE sys_ai_provider SET is_default = true, updated_at = now() WHERE id = ?",
+            )
             .run(id);
         });
       },
@@ -625,74 +714,96 @@ aiRoutes.put(
   },
 );
 
+aiRoutes.post("/ai/provider/test", authRequired(), ability("system.aiProvider.test"), async (c) => {
+  const payload = aiProviderTestSchema.parse(await c.req.json());
+  let result: AiTestResult | null = null;
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.aiProvider",
+      action: "test",
+      resource: "/ai/provider",
+      resourceId: payload.id,
+      details: { mode: payload.mode, modelId: payload.modelId },
+    },
+    async () => {
+      const row = await getProviderRow(payload.id);
+      if (!row) throw new Error("AI Provider 不存在");
+      result = await testProviderConnection(row, payload);
+    },
+  );
+  return c.json(success(result, "测试完成"));
+});
+
 aiRoutes.post(
-  "/ai/provider/test",
+  "/ai/provider/test/stream",
   authRequired(),
   ability("system.aiProvider.test"),
   async (c) => {
     const payload = aiProviderTestSchema.parse(await c.req.json());
-    let result: AiTestResult | null = null;
+    let response: Response | null = null;
     await runWithOperationLog(
       c,
       {
         module: "system.aiProvider",
-        action: "test",
+        action: "testStream",
         resource: "/ai/provider",
         resourceId: payload.id,
-        details: { mode: payload.mode, modelId: payload.modelId },
+        details: {
+          mode: payload.mode,
+          modelId: payload.modelId,
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+        },
       },
       async () => {
         const row = await getProviderRow(payload.id);
         if (!row) throw new Error("AI Provider 不存在");
-        result = await testProviderConnection(row, payload);
+        response = await testProviderChatStream(row, payload, c.req.raw.signal);
       },
     );
-    return c.json(success(result, "测试完成"));
+    return response ?? new Response("AI 流式测试未创建响应", { status: 500 });
   },
 );
 
-aiRoutes.get(
-  "/ai/model",
-  authRequired(),
-  ability("system.aiModel.query"),
-  async (c) => {
-    const params = new URL(c.req.url).searchParams;
-    const page = Math.max(Number(params.get("page") || 1), 1);
-    const pageSize = Math.min(Math.max(Number(params.get("pageSize") || 20), 1), 200);
-    const conditions = ["m.deleted_at IS NULL", "p.deleted_at IS NULL"];
-    const values: Array<string | number> = [];
-    const keyword = params.get("keyword")?.trim();
-    if (keyword) {
-      conditions.push("(m.name ILIKE ? OR m.model_id ILIKE ? OR p.name ILIKE ? OR p.code ILIKE ?)");
-      values.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
-    }
-    const providerId = params.get("providerId");
-    if (providerId) {
-      conditions.push("m.provider_id = ?");
-      values.push(Number(providerId));
-    }
-    const modelType = params.get("modelType");
-    if (modelType) {
-      conditions.push("m.model_type = ?");
-      values.push(modelType);
-    }
-    const status = params.get("status");
-    if (status) {
-      conditions.push("m.status = ?");
-      values.push(Number(status));
-    }
-    const where = conditions.join(" AND ");
-    const totalRow = (await sqlite
-      .prepare(
-        `SELECT COUNT(1)::int AS total
+aiRoutes.get("/ai/model", authRequired(), ability("system.aiModel.query"), async (c) => {
+  const params = new URL(c.req.url).searchParams;
+  const page = Math.max(Number(params.get("page") || 1), 1);
+  const pageSize = Math.min(Math.max(Number(params.get("pageSize") || 20), 1), 200);
+  const conditions = ["m.deleted_at IS NULL", "p.deleted_at IS NULL"];
+  const values: Array<string | number> = [];
+  const keyword = params.get("keyword")?.trim();
+  if (keyword) {
+    conditions.push("(m.name ILIKE ? OR m.model_id ILIKE ? OR p.name ILIKE ? OR p.code ILIKE ?)");
+    values.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+  const providerId = params.get("providerId");
+  if (providerId) {
+    conditions.push("m.provider_id = ?");
+    values.push(Number(providerId));
+  }
+  const modelType = params.get("modelType");
+  if (modelType) {
+    conditions.push("m.model_type = ?");
+    values.push(modelType);
+  }
+  const status = params.get("status");
+  if (status) {
+    conditions.push("m.status = ?");
+    values.push(Number(status));
+  }
+  const where = conditions.join(" AND ");
+  const totalRow = (await sqlite
+    .prepare(
+      `SELECT COUNT(1)::int AS total
          FROM sys_ai_model m
          INNER JOIN sys_ai_provider p ON p.id = m.provider_id
          WHERE ${where}`,
-      )
-      .get(...values)) as { total: number } | undefined;
-    const rows = (await sqlite
-      .prepare(
-        `SELECT
+    )
+    .get(...values)) as { total: number } | undefined;
+  const rows = (await sqlite
+    .prepare(
+      `SELECT
           m.id,
           m.provider_id AS "providerId",
           p.name AS "providerName",
@@ -721,92 +832,82 @@ aiRoutes.get(
          WHERE ${where}
          ORDER BY m.sort ASC, m.id ASC
          LIMIT ? OFFSET ?`,
-      )
-      .all(...values, pageSize, (page - 1) * pageSize)) as AiModelRow[];
-    const result: PageResult<AiModelRow> = {
-      data: rows,
-      total: Number(totalRow?.total ?? 0),
-      page,
-      pageSize,
-    };
-    return c.json(success(result));
-  },
-);
+    )
+    .all(...values, pageSize, (page - 1) * pageSize)) as AiModelRow[];
+  const result: PageResult<AiModelRow> = {
+    data: rows,
+    total: Number(totalRow?.total ?? 0),
+    page,
+    pageSize,
+  };
+  return c.json(success(result));
+});
 
-aiRoutes.post(
-  "/ai/model",
-  authRequired(),
-  ability("system.aiModel.create"),
-  async (c) => {
-    const payload = normalizeAiModel(aiModelSchema.parse(await c.req.json()));
-    await runWithOperationLog(
-      c,
-      {
-        module: "system.aiModel",
-        action: "create",
-        resource: "/ai/model",
-        details: { modelId: payload.modelId, providerId: payload.providerId },
-      },
-      async () => {
-        if (!(await getAiProvider(payload.providerId))) throw new Error("AI Provider 不存在");
-        await sqlite
-          .prepare(
-            `INSERT INTO sys_ai_model
+aiRoutes.post("/ai/model", authRequired(), ability("system.aiModel.create"), async (c) => {
+  const payload = normalizeAiModel(aiModelSchema.parse(await c.req.json()));
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.aiModel",
+      action: "create",
+      resource: "/ai/model",
+      details: { modelId: payload.modelId, providerId: payload.providerId },
+    },
+    async () => {
+      if (!(await getAiProvider(payload.providerId))) throw new Error("AI Provider 不存在");
+      await sqlite
+        .prepare(
+          `INSERT INTO sys_ai_model
               (provider_id, name, model_id, model_type, capabilities_json, context_window, max_output_tokens,
                input_price, output_price, currency, status, sort, remark, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            payload.providerId,
-            payload.name,
-            payload.modelId,
-            payload.modelType,
-            payload.capabilitiesJson || null,
-            payload.contextWindow ?? null,
-            payload.maxOutputTokens ?? null,
-            payload.inputPrice || null,
-            payload.outputPrice || null,
-            payload.currency,
-            payload.status,
-            payload.sort,
-            payload.remark || null,
-            nowIso(),
-            nowIso(),
-          );
-      },
-    );
-    return c.json(success(null, "创建成功"));
-  },
-);
+        )
+        .run(
+          payload.providerId,
+          payload.name,
+          payload.modelId,
+          payload.modelType,
+          payload.capabilitiesJson || null,
+          payload.contextWindow ?? null,
+          payload.maxOutputTokens ?? null,
+          payload.inputPrice || null,
+          payload.outputPrice || null,
+          payload.currency,
+          payload.status,
+          payload.sort,
+          payload.remark || null,
+          nowIso(),
+          nowIso(),
+        );
+    },
+  );
+  return c.json(success(null, "创建成功"));
+});
 
-aiRoutes.put(
-  "/ai/model/:id",
-  authRequired(),
-  ability("system.aiModel.update"),
-  async (c) => {
-    const id = Number(c.req.param("id"));
-    const payload = aiModelSchema.partial().parse(await c.req.json());
-    if (typeof payload.capabilitiesJson === "string") {
-      assertJson(payload.capabilitiesJson, "模型能力配置必须是合法 JSON");
-    }
-    const row = await getModelRow(id);
-    if (!row) throw new Error("AI 模型不存在");
-    await runWithOperationLog(
-      c,
-      {
-        module: "system.aiModel",
-        action: "update",
-        resource: "/ai/model",
-        resourceId: id,
-        details: { fields: Object.keys(payload) },
-      },
-      async () => {
-        if (payload.providerId && !(await getAiProvider(payload.providerId))) {
-          throw new Error("AI Provider 不存在");
-        }
-        await sqlite
-          .prepare(
-            `UPDATE sys_ai_model
+aiRoutes.put("/ai/model/:id", authRequired(), ability("system.aiModel.update"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const payload = aiModelSchema.partial().parse(await c.req.json());
+  if (typeof payload.capabilitiesJson === "string") {
+    assertJson(payload.capabilitiesJson, "模型能力配置必须是合法 JSON");
+  }
+  const row = await getModelRow(id);
+  if (!row) throw new Error("AI 模型不存在");
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.aiModel",
+      action: "update",
+      resource: "/ai/model",
+      resourceId: id,
+      details: { fields: Object.keys(payload) },
+    },
+    async () => {
+      if (payload.providerId && !(await getAiProvider(payload.providerId))) {
+        throw new Error("AI Provider 不存在");
+      }
+      await sqlite
+        .prepare(
+          `UPDATE sys_ai_model
              SET provider_id = COALESCE(?, provider_id),
                  name = COALESCE(?, name),
                  model_id = COALESCE(?, model_id),
@@ -822,58 +923,56 @@ aiRoutes.put(
                  remark = ?,
                  updated_at = now()
              WHERE id = ? AND deleted_at IS NULL`,
-          )
-          .run(
-            payload.providerId ?? null,
-            payload.name ?? null,
-            payload.modelId ?? null,
-            payload.modelType ?? null,
-            payload.capabilitiesJson === undefined ? row.capabilitiesJson : payload.capabilitiesJson || null,
-            payload.contextWindow === undefined ? row.contextWindow : payload.contextWindow ?? null,
-            payload.maxOutputTokens === undefined ? row.maxOutputTokens : payload.maxOutputTokens ?? null,
-            payload.inputPrice === undefined ? row.inputPrice : payload.inputPrice || null,
-            payload.outputPrice === undefined ? row.outputPrice : payload.outputPrice || null,
-            payload.currency ?? null,
-            payload.status ?? null,
-            payload.sort ?? null,
-            payload.remark === undefined ? row.remark : payload.remark || null,
-            id,
-          );
-      },
-    );
-    return c.json(success(null, "更新成功"));
-  },
-);
+        )
+        .run(
+          payload.providerId ?? null,
+          payload.name ?? null,
+          payload.modelId ?? null,
+          payload.modelType ?? null,
+          payload.capabilitiesJson === undefined
+            ? row.capabilitiesJson
+            : payload.capabilitiesJson || null,
+          payload.contextWindow === undefined ? row.contextWindow : (payload.contextWindow ?? null),
+          payload.maxOutputTokens === undefined
+            ? row.maxOutputTokens
+            : (payload.maxOutputTokens ?? null),
+          payload.inputPrice === undefined ? row.inputPrice : payload.inputPrice || null,
+          payload.outputPrice === undefined ? row.outputPrice : payload.outputPrice || null,
+          payload.currency ?? null,
+          payload.status ?? null,
+          payload.sort ?? null,
+          payload.remark === undefined ? row.remark : payload.remark || null,
+          id,
+        );
+    },
+  );
+  return c.json(success(null, "更新成功"));
+});
 
-aiRoutes.delete(
-  "/ai/model/:id",
-  authRequired(),
-  ability("system.aiModel.delete"),
-  async (c) => {
-    const id = Number(c.req.param("id"));
-    const row = await getModelRow(id);
-    if (!row) throw new Error("AI 模型不存在");
-    if (row.isSystem) throw new Error("系统内置 AI 模型不能删除");
-    if (row.isDefaultChat || row.isDefaultStructured || row.isDefaultEmbedding) {
-      throw new Error("默认 AI 模型不能删除，请先切换默认模型");
-    }
-    await runWithOperationLog(
-      c,
-      {
-        module: "system.aiModel",
-        action: "delete",
-        resource: "/ai/model",
-        resourceId: id,
-      },
-      async () => {
-        await sqlite
-          .prepare("UPDATE sys_ai_model SET deleted_at = now(), updated_at = now() WHERE id = ?")
-          .run(id);
-      },
-    );
-    return c.json(success(null, "删除成功"));
-  },
-);
+aiRoutes.delete("/ai/model/:id", authRequired(), ability("system.aiModel.delete"), async (c) => {
+  const id = Number(c.req.param("id"));
+  const row = await getModelRow(id);
+  if (!row) throw new Error("AI 模型不存在");
+  if (row.isSystem) throw new Error("系统内置 AI 模型不能删除");
+  if (row.isDefaultChat || row.isDefaultStructured || row.isDefaultEmbedding) {
+    throw new Error("默认 AI 模型不能删除，请先切换默认模型");
+  }
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.aiModel",
+      action: "delete",
+      resource: "/ai/model",
+      resourceId: id,
+    },
+    async () => {
+      await sqlite
+        .prepare("UPDATE sys_ai_model SET deleted_at = now(), updated_at = now() WHERE id = ?")
+        .run(id);
+    },
+  );
+  return c.json(success(null, "删除成功"));
+});
 
 aiRoutes.put(
   "/ai/model/status/:id",
@@ -947,29 +1046,54 @@ aiRoutes.put(
   },
 );
 
+aiRoutes.post("/ai/model/test", authRequired(), ability("system.aiModel.test"), async (c) => {
+  const payload = aiModelTestSchema.parse(await c.req.json());
+  let result: AiTestResult | null = null;
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.aiModel",
+      action: "test",
+      resource: "/ai/model",
+      resourceId: payload.id,
+      details: { inputPreview: payload.input.slice(0, 120) },
+    },
+    async () => {
+      const row = await getModelRow(payload.id);
+      if (!row) throw new Error("AI 模型不存在");
+      result = await testModelConnection(row, payload);
+    },
+  );
+  return c.json(success(result, "模型调用正常"));
+});
+
 aiRoutes.post(
-  "/ai/model/test",
+  "/ai/model/test/stream",
   authRequired(),
   ability("system.aiModel.test"),
   async (c) => {
     const payload = aiModelTestSchema.parse(await c.req.json());
-    let result: AiTestResult | null = null;
+    let response: Response | null = null;
     await runWithOperationLog(
       c,
       {
         module: "system.aiModel",
-        action: "test",
+        action: "testStream",
         resource: "/ai/model",
         resourceId: payload.id,
-        details: { inputPreview: payload.input.slice(0, 120) },
+        details: {
+          inputPreview: payload.input.slice(0, 120),
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+        },
       },
       async () => {
         const row = await getModelRow(payload.id);
         if (!row) throw new Error("AI 模型不存在");
-        result = await testModelConnection(row, payload);
+        response = await testModelChatStream(row, payload, c.req.raw.signal);
       },
     );
-    return c.json(success(result, "模型调用正常"));
+    return response ?? new Response("AI 流式测试未创建响应", { status: 500 });
   },
 );
 

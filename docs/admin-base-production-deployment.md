@@ -4,7 +4,7 @@ This document is the production handoff checklist for Admin Base.
 
 ## Runtime
 
-- Use Node.js 20 or newer.
+- Use Node.js 22 or newer.
 - Use PostgreSQL as the system database.
 - Build with `pnpm build` and run with `pnpm start`.
 - Do not run `pnpm db:reset` outside an isolated development or test database.

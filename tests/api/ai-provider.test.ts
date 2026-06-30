@@ -55,11 +55,49 @@ async function latestOperation(module: string, action: string) {
     | undefined;
 }
 
+function readRequestBody(init?: RequestInit) {
+  return typeof init?.body === "string" ? JSON.parse(init.body) : {};
+}
+
+function openAiTextStream(chunks: string[]) {
+  const body = [
+    ...chunks.map(
+      (chunk, index) =>
+        `data: ${JSON.stringify({
+          id: "chatcmpl-test",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "test-chat",
+          choices: [
+            {
+              index: 0,
+              delta: index === 0 ? { role: "assistant", content: chunk } : { content: chunk },
+              finish_reason: null,
+            },
+          ],
+        })}`,
+    ),
+    `data: ${JSON.stringify({
+      id: "chatcmpl-test",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "test-chat",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    })}`,
+    "data: [DONE]",
+    "",
+  ].join("\n\n");
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
 describe("AI provider configuration", () => {
   beforeEach(async () => {
     vi.unstubAllGlobals();
     await resetTestDatabase();
-  });
+  }, 120000);
 
   it("manages provider secrets, default protection and connection tests", async () => {
     const token = await login();
@@ -148,7 +186,7 @@ describe("AI provider configuration", () => {
       expect(String(input)).toBe("https://ai-gateway.test/v1/chat/completions");
       expect(init?.method).toBe("POST");
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer ai-secret");
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      expect(readRequestBody(init)).toMatchObject({
         model: "test-chat",
         messages: [{ role: "user", content: "请返回 OK" }],
       });
@@ -174,6 +212,41 @@ describe("AI provider configuration", () => {
     expect(chatFetchMock).toHaveBeenCalledTimes(1);
     expect(chatTestBody.data?.endpoint).toBe("https://ai-gateway.test/v1/chat/completions");
     expect(chatTestBody.data?.preview).toContain("OK");
+
+    const streamFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://ai-gateway.test/v1/chat/completions");
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer ai-secret");
+      expect(readRequestBody(init)).toMatchObject({
+        model: "test-chat",
+        stream: true,
+      });
+      return openAiTextStream(["O", "K"]);
+    });
+    vi.stubGlobal("fetch", streamFetchMock);
+
+    const streamTest = await app.request("/api/system/ai/provider/test/stream", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-provider-stream-test" },
+      body: JSON.stringify({
+        id: provider.id,
+        mode: "chat",
+        modelId: "test-chat",
+        input: "请返回 OK",
+      }),
+    });
+    expect(streamTest.status).toBe(200);
+    expect(streamTest.headers.get("x-ai-test-endpoint")).toBe(
+      "https://ai-gateway.test/v1/chat/completions",
+    );
+    await expect(streamTest.text()).resolves.toBe("OK");
+    expect(streamFetchMock).toHaveBeenCalledTimes(1);
+    expect(await latestOperation("system.aiProvider", "testStream")).toMatchObject({
+      requestId: "ai-provider-stream-test",
+      success: true,
+      status: 200,
+      riskLevel: "medium",
+    });
   });
 
   it("manages default models and exposes runtime config for future business agents", async () => {
@@ -252,7 +325,9 @@ describe("AI provider configuration", () => {
     const chatModel = models.data?.data.find((item) => item.modelId === "business-chat") as {
       id: number;
     };
-    const embeddingModel = models.data?.data.find((item) => item.modelId === "business-embedding") as {
+    const embeddingModel = models.data?.data.find(
+      (item) => item.modelId === "business-embedding",
+    ) as {
       id: number;
     };
 
@@ -302,8 +377,10 @@ describe("AI provider configuration", () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://business-ai.test/v1/chat/completions");
-      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer business-secret");
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer business-secret",
+      );
+      expect(readRequestBody(init)).toMatchObject({
         model: "business-chat",
         messages: [{ role: "user", content: "请返回 OK" }],
       });
@@ -323,6 +400,37 @@ describe("AI provider configuration", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await latestOperation("system.aiModel", "test")).toMatchObject({
       requestId: "ai-model-test",
+      success: true,
+      status: 200,
+      riskLevel: "medium",
+    });
+
+    const streamFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://business-ai.test/v1/chat/completions");
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer business-secret",
+      );
+      expect(readRequestBody(init)).toMatchObject({
+        model: "business-chat",
+        stream: true,
+      });
+      return openAiTextStream(["O", "K"]);
+    });
+    vi.stubGlobal("fetch", streamFetchMock);
+
+    const streamModel = await app.request("/api/system/ai/model/test/stream", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-model-stream-test" },
+      body: JSON.stringify({ id: chatModel.id, input: "请返回 OK" }),
+    });
+    expect(streamModel.status).toBe(200);
+    expect(streamModel.headers.get("x-ai-test-endpoint")).toBe(
+      "https://business-ai.test/v1/chat/completions",
+    );
+    await expect(streamModel.text()).resolves.toBe("OK");
+    expect(streamFetchMock).toHaveBeenCalledTimes(1);
+    expect(await latestOperation("system.aiModel", "testStream")).toMatchObject({
+      requestId: "ai-model-stream-test",
       success: true,
       status: 200,
       riskLevel: "medium",

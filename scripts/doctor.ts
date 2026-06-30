@@ -12,11 +12,11 @@ type DoctorCheck = {
 
 function checkNodeVersion(): DoctorCheck {
   const major = Number(process.versions.node.split(".")[0]);
-  if (major < 20) {
+  if (major < 22) {
     return {
       name: "node",
       status: "failed",
-      message: `Node.js ${process.version} detected; Node.js 20 or newer is required`,
+      message: `Node.js ${process.version} detected; Node.js 22 or newer is required`,
     };
   }
   return {

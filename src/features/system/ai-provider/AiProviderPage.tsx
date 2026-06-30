@@ -1,12 +1,30 @@
 "use client";
 
-import { ApiOutlined, CheckCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {
+  ApiOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Input, Modal, Select, Space, Switch, Tag, Tooltip, Typography } from "antd";
-import { useState } from "react";
+import {
+  Alert,
+  Button,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import { useRef, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
-import { request } from "@/lib/request";
+import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
+import { request, requestTextStream } from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 import { statusOptions } from "../shared/options";
@@ -87,10 +105,20 @@ export function AiProviderPage() {
   const [testMode, setTestMode] = useState<AiTestMode>("listModels");
   const [testModelId, setTestModelId] = useState("");
   const [testInput, setTestInput] = useState("请用一句话回复 OK。");
+  const [testMaxOutputTokens, setTestMaxOutputTokens] = useState(4096);
+  const [testTimeoutMs, setTestTimeoutMs] = useState(60000);
   const [testResult, setTestResult] = useState<AiTestResult | null>(null);
+  const [streamContent, setStreamContent] = useState("");
+  const [streamEndpoint, setStreamEndpoint] = useState("");
+  const [streamStatus, setStreamStatus] = useState<number | null>(null);
+  const [streamError, setStreamError] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamControllerRef = useRef<AbortController | null>(null);
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/ai/provider"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin-data-table", "/api/system/ai/provider"],
+    });
     void queryClient.invalidateQueries({ queryKey: ["system-settings", "ai-provider"] });
     void queryClient.invalidateQueries({ queryKey: ["system-settings", "ai-model"] });
   };
@@ -116,12 +144,7 @@ export function AiProviderPage() {
   });
 
   const testMutation = useMutation({
-    mutationFn: (payload: {
-      id: number;
-      mode: AiTestMode;
-      modelId?: string;
-      input?: string;
-    }) =>
+    mutationFn: (payload: { id: number; mode: AiTestMode; modelId?: string; input?: string }) =>
       request("/api/system/ai/provider/test", {
         method: "POST",
         body: payload,
@@ -131,6 +154,68 @@ export function AiProviderPage() {
       feedback.success("测试完成");
     },
   });
+
+  const resetStreamState = () => {
+    streamControllerRef.current?.abort();
+    streamControllerRef.current = null;
+    setStreamContent("");
+    setStreamEndpoint("");
+    setStreamStatus(null);
+    setStreamError("");
+    setIsStreaming(false);
+  };
+
+  const runStreamTest = async () => {
+    if (!testProvider) return;
+    if (!testModelId.trim()) {
+      feedback.warning("请输入模型 ID");
+      return;
+    }
+    const controller = new AbortController();
+    streamControllerRef.current = controller;
+    setTestResult(null);
+    setStreamContent("");
+    setStreamEndpoint("");
+    setStreamStatus(null);
+    setStreamError("");
+    setIsStreaming(true);
+    try {
+      await requestTextStream("/api/system/ai/provider/test/stream", {
+        method: "POST",
+        body: {
+          id: testProvider.id,
+          mode: "chat",
+          modelId: testModelId.trim(),
+          input: testInput.trim() || undefined,
+          maxOutputTokens: testMaxOutputTokens,
+          timeoutMs: testTimeoutMs,
+        },
+        signal: controller.signal,
+        silent: true,
+        onResponse: (response) => {
+          setStreamStatus(response.status);
+          setStreamEndpoint(response.headers.get("x-ai-test-endpoint") ?? "");
+        },
+        onChunk: (chunk) => {
+          setStreamContent((previous) => previous + chunk);
+        },
+      });
+      feedback.success("流式测试完成");
+    } catch (error) {
+      if (controller.signal.aborted) {
+        feedback.info("已停止流式测试");
+      } else {
+        const message = error instanceof Error ? error.message : "流式测试失败";
+        setStreamError(message);
+        feedback.error(message);
+      }
+    } finally {
+      if (streamControllerRef.current === controller) {
+        streamControllerRef.current = null;
+      }
+      setIsStreaming(false);
+    }
+  };
 
   const columns: AdminDataTableColumn<AiProviderRecord>[] = [
     { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
@@ -184,7 +269,9 @@ export function AiProviderPage() {
       hideInForm: true,
       hideInSearch: true,
       width: 88,
-      render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>,
+      render: (value) => (
+        <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
+      ),
     },
     { title: "Organization", dataIndex: "organization", hideInSearch: true, width: 160 },
     { title: "Project", dataIndex: "project", hideInSearch: true, width: 160 },
@@ -236,7 +323,10 @@ export function AiProviderPage() {
   ];
 
   return (
-    <PageScaffold title="AI Provider" description="维护 AI 服务商、OpenAI-compatible 网关、密钥和默认 Provider">
+    <PageScaffold
+      title="AI Provider"
+      description="维护 AI 服务商、OpenAI-compatible 网关、密钥和默认 Provider"
+    >
       <AdminDataTable
         api="/api/system/ai/provider"
         accessName="system.aiProvider"
@@ -259,7 +349,10 @@ export function AiProviderPage() {
                   setTestMode("listModels");
                   setTestModelId("");
                   setTestInput("请用一句话回复 OK。");
+                  setTestMaxOutputTokens(4096);
+                  setTestTimeoutMs(60000);
                   setTestResult(null);
+                  resetStreamState();
                 }}
               />
             </Tooltip>
@@ -296,13 +389,18 @@ export function AiProviderPage() {
         title="测试 AI Provider"
         open={Boolean(testProvider)}
         width={760}
-        okText="开始测试"
+        okText={testMode === "chat" ? "开始流式测试" : "开始测试"}
         cancelText="关闭"
-        confirmLoading={testMutation.isPending}
+        confirmLoading={testMutation.isPending || isStreaming}
+        okButtonProps={{ disabled: isStreaming }}
         onOk={() => {
           if (!testProvider) return;
           if (testMode !== "listModels" && !testModelId.trim()) {
             feedback.warning("请输入模型 ID");
+            return;
+          }
+          if (testMode === "chat") {
+            void runStreamTest();
             return;
           }
           void testMutation.mutateAsync({
@@ -313,6 +411,7 @@ export function AiProviderPage() {
           });
         }}
         onCancel={() => {
+          resetStreamState();
           setTestProvider(null);
           setTestResult(null);
         }}
@@ -330,6 +429,7 @@ export function AiProviderPage() {
             onChange={(value) => {
               setTestMode(value);
               setTestResult(null);
+              resetStreamState();
             }}
           />
           {testMode !== "listModels" ? (
@@ -345,7 +445,62 @@ export function AiProviderPage() {
                 onChange={(event) => setTestInput(event.target.value)}
                 placeholder="测试输入内容"
               />
+              {testMode === "chat" ? (
+                <Space size={12} wrap>
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
+                    <InputNumber
+                      min={16}
+                      max={32768}
+                      step={512}
+                      value={testMaxOutputTokens}
+                      onChange={(value) => setTestMaxOutputTokens(Number(value ?? 4096))}
+                    />
+                  </Space>
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text type="secondary">超时 ms</Typography.Text>
+                    <InputNumber
+                      min={5000}
+                      max={300000}
+                      step={5000}
+                      value={testTimeoutMs}
+                      onChange={(value) => setTestTimeoutMs(Number(value ?? 60000))}
+                    />
+                  </Space>
+                </Space>
+              ) : null}
             </>
+          ) : null}
+          {testMode === "chat" && (isStreaming || streamContent || streamError) ? (
+            <Alert
+              showIcon
+              type={streamError ? "error" : isStreaming ? "info" : "success"}
+              message={
+                streamEndpoint
+                  ? `AI SDK stream / ${streamStatus ?? "-"} / ${streamEndpoint}`
+                  : `AI SDK stream / ${streamStatus ?? "-"}`
+              }
+              action={
+                isStreaming ? (
+                  <Button
+                    size="small"
+                    danger
+                    icon={<CloseCircleOutlined />}
+                    onClick={() => streamControllerRef.current?.abort()}
+                  >
+                    停止
+                  </Button>
+                ) : null
+              }
+              description={
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  {streamError ? (
+                    <Typography.Text type="danger">{streamError}</Typography.Text>
+                  ) : null}
+                  <StreamingMarkdown content={streamContent} />
+                </Space>
+              }
+            />
           ) : null}
           {testResult ? (
             <Alert
@@ -353,7 +508,10 @@ export function AiProviderPage() {
               type="success"
               message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
               description={
-                <Typography.Paragraph code style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                <Typography.Paragraph
+                  code
+                  style={{ maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" }}
+                >
                   {testResult.preview || "测试接口无响应正文"}
                 </Typography.Paragraph>
               }
