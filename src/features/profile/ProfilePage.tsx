@@ -35,6 +35,7 @@ import {
 import { useEffect, useRef } from "react";
 import { request } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
+import { useNavigationAdapter } from "@/platform/navigation";
 import { useAuthStore } from "@/stores/auth";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
@@ -93,6 +94,7 @@ type PasswordFormValues = {
 };
 
 export function ProfilePage() {
+  const navigation = useNavigationAdapter();
   const [profileForm] = Form.useForm<ProfileFormValues>();
   const [passwordForm] = Form.useForm<PasswordFormValues>();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -179,7 +181,7 @@ export function ProfilePage() {
         body: {},
       }),
     onSuccess: (result) => {
-      window.location.href = result.authUrl;
+      navigation.push(result.authUrl);
     },
   });
 

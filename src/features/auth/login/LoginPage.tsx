@@ -280,7 +280,7 @@ export function LoginPage() {
                     aria-label={provider.name}
                     title={provider.name}
                     onClick={() => {
-                      window.location.href = provider.authUrl;
+                      navigation.push(provider.authUrl);
                     }}
                   >
                     {providerIcons[provider.key] ?? provider.name.slice(0, 1).toUpperCase()}
