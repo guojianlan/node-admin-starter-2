@@ -11,6 +11,7 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import type { AiModelUsage } from "@/server/services/ai-provider-service";
 import { getAiProvider, getAiRuntimeConfig } from "@/server/services/ai-provider-service";
+import { generateAiText, streamAiText } from "@/server/services/ai-runtime-service";
 import { buildAiSdkChatRuntime } from "@/server/services/ai-sdk-runtime";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { assertSystemCodeUnchanged } from "@/server/services/protected-records";
@@ -96,6 +97,13 @@ const aiModelTestSchema = z.object({
     (value) => (value === "" || value == null ? "请用一句话回复 OK。" : value),
     z.string().min(1),
   ),
+  maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
+  timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
+});
+
+const aiPlaygroundChatSchema = z.object({
+  usage: z.enum(["chat", "structured"]).default("chat"),
+  input: z.string().min(1),
   maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
   timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
 });
@@ -547,6 +555,80 @@ function buildTextStreamResponse(
       "x-ai-test-stream": "text",
       "x-ai-test-max-output-tokens": String(maxOutputTokens),
       "x-ai-test-timeout-ms": String(options.timeoutMs ?? 60000),
+    },
+  });
+}
+
+function toErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function encodeSseEvent(event: string, data: unknown) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+async function buildAiPlaygroundStreamResponse(
+  payload: z.infer<typeof aiPlaygroundChatSchema>,
+  abortSignal: AbortSignal,
+) {
+  const runtime = await streamAiText({
+    ...payload,
+    abortSignal,
+  });
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
+      };
+
+      send("meta", {
+        provider: runtime.publicConfig.provider,
+        model: runtime.publicConfig.model,
+        endpoint: runtime.endpointHint,
+        request: {
+          usage: runtime.usage,
+          inputLength: runtime.input.length,
+          maxOutputTokens: runtime.maxOutputTokens,
+          timeoutMs: runtime.timeoutMs,
+        },
+      });
+
+      try {
+        for await (const text of runtime.stream.textStream) {
+          if (text) send("delta", { text });
+        }
+        const [finishReason, rawFinishReason, usage] = await Promise.all([
+          runtime.stream.finishReason,
+          runtime.stream.rawFinishReason,
+          runtime.stream.usage,
+        ]);
+        send("finish", {
+          finishReason,
+          rawFinishReason,
+          usage: runtime.normalizeUsage(usage),
+          durationMs: runtime.resolveDurationMs(),
+        });
+      } catch (error) {
+        send("error", {
+          message: toErrorMessage(error),
+          durationMs: runtime.resolveDurationMs(),
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      "x-ai-playground-stream": "sse",
+      "x-ai-playground-provider": runtime.publicConfig.provider.code,
+      "x-ai-playground-model": runtime.publicConfig.model.modelId,
+      "x-ai-playground-max-output-tokens": String(runtime.maxOutputTokens),
+      "x-ai-playground-timeout-ms": String(runtime.timeoutMs),
     },
   });
 }
@@ -1094,6 +1176,90 @@ aiRoutes.post(
       },
     );
     return response ?? new Response("AI 流式测试未创建响应", { status: 500 });
+  },
+);
+
+aiRoutes.post(
+  "/ai/playground/chat",
+  authRequired(),
+  ability("system.aiPlayground.chat"),
+  async (c) => {
+    const payload = aiPlaygroundChatSchema.parse(await c.req.json());
+    let result: Awaited<ReturnType<typeof generateAiText>> | null = null;
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiPlayground",
+        action: "chat",
+        resource: "/ai/playground/chat",
+        details: {
+          usage: payload.usage,
+          inputLength: payload.input.trim().length,
+          inputPreview: payload.input.trim().slice(0, 120),
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+        },
+      },
+      async () => {
+        result = await generateAiText({
+          ...payload,
+          abortSignal: c.req.raw.signal,
+        });
+      },
+    );
+    return c.json(success(result, "AI 调用完成"));
+  },
+);
+
+aiRoutes.post(
+  "/ai/playground/chat/stream",
+  authRequired(),
+  ability("system.aiPlayground.chat"),
+  async (c) => {
+    const payload = aiPlaygroundChatSchema.parse(await c.req.json());
+    let response: Response | null = null;
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiPlayground",
+        action: "chatStream",
+        resource: "/ai/playground/chat/stream",
+        details: {
+          usage: payload.usage,
+          inputLength: payload.input.trim().length,
+          inputPreview: payload.input.trim().slice(0, 120),
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+        },
+      },
+      async () => {
+        response = await buildAiPlaygroundStreamResponse(payload, c.req.raw.signal);
+      },
+    );
+    return response ?? new Response("AI 流式调用未创建响应", { status: 500 });
+  },
+);
+
+aiRoutes.get(
+  "/ai/playground/runtime-config/:usage",
+  authRequired(),
+  ability("system.aiPlayground.query"),
+  async (c) => {
+    const usage = z.enum(["chat", "structured"]).parse(c.req.param("usage"));
+    const runtimeConfig = await getAiRuntimeConfig(usage);
+    return c.json(
+      success({
+        provider: {
+          id: runtimeConfig.provider.id,
+          code: runtimeConfig.provider.code,
+          name: runtimeConfig.provider.name,
+          providerType: runtimeConfig.provider.providerType,
+          baseUrl: runtimeConfig.provider.baseUrl,
+          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
+        },
+        model: runtimeConfig.model,
+      }),
+    );
   },
 );
 

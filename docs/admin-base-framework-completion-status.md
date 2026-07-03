@@ -31,7 +31,7 @@ This document records the final handoff status for the Admin Base backend framew
 - CRUD factory remains the default for ordinary modules.
 - Password, token, OAuth, file physical operations, publish/revoke, and connection tests remain explicit route/service workflows.
 - `sys_config_items` stores ordinary parameters and policy parameters only.
-- Storage, mail, SMS providers/templates, and OAuth providers remain resource configuration tables with independent APIs.
+- Storage, mail, SMS providers/templates, OAuth providers, and AI providers/models remain resource configuration tables with independent APIs.
 - Secrets are hashed or encrypted at rest and are always masked in responses.
 
 ## Production Readiness
@@ -49,11 +49,12 @@ The production path now has these guardrails:
 
 The backend framework can now support a long-running business project baseline:
 
-- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, SMS providers/templates, OAuth providers, notices, files, login logs, online sessions, and operation logs.
+- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, SMS providers/templates, OAuth providers, AI providers/models, notices, files, login logs, online sessions, and operation logs.
 - End users can manage profile data, password, avatar, login records, OAuth bindings, and message reads.
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
 - File uploads enforce safety policy and support large upload sessions.
+- AI Runtime can be configured through providers/models and verified through AI Playground before business or Agent integration.
 - Dashboard is a system status center rather than demo metrics.
 - New business modules have a repeatable implementation template, route/permission checks, CLI draft generator, and Web draft/publish generator.
 
@@ -65,7 +66,7 @@ These capabilities remain intentionally out of the current core mainline:
 | --- | --- |
 | Multi-tenant architecture | Requires tenant isolation across auth, data scope, storage, and audit; this would change many core contracts. |
 | Task scheduler center | Notice scheduled visibility currently works by query-time filtering; scheduler introduces runtime and retry semantics outside the core baseline. |
-| AI provider | Provider management and quota/audit design should be handled as a separate product module. |
+| Complex AI agent orchestration | Provider/model runtime and Playground are in place; multi-step agents, tool approval, quota billing, and evaluation workflows should be designed as a separate product module. |
 | Full plugin marketplace | Requires packaging, install, trust, version, and permission models that exceed the current admin framework. |
 | Field-level permission UI | Data scope and action permission are complete enough for the baseline; field-level UI can be added later as an extension point. |
 | Realtime WebSocket messages | Message center supports polling/read workflows; realtime delivery can be added after a runtime channel is selected. |

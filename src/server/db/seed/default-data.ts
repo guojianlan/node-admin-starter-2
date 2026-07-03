@@ -289,6 +289,21 @@ const moduleRules = [
   },
   {
     route: {
+      id: 260,
+      parentId: 180,
+      key: "system.aiPlayground",
+      name: "AI Playground",
+      path: "/system/ai/playground",
+      icon: "api",
+      order: 82,
+    },
+    actions: [
+      ["query", "查看 AI Playground"],
+      ["chat", "调用 AI Runtime"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 190,
       key: "system.operationLog",

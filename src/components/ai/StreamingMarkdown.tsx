@@ -118,15 +118,19 @@ const components: Components = {
 export const StreamingMarkdown = memo(function StreamingMarkdown({
   content,
   placeholder = "等待模型返回内容...",
+  minHeight = 160,
+  maxHeight = 320,
 }: {
   content: string;
   placeholder?: string;
+  minHeight?: number;
+  maxHeight?: number;
 }) {
   return (
     <div
       style={{
-        minHeight: 160,
-        maxHeight: 320,
+        minHeight,
+        maxHeight,
         overflow: "auto",
         border: "1px solid #e5e7eb",
         borderRadius: 6,

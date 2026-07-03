@@ -15,6 +15,17 @@ type TextStreamRequestOptions = RequestOptions & {
   onResponse?: (response: Response) => void;
 };
 
+export type EventStreamMessage = {
+  event: string;
+  data: unknown;
+};
+
+type EventStreamRequestOptions = RequestOptions & {
+  onEvent?: (message: EventStreamMessage) => void;
+  onChunk?: (chunk: string) => void;
+  onResponse?: (response: Response) => void;
+};
+
 export class ApiError extends Error {
   status: number;
   response?: ApiResponse;
@@ -159,6 +170,140 @@ export async function requestTextStream(
   } finally {
     reader.releaseLock();
   }
+}
+
+function parseEventStreamBlock(block: string): EventStreamMessage | null {
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim() || event;
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+  }
+
+  if (dataLines.length === 0) return null;
+  const rawData = dataLines.join("\n");
+  let data: unknown = rawData;
+  try {
+    data = JSON.parse(rawData);
+  } catch {
+    data = rawData;
+  }
+  return { event, data };
+}
+
+export async function requestEventStream(
+  path: string,
+  options: EventStreamRequestOptions = {},
+): Promise<string> {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers);
+  const body = normalizeBody(options.body);
+
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (body && !(body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  headers.set("Accept", "text/event-stream");
+
+  const response = await fetch(buildUrl(path), {
+    ...options,
+    headers,
+    body,
+  });
+
+  options.onResponse?.(response);
+
+  if (response.status === 401) {
+    clearAuthToken();
+    if (!options.skipAuthRedirect && typeof window !== "undefined") {
+      const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.replace(`/login?redirect=${redirect}`);
+    }
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    let message = response.statusText || "Request failed";
+    try {
+      const payload = JSON.parse(text) as ApiResponse;
+      message = payload.msg || message;
+    } catch {
+      message = text || message;
+    }
+    if (!options.silent) {
+      feedback.error(message);
+    }
+    throw new ApiError(message, response.status);
+  }
+
+  if (!response.body) throw new ApiError("响应没有可读取的流", response.status);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let output = "";
+  let streamError = "";
+
+  const dispatchBlock = (block: string) => {
+    const message = parseEventStreamBlock(block);
+    if (!message) return;
+    options.onEvent?.(message);
+    if (
+      message.event === "delta" &&
+      message.data &&
+      typeof message.data === "object" &&
+      "text" in message.data &&
+      typeof (message.data as { text?: unknown }).text === "string"
+    ) {
+      const text = (message.data as { text: string }).text;
+      output += text;
+      options.onChunk?.(text);
+    }
+    if (
+      message.event === "error" &&
+      message.data &&
+      typeof message.data === "object" &&
+      "message" in message.data
+    ) {
+      streamError = String((message.data as { message?: unknown }).message || "流式请求失败");
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let separatorIndex = buffer.search(/\r?\n\r?\n/);
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        const match = buffer.slice(separatorIndex).match(/^\r?\n\r?\n/);
+        buffer = buffer.slice(separatorIndex + (match?.[0].length ?? 2));
+        dispatchBlock(block);
+        separatorIndex = buffer.search(/\r?\n\r?\n/);
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) dispatchBlock(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (streamError) {
+    if (!options.silent) feedback.error(streamError);
+    throw new ApiError(streamError, response.status);
+  }
+
+  return output;
 }
 
 export function buildQueryString(params: Record<string, unknown>) {

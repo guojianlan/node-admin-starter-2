@@ -436,4 +436,172 @@ describe("AI provider configuration", () => {
       riskLevel: "medium",
     });
   });
+
+  it("exposes an AI runtime playground for business calls", async () => {
+    const unauthorized = await app.request("/api/system/ai/playground/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "hello" }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const token = await login();
+    await app.request("/api/system/ai/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "Playground Gateway",
+        code: "playground-gateway",
+        providerType: "openai-compatible",
+        baseUrl: "https://playground-ai.test/v1",
+        apiKey: "playground-secret",
+        status: 1,
+        sort: 30,
+      }),
+    });
+    const providers = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=playground-gateway", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const providerId = Number(providers.data?.data[0]?.id);
+
+    await app.request("/api/system/ai/model", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerId,
+        name: "Playground Chat",
+        modelId: "playground-chat",
+        modelType: "chat",
+        capabilitiesJson: '{"chat":true,"structured":true}',
+        contextWindow: 128000,
+        maxOutputTokens: 2048,
+        status: 1,
+        sort: 1,
+      }),
+    });
+    const models = await readJson<Page<{ id: number; modelId: string }>>(
+      await app.request("/api/system/ai/model?keyword=Playground", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const modelId = Number(models.data?.data.find((item) => item.modelId === "playground-chat")?.id);
+    await app.request(`/api/system/ai/model/default/${modelId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ usage: "chat" }),
+    });
+
+    const runtimeConfig = await app.request("/api/system/ai/playground/runtime-config/chat", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const runtimeConfigBody = await readJson<{
+      provider: { code: string; hasApiKey: boolean; apiKey?: string };
+      model: { modelId: string };
+    }>(runtimeConfig);
+    expect(runtimeConfig.status).toBe(200);
+    expect(runtimeConfigBody.data?.provider).toMatchObject({
+      code: "playground-gateway",
+      hasApiKey: true,
+    });
+    expect(runtimeConfigBody.data?.provider).not.toHaveProperty("apiKey");
+    expect(runtimeConfigBody.data?.model.modelId).toBe("playground-chat");
+
+    const chatFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://playground-ai.test/v1/chat/completions");
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer playground-secret",
+      );
+      expect(readRequestBody(init)).toMatchObject({
+        model: "playground-chat",
+        messages: [{ role: "user", content: "请返回 OK" }],
+      });
+      return new Response(
+        JSON.stringify({
+          id: "chatcmpl-playground",
+          object: "chat.completion",
+          created: 0,
+          model: "playground-chat",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "OK" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", chatFetchMock);
+
+    const chat = await app.request("/api/system/ai/playground/chat", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-playground-chat" },
+      body: JSON.stringify({
+        usage: "chat",
+        input: "请返回 OK",
+        maxOutputTokens: 1024,
+        timeoutMs: 30000,
+      }),
+    });
+    const chatBody = await readJson<{
+      text: string;
+      finishReason: string;
+      provider: { code: string; apiKey?: string };
+      model: { modelId: string };
+      request: { maxOutputTokens: number };
+    }>(chat);
+    expect(chat.status).toBe(200);
+    expect(chatBody.data).toMatchObject({
+      text: "OK",
+      finishReason: "stop",
+      provider: { code: "playground-gateway" },
+      model: { modelId: "playground-chat" },
+      request: { maxOutputTokens: 1024 },
+    });
+    expect(chatBody.data?.provider).not.toHaveProperty("apiKey");
+    expect(await latestOperation("system.aiPlayground", "chat")).toMatchObject({
+      requestId: "ai-playground-chat",
+      success: true,
+      status: 200,
+      riskLevel: "low",
+    });
+
+    const streamFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://playground-ai.test/v1/chat/completions");
+      expect(readRequestBody(init)).toMatchObject({
+        model: "playground-chat",
+        stream: true,
+      });
+      return openAiTextStream(["O", "K"]);
+    });
+    vi.stubGlobal("fetch", streamFetchMock);
+
+    const stream = await app.request("/api/system/ai/playground/chat/stream", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-playground-stream" },
+      body: JSON.stringify({
+        input: "请返回 OK",
+        maxOutputTokens: 1024,
+      }),
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    expect(stream.headers.get("x-ai-playground-provider")).toBe("playground-gateway");
+    expect(stream.headers.get("x-ai-playground-model")).toBe("playground-chat");
+    const streamText = await stream.text();
+    expect(streamText).toContain("event: meta");
+    expect(streamText).toContain('"text":"O"');
+    expect(streamText).toContain('"text":"K"');
+    expect(streamText).toContain('"finishReason":"stop"');
+    expect(await latestOperation("system.aiPlayground", "chatStream")).toMatchObject({
+      requestId: "ai-playground-stream",
+      success: true,
+      status: 200,
+      riskLevel: "low",
+    });
+  });
 });

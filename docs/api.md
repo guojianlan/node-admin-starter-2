@@ -143,6 +143,35 @@ SMS provider v1 supports a generic `webhook` provider. Test sending posts JSON t
 
 SMS templates are stored separately in `sys_sms_template`. They bind to a provider, keep business template content and variable metadata, and do not store provider secrets. Test sending renders `{{variable}}` placeholders from the supplied variables object before posting through the bound provider.
 
+## AI Provider, Models, And Runtime
+
+AI providers and models are resource configurations stored in `sys_ai_provider` and `sys_ai_model`. Provider API keys are encrypted at rest and responses only expose `hasApiKey`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET/POST | `/api/system/ai/provider` | Query and create AI providers |
+| PUT | `/api/system/ai/provider/:id` | Update AI provider |
+| DELETE | `/api/system/ai/provider/:id` | Delete AI provider when not default/system |
+| PUT | `/api/system/ai/provider/status/:id` | Toggle AI provider status |
+| PUT | `/api/system/ai/provider/default/:id` | Set default AI provider with protection |
+| POST | `/api/system/ai/provider/test` | Test provider list/chat/embedding endpoint |
+| POST | `/api/system/ai/provider/test/stream` | Stream a provider chat test through AI SDK |
+| GET/POST | `/api/system/ai/model` | Query and create AI models |
+| PUT | `/api/system/ai/model/:id` | Update AI model |
+| DELETE | `/api/system/ai/model/:id` | Delete AI model when not system/default protected |
+| PUT | `/api/system/ai/model/status/:id` | Toggle AI model status |
+| PUT | `/api/system/ai/model/default/:id` | Set default chat/structured/embedding model |
+| POST | `/api/system/ai/model/test` | Test a configured AI model |
+| POST | `/api/system/ai/model/test/stream` | Stream a configured chat model test through AI SDK |
+| GET | `/api/system/ai/runtime-config/:usage` | Read sanitized default runtime config for maintenance |
+| GET | `/api/system/ai/playground/runtime-config/:usage` | Read sanitized runtime config for Playground |
+| POST | `/api/system/ai/playground/chat` | Generate text with the default chat or structured model |
+| POST | `/api/system/ai/playground/chat/stream` | Stream text with SSE events: `meta`, `delta`, `finish`, `error` |
+
+Supported provider types include OpenAI, Anthropic, Google Gemini, OpenAI-compatible gateways, DeepSeek, Qwen/DashScope, Moonshot/Kimi, Zhipu, SiliconFlow, OpenRouter, Ollama, and custom compatible endpoints.
+
+Runtime calls use the configured default model for `chat` or `structured`, return provider/model metadata without secrets, and write operation logs under `system.aiPlayground`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
+
 ## OAuth
 
 OAuth providers are resource configurations stored in `sys_oauth_provider`.

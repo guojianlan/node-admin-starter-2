@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { AiModelPage } from "@/features/system/ai-model/AiModelPage";
+import { AiPlaygroundPage } from "@/features/system/ai-playground/AiPlaygroundPage";
 import { AiProviderPage } from "@/features/system/ai-provider/AiProviderPage";
 import { ConfigPage } from "@/features/system/config/ConfigPage";
 import { DictItemPage } from "@/features/system/dict/DictItemPage";
@@ -165,6 +166,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "AI 模型",
     auth: "system.aiModel.query",
     component: AiModelPage,
+  },
+  {
+    path: "/system/ai/playground",
+    key: "system.aiPlayground",
+    title: "AI Playground",
+    auth: "system.aiPlayground.query",
+    component: AiPlaygroundPage,
   },
   {
     path: "/system/module/generator",

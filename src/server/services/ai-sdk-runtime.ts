@@ -4,21 +4,24 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 import { decryptSecret } from "@/server/services/secret";
-import type { AiModelRow, AiProviderRow } from "./ai-provider-service";
+import type { AiModelRow } from "./ai-provider-service";
 
-type AiProviderForSdk = Pick<
-  AiProviderRow,
-  | "code"
-  | "name"
-  | "providerType"
-  | "baseUrl"
-  | "apiKeyEncrypted"
-  | "organization"
-  | "project"
-  | "optionsJson"
->;
+type AiProviderForSdk = {
+  code: string;
+  name: string;
+  providerType: string;
+  baseUrl: string | null;
+  apiKey?: string | null;
+  apiKeyEncrypted?: string | null;
+  organization?: string | null;
+  project?: string | null;
+  options?: Record<string, unknown>;
+  optionsJson?: string | null;
+};
 
-type AiModelForSdk = Pick<AiModelRow, "modelId" | "modelType" | "maxOutputTokens">;
+type AiModelForSdk = Pick<AiModelRow, "modelId" | "modelType"> & {
+  maxOutputTokens?: number | null;
+};
 
 type AiSdkRuntime = {
   model: LanguageModel;
@@ -50,6 +53,10 @@ function parseOptions(value?: string | null) {
   }
 }
 
+function getOptions(provider: Pick<AiProviderForSdk, "options" | "optionsJson">) {
+  return provider.options ?? parseOptions(provider.optionsJson);
+}
+
 function stringRecord(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
@@ -63,20 +70,22 @@ function normalizeBaseUrl(value: string) {
   return value.replace(/\/+$/, "");
 }
 
-function providerRequiresApiKey(provider: Pick<AiProviderForSdk, "providerType" | "optionsJson">) {
-  const options = parseOptions(provider.optionsJson);
+function providerRequiresApiKey(
+  provider: Pick<AiProviderForSdk, "providerType" | "options" | "optionsJson">,
+) {
+  const options = getOptions(provider);
   if (options.authRequired === false) return false;
   return provider.providerType !== "ollama";
 }
 
 function getApiKey(provider: AiProviderForSdk) {
-  const apiKey = decryptSecret(provider.apiKeyEncrypted);
+  const apiKey = provider.apiKey || decryptSecret(provider.apiKeyEncrypted);
   if (!apiKey && providerRequiresApiKey(provider)) throw new Error("AI Provider API Key 未配置");
   return apiKey || undefined;
 }
 
 function getHeaders(provider: AiProviderForSdk) {
-  const options = parseOptions(provider.optionsJson);
+  const options = getOptions(provider);
   const headers = stringRecord(options.headers);
   if (
     provider.providerType === "openai" ||
@@ -92,12 +101,12 @@ function getHeaders(provider: AiProviderForSdk) {
 }
 
 function getQueryParams(provider: AiProviderForSdk) {
-  const options = parseOptions(provider.optionsJson);
+  const options = getOptions(provider);
   return stringRecord(options.queryParams);
 }
 
 function getOpenAiCompatibleBodyTransform(provider: AiProviderForSdk) {
-  const options = parseOptions(provider.optionsJson);
+  const options = getOptions(provider);
   const requestBody = options.requestBody;
   if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody))
     return undefined;
@@ -124,7 +133,7 @@ export function buildAiSdkChatRuntime(
   const baseURL = normalizeBaseUrl(provider.baseUrl);
   const apiKey = getApiKey(provider);
   const headers = getHeaders(provider);
-  const maxOutputTokens = Math.min(Math.max(model.maxOutputTokens ?? 4096, 16), 32768);
+  const maxOutputTokens = Math.min(Math.max(model.maxOutputTokens ?? 16384, 16), 32768);
 
   if (provider.providerType === "openai") {
     const client = createOpenAI({
