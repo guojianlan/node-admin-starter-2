@@ -73,6 +73,19 @@ a {
   text-decoration: none;
 }
 
+.ai-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .ai-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .xin-login-page {
   min-height: 100vh;
   min-width: 0;

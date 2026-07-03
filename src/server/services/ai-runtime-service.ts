@@ -1,11 +1,17 @@
-import { generateText, streamText } from "ai";
+import { generateText, streamText, type ModelMessage } from "ai";
 import type { AiModelUsage, AiProviderRuntimeConfig } from "./ai-provider-service";
 import { getAiRuntimeConfig } from "./ai-provider-service";
 import { buildAiSdkChatRuntime } from "./ai-sdk-runtime";
 
+export type AiRuntimeMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
 export type AiRuntimeCallOptions = {
   usage?: AiModelUsage;
-  input: string;
+  input?: string;
+  messages?: AiRuntimeMessage[];
   maxOutputTokens?: number;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
@@ -91,13 +97,46 @@ function publicConfig(config: AiProviderRuntimeConfig): AiRuntimePublicConfig {
   };
 }
 
+function normalizeMessages(messages?: AiRuntimeMessage[]) {
+  return (messages ?? [])
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content);
+}
+
 function resolveRuntime(options: AiRuntimeCallOptions) {
-  if (!options.input.trim()) throw new Error("请输入 AI 调用内容");
+  const messages = normalizeMessages(options.messages);
+  const input = options.input?.trim() ?? "";
+  if (!input && messages.length === 0) throw new Error("请输入 AI 调用内容");
   return {
     usage: options.usage ?? "chat",
-    input: options.input.trim(),
+    input,
+    messages,
     timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
   };
+}
+
+function toModelMessages(messages: AiRuntimeMessage[]): ModelMessage[] {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
+}
+
+function promptOptions(runtime: { input: string; messages: AiRuntimeMessage[] }) {
+  if (runtime.messages.length) {
+    return { messages: toModelMessages(runtime.messages), allowSystemInMessages: true } as const;
+  }
+  return { prompt: runtime.input } as const;
+}
+
+function inputLength(runtime: { input: string; messages: AiRuntimeMessage[] }) {
+  if (runtime.messages.length) {
+    return runtime.messages.reduce((total, message) => total + message.content.length, 0);
+  }
+  return runtime.input.length;
 }
 
 export async function createAiRuntime(options: AiRuntimeCallOptions) {
@@ -121,7 +160,7 @@ export async function generateAiText(
   const runtime = await createAiRuntime(options);
   const result = await generateText({
     model: runtime.sdkRuntime.model,
-    prompt: runtime.input,
+    ...promptOptions(runtime),
     maxOutputTokens: runtime.maxOutputTokens,
     timeout: runtime.timeoutMs,
     abortSignal: options.abortSignal,
@@ -135,7 +174,7 @@ export async function generateAiText(
     usage: normalizeUsage(result.usage),
     request: {
       usage: runtime.usage,
-      inputLength: runtime.input.length,
+      inputLength: inputLength(runtime),
       maxOutputTokens: runtime.maxOutputTokens,
       timeoutMs: runtime.timeoutMs,
     },
@@ -149,7 +188,7 @@ export async function streamAiText(options: AiRuntimeCallOptions) {
   const runtime = await createAiRuntime(options);
   const result = streamText({
     model: runtime.sdkRuntime.model,
-    prompt: runtime.input,
+    ...promptOptions(runtime),
     maxOutputTokens: runtime.maxOutputTokens,
     timeout: runtime.timeoutMs,
     abortSignal: options.abortSignal,

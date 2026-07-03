@@ -167,10 +167,19 @@ AI providers and models are resource configurations stored in `sys_ai_provider` 
 | GET | `/api/system/ai/playground/runtime-config/:usage` | Read sanitized runtime config for Playground |
 | POST | `/api/system/ai/playground/chat` | Generate text with the default chat or structured model |
 | POST | `/api/system/ai/playground/chat/stream` | Stream text with SSE events: `meta`, `delta`, `finish`, `error` |
+| GET | `/api/system/ai/chat/runtime-config` | Read sanitized runtime config for AI Chat |
+| GET | `/api/system/ai/chat/sessions` | Query current user's AI Chat sessions |
+| POST | `/api/system/ai/chat/sessions` | Create an AI Chat session |
+| PUT | `/api/system/ai/chat/sessions/:id` | Rename current user's AI Chat session |
+| DELETE | `/api/system/ai/chat/sessions/:id` | Soft-delete current user's AI Chat session |
+| GET | `/api/system/ai/chat/sessions/:id/messages` | List messages in current user's AI Chat session |
+| POST | `/api/system/ai/chat/sessions/:id/messages/stream` | Append a user message, stream assistant text, and persist the completed assistant message |
 
 Supported provider types include OpenAI, Anthropic, Google Gemini, OpenAI-compatible gateways, DeepSeek, Qwen/DashScope, Moonshot/Kimi, Zhipu, SiliconFlow, OpenRouter, Ollama, and custom compatible endpoints.
 
-Runtime calls use the configured default model for `chat` or `structured`, return provider/model metadata without secrets, and write operation logs under `system.aiPlayground`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
+Runtime calls use the configured default model for `chat` or `structured` and return provider/model metadata without secrets. Playground calls write operation logs under `system.aiPlayground`; AI Chat calls write operation logs under `system.aiChat`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
+
+AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. User messages are persisted before streaming begins; assistant messages are persisted after the stream finishes, with provider/model snapshots, `finishReason`, `usage`, and duration metadata.
 
 ## OAuth
 

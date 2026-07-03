@@ -1276,6 +1276,79 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0024_ai_chat_resource",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_chat_session (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  provider_id INTEGER REFERENCES sys_ai_provider(id) ON DELETE SET NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  provider_code TEXT,
+  model_name TEXT,
+  model_identifier TEXT,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  last_message_at TIMESTAMPTZ,
+  status INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS sys_ai_chat_session_user_updated_idx
+  ON sys_ai_chat_session(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS sys_ai_chat_session_last_message_idx
+  ON sys_ai_chat_session(last_message_at);
+
+CREATE TABLE IF NOT EXISTS sys_ai_chat_message (
+  id SERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sys_ai_chat_session(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
+  content TEXT NOT NULL,
+  finish_reason TEXT,
+  usage_json TEXT,
+  metadata_json TEXT,
+  provider_id INTEGER REFERENCES sys_ai_provider(id) ON DELETE SET NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  duration_ms INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sys_ai_chat_message_session_id_idx
+  ON sys_ai_chat_message(session_id, id);
+CREATE INDEX IF NOT EXISTS sys_ai_chat_message_user_created_idx
+  ON sys_ai_chat_message(user_id, created_at);
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (270, 180, 'route', 'system.aiChat', 'AI Chat', '/system/ai/chat', 'message', 83, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (271, 270, 'action', 'system.aiChat.query', '查看 AI Chat', 1, 1, 0, 0, true, now(), now()),
+  (272, 270, 'action', 'system.aiChat.create', '创建 AI Chat 会话', 2, 1, 0, 0, true, now(), now()),
+  (273, 270, 'action', 'system.aiChat.chat', '发送 AI Chat 消息', 3, 1, 0, 0, true, now(), now()),
+  (274, 270, 'action', 'system.aiChat.update', '编辑 AI Chat 会话', 4, 1, 0, 0, true, now(), now()),
+  (275, 270, 'action', 'system.aiChat.delete', '删除 AI Chat 会话', 5, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (270), (271), (272), (273), (274), (275)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

@@ -54,7 +54,7 @@ The backend framework can now support a long-running business project baseline:
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
 - File uploads enforce safety policy and support large upload sessions.
-- AI Runtime can be configured through providers/models and verified through AI Playground before business or Agent integration.
+- AI Runtime can be configured through providers/models, verified through AI Playground, and used in AI Chat with persisted sessions and message history before deeper Agent integration.
 - Dashboard is a system status center rather than demo metrics.
 - New business modules have a repeatable implementation template, route/permission checks, CLI draft generator, and Web draft/publish generator.
 

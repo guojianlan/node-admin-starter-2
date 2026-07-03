@@ -304,6 +304,24 @@ const moduleRules = [
   },
   {
     route: {
+      id: 270,
+      parentId: 180,
+      key: "system.aiChat",
+      name: "AI Chat",
+      path: "/system/ai/chat",
+      icon: "message",
+      order: 83,
+    },
+    actions: [
+      ["query", "查看 AI Chat"],
+      ["create", "创建 AI Chat 会话"],
+      ["chat", "发送 AI Chat 消息"],
+      ["update", "编辑 AI Chat 会话"],
+      ["delete", "删除 AI Chat 会话"],
+    ],
+  },
+  {
+    route: {
       id: 100,
       parentId: 190,
       key: "system.operationLog",

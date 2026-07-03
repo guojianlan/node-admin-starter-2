@@ -604,4 +604,157 @@ describe("AI provider configuration", () => {
       riskLevel: "low",
     });
   });
+
+  it("persists AI chat sessions and streamed messages", async () => {
+    const token = await login();
+    await app.request("/api/system/ai/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "Chat Gateway",
+        code: "chat-gateway",
+        providerType: "openai-compatible",
+        baseUrl: "https://chat-ai.test/v1",
+        apiKey: "chat-secret",
+        status: 1,
+        sort: 40,
+      }),
+    });
+    const providers = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=chat-gateway", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const providerId = Number(providers.data?.data[0]?.id);
+    await app.request(`/api/system/ai/provider/default/${providerId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    });
+
+    await app.request("/api/system/ai/model", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerId,
+        name: "Chat Model",
+        modelId: "chat-model",
+        modelType: "chat",
+        capabilitiesJson: '{"chat":true}',
+        maxOutputTokens: 2048,
+        status: 1,
+        sort: 1,
+      }),
+    });
+    const models = await readJson<Page<{ id: number; modelId: string }>>(
+      await app.request("/api/system/ai/model?keyword=Chat Model", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const modelId = Number(models.data?.data.find((item) => item.modelId === "chat-model")?.id);
+    await app.request(`/api/system/ai/model/default/${modelId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ usage: "chat" }),
+    });
+
+    const createSession = await app.request("/api/system/ai/chat/sessions", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-chat-create" },
+      body: JSON.stringify({ title: "测试聊天" }),
+    });
+    const createSessionBody = await readJson<{ id: number }>(createSession);
+    expect(createSession.status).toBe(200);
+    const sessionId = Number(createSessionBody.data?.id);
+    expect(sessionId).toBeGreaterThan(0);
+    expect(await latestOperation("system.aiChat", "create")).toMatchObject({
+      requestId: "ai-chat-create",
+      success: true,
+      status: 200,
+      riskLevel: "medium",
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://chat-ai.test/v1/chat/completions");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer chat-secret");
+      expect(readRequestBody(init)).toMatchObject({
+        model: "chat-model",
+        stream: true,
+        messages: [{ role: "user", content: "你好，回复 OK" }],
+      });
+      return openAiTextStream(["O", "K"]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages/stream`, {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-chat-stream" },
+      body: JSON.stringify({
+        content: "你好，回复 OK",
+        maxOutputTokens: 1024,
+      }),
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    expect(stream.headers.get("x-ai-chat-session-id")).toBe(String(sessionId));
+    const streamText = await stream.text();
+    expect(streamText).toContain("event: meta");
+    expect(streamText).toContain('"text":"O"');
+    expect(streamText).toContain('"text":"K"');
+    expect(streamText).toContain('"finishReason":"stop"');
+    expect(await latestOperation("system.aiChat", "chatStream")).toMatchObject({
+      requestId: "ai-chat-stream",
+      success: true,
+      status: 200,
+      riskLevel: "low",
+    });
+
+    const messages = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const messagesBody = await readJson<
+      Array<{ role: string; content: string; finishReason?: string; usageJson?: string }>
+    >(messages);
+    expect(messages.status).toBe(200);
+    expect(messagesBody.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "你好，回复 OK" }),
+        expect.objectContaining({ role: "assistant", content: "OK", finishReason: "stop" }),
+      ]),
+    );
+    expect(messagesBody.data?.find((item) => item.role === "assistant")?.usageJson).toBeTruthy();
+
+    const sessions = await app.request("/api/system/ai/chat/sessions", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const sessionsBody = await readJson<Page<{ id: number; messageCount: number; modelIdentifier: string }>>(
+      sessions,
+    );
+    expect(sessionsBody.data?.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: sessionId,
+          messageCount: 2,
+          modelIdentifier: "chat-model",
+        }),
+      ]),
+    );
+
+    const rename = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ title: "重命名聊天" }),
+    });
+    expect(rename.status).toBe(200);
+
+    const remove = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    expect(remove.status).toBe(200);
+    const afterDelete = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(afterDelete.status).toBe(500);
+  });
 });

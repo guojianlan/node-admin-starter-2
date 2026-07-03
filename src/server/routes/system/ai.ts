@@ -11,6 +11,18 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import type { AiModelUsage } from "@/server/services/ai-provider-service";
 import { getAiProvider, getAiRuntimeConfig } from "@/server/services/ai-provider-service";
+import {
+  appendAiChatMessage,
+  createAiChatSession,
+  getAiChatSession,
+  listAiChatMessages,
+  listAiChatSessions,
+  refreshAiChatSessionSummary,
+  softDeleteAiChatSession,
+  titleFromContent,
+  toRuntimeMessages,
+  updateAiChatSession,
+} from "@/server/services/ai-chat-service";
 import { generateAiText, streamAiText } from "@/server/services/ai-runtime-service";
 import { buildAiSdkChatRuntime } from "@/server/services/ai-sdk-runtime";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
@@ -104,6 +116,16 @@ const aiModelTestSchema = z.object({
 const aiPlaygroundChatSchema = z.object({
   usage: z.enum(["chat", "structured"]).default("chat"),
   input: z.string().min(1),
+  maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
+  timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
+});
+
+const aiChatSessionSchema = z.object({
+  title: z.string().optional().nullable(),
+});
+
+const aiChatMessageSchema = z.object({
+  content: z.string().min(1),
   maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
   timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
 });
@@ -629,6 +651,137 @@ async function buildAiPlaygroundStreamResponse(
       "x-ai-playground-model": runtime.publicConfig.model.modelId,
       "x-ai-playground-max-output-tokens": String(runtime.maxOutputTokens),
       "x-ai-playground-timeout-ms": String(runtime.timeoutMs),
+    },
+  });
+}
+
+async function buildAiChatStreamResponse(input: {
+  userId: number;
+  sessionId: number;
+  content: string;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+  abortSignal: AbortSignal;
+}) {
+  const session = await getAiChatSession({ id: input.sessionId, userId: input.userId });
+  if (!session) throw new Error("AI Chat 会话不存在");
+  const existingMessages = await listAiChatMessages({
+    sessionId: input.sessionId,
+    userId: input.userId,
+  });
+  const trimmedContent = input.content.trim();
+  const shouldTitleFromContent =
+    existingMessages.length === 0 && (!session.title || session.title === "新的聊天");
+
+  await appendAiChatMessage({
+    sessionId: input.sessionId,
+    userId: input.userId,
+    role: "user",
+    content: trimmedContent,
+  });
+
+  const runtimeMessages = [
+    ...toRuntimeMessages(existingMessages),
+    { role: "user" as const, content: trimmedContent },
+  ];
+  const runtime = await streamAiText({
+    usage: "chat",
+    messages: runtimeMessages,
+    maxOutputTokens: input.maxOutputTokens,
+    timeoutMs: input.timeoutMs,
+    abortSignal: input.abortSignal,
+  });
+
+  await refreshAiChatSessionSummary({
+    sessionId: input.sessionId,
+    userId: input.userId,
+    title: shouldTitleFromContent ? titleFromContent(trimmedContent) : undefined,
+    runtime: runtime.publicConfig,
+  });
+
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
+      };
+
+      send("meta", {
+        sessionId: input.sessionId,
+        provider: runtime.publicConfig.provider,
+        model: runtime.publicConfig.model,
+        endpoint: runtime.endpointHint,
+        request: {
+          usage: runtime.usage,
+          inputLength: runtimeMessages.reduce((total, item) => total + item.content.length, 0),
+          maxOutputTokens: runtime.maxOutputTokens,
+          timeoutMs: runtime.timeoutMs,
+        },
+      });
+
+      let assistantText = "";
+      try {
+        for await (const text of runtime.stream.textStream) {
+          if (!text) continue;
+          assistantText += text;
+          send("delta", { text });
+        }
+        const [finishReason, rawFinishReason, usage] = await Promise.all([
+          runtime.stream.finishReason,
+          runtime.stream.rawFinishReason,
+          runtime.stream.usage,
+        ]);
+        const normalizedUsage = runtime.normalizeUsage(usage);
+        const durationMs = runtime.resolveDurationMs();
+        const assistantMessageId = await appendAiChatMessage({
+          sessionId: input.sessionId,
+          userId: input.userId,
+          role: "assistant",
+          content: assistantText,
+          providerId: runtime.publicConfig.provider.id,
+          modelId: runtime.publicConfig.model.id,
+          finishReason,
+          usage: normalizedUsage,
+          metadata: {
+            rawFinishReason,
+            providerCode: runtime.publicConfig.provider.code,
+            modelId: runtime.publicConfig.model.modelId,
+          },
+          durationMs,
+        });
+        await refreshAiChatSessionSummary({
+          sessionId: input.sessionId,
+          userId: input.userId,
+          runtime: runtime.publicConfig,
+        });
+        send("finish", {
+          messageId: assistantMessageId,
+          finishReason,
+          rawFinishReason,
+          usage: normalizedUsage,
+          durationMs,
+        });
+      } catch (error) {
+        send("error", {
+          message: toErrorMessage(error),
+          durationMs: runtime.resolveDurationMs(),
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      "x-ai-chat-stream": "sse",
+      "x-ai-chat-session-id": String(input.sessionId),
+      "x-ai-chat-provider": runtime.publicConfig.provider.code,
+      "x-ai-chat-model": runtime.publicConfig.model.modelId,
+      "x-ai-chat-max-output-tokens": String(runtime.maxOutputTokens),
+      "x-ai-chat-timeout-ms": String(runtime.timeoutMs),
     },
   });
 }
@@ -1176,6 +1329,162 @@ aiRoutes.post(
       },
     );
     return response ?? new Response("AI 流式测试未创建响应", { status: 500 });
+  },
+);
+
+aiRoutes.get("/ai/chat/sessions", authRequired(), ability("system.aiChat.query"), async (c) => {
+  const user = c.get("user");
+  const params = new URL(c.req.url).searchParams;
+  const page = Number(params.get("page") || 1);
+  const pageSize = Number(params.get("pageSize") || 20);
+  const keyword = params.get("keyword") ?? undefined;
+  return c.json(success(await listAiChatSessions({ userId: user.id, page, pageSize, keyword })));
+});
+
+aiRoutes.get(
+  "/ai/chat/runtime-config",
+  authRequired(),
+  ability("system.aiChat.query"),
+  async (c) => {
+    const runtimeConfig = await getAiRuntimeConfig("chat");
+    return c.json(
+      success({
+        provider: {
+          id: runtimeConfig.provider.id,
+          code: runtimeConfig.provider.code,
+          name: runtimeConfig.provider.name,
+          providerType: runtimeConfig.provider.providerType,
+          baseUrl: runtimeConfig.provider.baseUrl,
+          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
+        },
+        model: runtimeConfig.model,
+      }),
+    );
+  },
+);
+
+aiRoutes.post(
+  "/ai/chat/sessions",
+  authRequired(),
+  ability("system.aiChat.create"),
+  async (c) => {
+    const user = c.get("user");
+    const payload = aiChatSessionSchema.parse(await c.req.json());
+    let sessionId = 0;
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiChat",
+        action: "create",
+        resource: "/ai/chat/sessions",
+        details: { title: payload.title },
+      },
+      async () => {
+        sessionId = await createAiChatSession({ userId: user.id, title: payload.title });
+      },
+    );
+    return c.json(success({ id: sessionId }, "创建成功"));
+  },
+);
+
+aiRoutes.put(
+  "/ai/chat/sessions/:id",
+  authRequired(),
+  ability("system.aiChat.update"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    const payload = z.object({ title: z.string().min(1) }).parse(await c.req.json());
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiChat",
+        action: "update",
+        resource: "/ai/chat/sessions",
+        resourceId: id,
+        details: { title: payload.title },
+      },
+      async () => {
+        if (!(await getAiChatSession({ id, userId: user.id }))) throw new Error("AI Chat 会话不存在");
+        await updateAiChatSession({ id, userId: user.id, title: payload.title });
+      },
+    );
+    return c.json(success(null, "更新成功"));
+  },
+);
+
+aiRoutes.delete(
+  "/ai/chat/sessions/:id",
+  authRequired(),
+  ability("system.aiChat.delete"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiChat",
+        action: "delete",
+        resource: "/ai/chat/sessions",
+        resourceId: id,
+        riskLevel: "high",
+      },
+      async () => {
+        if (!(await getAiChatSession({ id, userId: user.id }))) throw new Error("AI Chat 会话不存在");
+        await softDeleteAiChatSession({ id, userId: user.id });
+      },
+    );
+    return c.json(success(null, "删除成功"));
+  },
+);
+
+aiRoutes.get(
+  "/ai/chat/sessions/:id/messages",
+  authRequired(),
+  ability("system.aiChat.query"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    if (!(await getAiChatSession({ id, userId: user.id }))) throw new Error("AI Chat 会话不存在");
+    return c.json(success(await listAiChatMessages({ sessionId: id, userId: user.id })));
+  },
+);
+
+aiRoutes.post(
+  "/ai/chat/sessions/:id/messages/stream",
+  authRequired(),
+  ability("system.aiChat.chat"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    const payload = aiChatMessageSchema.parse(await c.req.json());
+    let response: Response | null = null;
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiChat",
+        action: "chatStream",
+        resource: "/ai/chat/sessions/messages",
+        resourceId: id,
+        details: {
+          inputLength: payload.content.trim().length,
+          inputPreview: payload.content.trim().slice(0, 120),
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+        },
+      },
+      async () => {
+        response = await buildAiChatStreamResponse({
+          userId: user.id,
+          sessionId: id,
+          content: payload.content,
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+          abortSignal: c.req.raw.signal,
+        });
+      },
+    );
+    return response ?? new Response("AI Chat 流式调用未创建响应", { status: 500 });
   },
 );
 

@@ -796,6 +796,63 @@ export const sysAiModel = pgTable(
     index("sys_ai_model_status_sort_idx").on(table.status, table.sort),
   ],
 );
+
+export const sysAiChatSession = pgTable(
+  "sys_ai_chat_session",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    providerId: integer("provider_id").references(() => sysAiProvider.id, {
+      onDelete: "set null",
+    }),
+    modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    providerCode: text("provider_code"),
+    modelName: text("model_name"),
+    modelIdentifier: text("model_identifier"),
+    messageCount: integer("message_count").notNull().default(0),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    status: integer("status").notNull().default(1),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_chat_session_user_updated_idx").on(table.userId, table.updatedAt),
+    index("sys_ai_chat_session_last_message_idx").on(table.lastMessageAt),
+  ],
+);
+
+export const sysAiChatMessage = pgTable(
+  "sys_ai_chat_message",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => sysAiChatSession.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["system", "user", "assistant"] }).notNull(),
+    content: text("content").notNull(),
+    finishReason: text("finish_reason"),
+    usageJson: text("usage_json"),
+    metadataJson: text("metadata_json"),
+    providerId: integer("provider_id").references(() => sysAiProvider.id, {
+      onDelete: "set null",
+    }),
+    modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    durationMs: integer("duration_ms"),
+    ...timestamps,
+  },
+  (table) => [
+    index("sys_ai_chat_message_session_id_idx").on(table.sessionId, table.id),
+    index("sys_ai_chat_message_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);
+
 export const sysSmsTemplate = pgTable(
   "sys_sms_template",
   {

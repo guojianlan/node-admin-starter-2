@@ -31,6 +31,8 @@ async function syncSequences(dbClient: DbClient) {
     "sys_sms_provider",
     "sys_ai_provider",
     "sys_ai_model",
+    "sys_ai_chat_session",
+    "sys_ai_chat_message",
     "sys_notice",
   ];
 
