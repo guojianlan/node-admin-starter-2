@@ -8,11 +8,7 @@ import { sysDept } from "@/server/db/schema";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
-import {
-  buildDataScopeCondition,
-  buildDataScopeWhereSql,
-  resolveDataScope,
-} from "@/server/services/data-scope";
+import { buildDataScopeWhereSql, resolveDataScope } from "@/server/services/data-scope";
 import { assertSystemCodeUnchanged, getSystemFlag } from "@/server/services/protected-records";
 import { buildListQuery } from "@/server/services/list-query";
 
@@ -33,6 +29,10 @@ const deptCrud = createCrudRoutes({
   createSchema: deptSchema,
   updateSchema: deptSchema.partial(),
   permissions: { prefix: "system.dept" },
+  dataScope: {
+    deptId: sysDept.id,
+    selfFallbackDept: sysDept.id,
+  },
   list: {
     select: {
       id: sysDept.id,
@@ -56,13 +56,6 @@ const deptCrud = createCrudRoutes({
     defaultSort: { field: "sort", order: "asc" },
   },
   hooks: {
-    beforeList: async (ctx) => {
-      const scope = await resolveDataScope(ctx.c);
-      return buildDataScopeCondition(scope, {
-        deptId: sysDept.id,
-        selfFallbackDept: sysDept.id,
-      });
-    },
     beforeUpdate: async (ctx, id, values) => {
       const isSystem = await getSystemFlag(ctx.sql, "sys_dept", id);
       if (isSystem && values.status === 0) throw new Error("默认部门不能停用");

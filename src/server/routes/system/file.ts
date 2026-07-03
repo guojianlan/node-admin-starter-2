@@ -199,58 +199,92 @@ fileRoutes.get("/file/group/tree", authRequired(), ability("system.file.query"),
 
 fileRoutes.post("/file/group", authRequired(), ability("system.file.upload"), async (c) => {
   const payload = fileGroupSchema.parse(await c.req.json());
-  if (payload.parentId > 0) {
-    const parent = await sqlite
-      .prepare("SELECT id FROM sys_file_group WHERE id = ?")
-      .get(payload.parentId);
-    if (!parent) throw new Error("父级文件夹不存在");
-  }
-  const now = nowIso();
-  await sqlite
-    .prepare(
-      `INSERT INTO sys_file_group
-        (parent_id, name, sort, describe, created_at, updated_at)
-       VALUES
-        (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(payload.parentId, payload.name, payload.sort, payload.describe || null, now, now);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "createGroup",
+      resource: "/file/group",
+      details: { parentId: payload.parentId, name: payload.name },
+    },
+    async () => {
+      if (payload.parentId > 0) {
+        const parent = await sqlite
+          .prepare("SELECT id FROM sys_file_group WHERE id = ?")
+          .get(payload.parentId);
+        if (!parent) throw new Error("父级文件夹不存在");
+      }
+      const now = nowIso();
+      await sqlite
+        .prepare(
+          `INSERT INTO sys_file_group
+            (parent_id, name, sort, describe, created_at, updated_at)
+           VALUES
+            (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(payload.parentId, payload.name, payload.sort, payload.describe || null, now, now);
+    },
+  );
   return c.json(success(null, "创建成功"));
 });
 
 fileRoutes.put("/file/group/:id", authRequired(), ability("system.file.upload"), async (c) => {
   const id = Number(c.req.param("id"));
   const payload = fileGroupSchema.parse(await c.req.json());
-  if (id <= 0) throw new Error("文件夹不存在");
-  const rows = (await sqlite
-    .prepare("SELECT id, parent_id AS parentId, name, sort, describe FROM sys_file_group")
-    .all()) as FileGroupRow[];
-  if (!rows.some((row) => row.id === id)) throw new Error("文件夹不存在");
-  const descendantIds = collectDescendantIds(rows, id);
-  if (payload.parentId === id || descendantIds.includes(payload.parentId)) {
-    throw new Error("不能选择自身或子级作为父级");
-  }
-  await sqlite
-    .prepare(
-      `UPDATE sys_file_group
-       SET parent_id = ?, name = ?, sort = ?, describe = ?, updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(payload.parentId, payload.name, payload.sort, payload.describe || null, nowIso(), id);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "updateGroup",
+      resource: "/file/group",
+      resourceId: id,
+      details: { parentId: payload.parentId, name: payload.name },
+    },
+    async () => {
+      if (id <= 0) throw new Error("文件夹不存在");
+      const rows = (await sqlite
+        .prepare("SELECT id, parent_id AS parentId, name, sort, describe FROM sys_file_group")
+        .all()) as FileGroupRow[];
+      if (!rows.some((row) => row.id === id)) throw new Error("文件夹不存在");
+      const descendantIds = collectDescendantIds(rows, id);
+      if (payload.parentId === id || descendantIds.includes(payload.parentId)) {
+        throw new Error("不能选择自身或子级作为父级");
+      }
+      await sqlite
+        .prepare(
+          `UPDATE sys_file_group
+           SET parent_id = ?, name = ?, sort = ?, describe = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(payload.parentId, payload.name, payload.sort, payload.describe || null, nowIso(), id);
+    },
+  );
   return c.json(success(null, "更新成功"));
 });
 
 fileRoutes.delete("/file/group/:id", authRequired(), ability("system.file.delete"), async (c) => {
   const id = Number(c.req.param("id"));
-  if (id <= 0) throw new Error("不能删除根目录");
-  const child = await sqlite
-    .prepare("SELECT id FROM sys_file_group WHERE parent_id = ? LIMIT 1")
-    .get(id);
-  if (child) throw new Error("请先删除子文件夹");
-  const file = await sqlite
-    .prepare("SELECT id FROM sys_file WHERE group_id = ? AND deleted_at IS NULL LIMIT 1")
-    .get(id);
-  if (file) throw new Error("请先删除文件夹下的文件");
-  await sqlite.prepare("DELETE FROM sys_file_group WHERE id = ?").run(id);
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "deleteGroup",
+      resource: "/file/group",
+      resourceId: id,
+    },
+    async () => {
+      if (id <= 0) throw new Error("不能删除根目录");
+      const child = await sqlite
+        .prepare("SELECT id FROM sys_file_group WHERE parent_id = ? LIMIT 1")
+        .get(id);
+      if (child) throw new Error("请先删除子文件夹");
+      const file = await sqlite
+        .prepare("SELECT id FROM sys_file WHERE group_id = ? AND deleted_at IS NULL LIMIT 1")
+        .get(id);
+      if (file) throw new Error("请先删除文件夹下的文件");
+      await sqlite.prepare("DELETE FROM sys_file_group WHERE id = ?").run(id);
+    },
+  );
   return c.json(success(null, "删除成功"));
 });
 
@@ -498,12 +532,23 @@ fileRoutes.delete("/file/chunk/clean-expired", authRequired(), ability("system.f
 fileRoutes.delete("/file/chunk/:uploadId", authRequired(), ability("system.file.upload"), async (c) => {
   const user = c.get("user");
   const uploadId = c.req.param("uploadId");
-  await sqlite
-    .prepare(
-      "UPDATE sys_file_upload_session SET status = 'cancelled', updated_at = now() WHERE upload_id = ? AND user_id = ?",
-    )
-    .run(uploadId, user.id);
-  await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
+  await runWithOperationLog(
+    c,
+    {
+      module: "system.file",
+      action: "cancelChunkUpload",
+      resource: "/file/chunk",
+      resourceId: uploadId,
+    },
+    async () => {
+      await sqlite
+        .prepare(
+          "UPDATE sys_file_upload_session SET status = 'cancelled', updated_at = now() WHERE upload_id = ? AND user_id = ?",
+        )
+        .run(uploadId, user.id);
+      await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
+    },
+  );
   return c.json(success(null, "已取消上传"));
 });
 
@@ -658,11 +703,23 @@ fileRoutes.put(
   async (c) => {
     const id = Number(c.req.param("id"));
     const payload = z.object({ originalName: z.string().min(1) }).parse(await c.req.json());
-    await sqlite
-      .prepare(
-        "UPDATE sys_file SET original_name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-      )
-      .run(payload.originalName, nowIso(), id);
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.file",
+        action: "rename",
+        resource: "/file/list",
+        resourceId: id,
+        details: { originalName: payload.originalName },
+      },
+      async () => {
+        await sqlite
+          .prepare(
+            "UPDATE sys_file SET original_name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+          )
+          .run(payload.originalName, nowIso(), id);
+      },
+    );
     return c.json(success(null, "重命名成功"));
   },
 );

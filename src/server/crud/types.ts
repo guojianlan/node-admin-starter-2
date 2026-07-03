@@ -45,6 +45,14 @@ export type CrudListConfig = {
   baseWhere?: SQL[];
 };
 
+export type CrudDataScopeConfig = {
+  deptId?: AnyPgColumn;
+  userId?: AnyPgColumn;
+  ownerId?: AnyPgColumn;
+  createdBy?: AnyPgColumn;
+  selfFallbackDept?: AnyPgColumn;
+};
+
 export type CrudContext = {
   c: Context<{ Variables: HonoVariables }>;
   userId: number | null;
@@ -84,6 +92,7 @@ export type CrudConfig<
   updateSchema: z.ZodType<TUpdate>;
   permissions: CrudPermissions;
   list: CrudListConfig;
+  dataScope?: CrudDataScopeConfig | false;
   actions?: CrudAction[];
   softDelete?: boolean;
   audit?: boolean;

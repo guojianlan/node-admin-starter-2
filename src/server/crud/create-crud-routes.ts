@@ -7,11 +7,12 @@ import type { HonoVariables } from "@/server/context";
 import { createDbClient, db, schema, sql, sqlite, type DbClient } from "@/server/db";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { buildDataScopeCondition, resolveDataScope } from "@/server/services/data-scope";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { buildCrudListQuery } from "./list-query";
 import { createCrudMeta, resolveCrudPermission, validateCrudMeta } from "./permissions";
 import { registerCrudMeta } from "./registry";
-import type { CrudAction, CrudConfig, CrudContext } from "./types";
+import type { CrudAction, CrudConfig, CrudContext, CrudDataScopeConfig } from "./types";
 
 const defaultActions: CrudAction[] = ["query", "create", "update", "delete", "batchDelete"];
 
@@ -85,6 +86,15 @@ function normalizeWhere(value: SQL | SQL[] | undefined) {
   return Array.isArray(value) ? value : [value];
 }
 
+async function resolveCrudDataScopeWhere(
+  ctx: CrudContext,
+  dataScope: CrudDataScopeConfig | false | undefined,
+) {
+  if (!dataScope) return [];
+  const scope = await resolveDataScope(ctx.c);
+  return normalizeWhere(buildDataScopeCondition(scope, dataScope));
+}
+
 function operationModule<
   TCreate extends Record<string, unknown>,
   TUpdate extends Record<string, unknown>,
@@ -154,7 +164,10 @@ export function createCrudRoutes<
 
   routes.get(basePath, ...withPermission(config, "query"), async (c) => {
     const ctx = crudContext(c);
-    const extraWhere = normalizeWhere(await config.hooks?.beforeList?.(ctx));
+    const extraWhere = [
+      ...(await resolveCrudDataScopeWhere(ctx, config.dataScope)),
+      ...normalizeWhere(await config.hooks?.beforeList?.(ctx)),
+    ];
     const page = await buildCrudListQuery(c.req.url, config.table, config.list, {
       softDeleteColumn,
       extraWhere,

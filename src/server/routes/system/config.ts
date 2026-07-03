@@ -165,7 +165,16 @@ configRoutes.post(
   "/config/items/refreshCache",
   authRequired(),
   ability("system.config.save"),
-  (c) => {
+  async (c) => {
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.config",
+        action: "refreshCache",
+        resource: "/config/items",
+      },
+      async () => undefined,
+    );
     return c.json(success(null, "刷新成功"));
   },
 );

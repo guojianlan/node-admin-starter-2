@@ -362,11 +362,22 @@ oauthProviderRoutes.post(
   ability("system.oauthProvider.test"),
   async (c) => {
     const payload = z.object({ id: z.coerce.number() }).parse(await c.req.json());
-    const row = await getProvider(payload.id);
-    if (!row) throw new Error("第三方登录配置不存在");
-    if (!row.authUrl || !row.tokenUrl || !row.userInfoUrl || !row.clientId) {
-      throw new Error("第三方登录配置不完整");
-    }
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.oauthProvider",
+        action: "test",
+        resource: "/oauth/provider",
+        resourceId: payload.id,
+      },
+      async () => {
+        const row = await getProvider(payload.id);
+        if (!row) throw new Error("第三方登录配置不存在");
+        if (!row.authUrl || !row.tokenUrl || !row.userInfoUrl || !row.clientId) {
+          throw new Error("第三方登录配置不完整");
+        }
+      },
+    );
     return c.json(success(null, "配置完整"));
   },
 );

@@ -9,11 +9,7 @@ import { type DbClient, sqlite } from "@/server/db";
 import { sysDept, sysUser } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
-import {
-  buildDataScopeCondition,
-  buildDataScopeWhereSql,
-  resolveDataScope,
-} from "@/server/services/data-scope";
+import { buildDataScopeWhereSql, resolveDataScope } from "@/server/services/data-scope";
 import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import {
@@ -87,6 +83,10 @@ const userCrud = createCrudRoutes({
   createSchema: userCreateSchema,
   updateSchema: userUpdateSchema,
   permissions: { prefix: "system.user" },
+  dataScope: {
+    deptId: sysUser.deptId,
+    userId: sysUser.id,
+  },
   list: {
     select: {
       id: sysUser.id,
@@ -134,10 +134,6 @@ const userCrud = createCrudRoutes({
     defaultSort: { field: "id", order: "asc" },
   },
   hooks: {
-    beforeList: async (ctx) => {
-      const scope = await resolveDataScope(ctx.c);
-      return buildDataScopeCondition(scope, { deptId: sysUser.deptId, userId: sysUser.id });
-    },
     afterList: (_ctx, page) => ({
       ...page,
       data: page.data.map((item) => ({

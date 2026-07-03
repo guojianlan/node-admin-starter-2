@@ -197,6 +197,34 @@ export async function revokeUserTokens(input: {
   await dbClient.prepare("DELETE FROM sys_access_token WHERE user_id = ?").run(input.userId);
 }
 
+export async function revokeAllTokens(dbClient: DbClient = sqlite) {
+  await dbClient.prepare("DELETE FROM sys_access_token").run();
+}
+
+export async function revokeTokensForRuleIds(input: {
+  ruleIds: number[];
+  includeSuperAdmin?: boolean;
+  dbClient?: DbClient;
+}) {
+  const ruleIds = [...new Set(input.ruleIds.filter((id) => Number.isFinite(id) && id > 0))];
+  if (!ruleIds.length) return;
+
+  const dbClient = input.dbClient ?? sqlite;
+  const placeholders = ruleIds.map(() => "?").join(", ");
+  const superAdminWhere = input.includeSuperAdmin === false ? "" : " OR user_id = 1";
+  await dbClient
+    .prepare(
+      `DELETE FROM sys_access_token
+       WHERE user_id IN (
+         SELECT DISTINCT sur.user_id
+         FROM sys_user_role sur
+         INNER JOIN sys_role_rule srr ON srr.role_id = sur.role_id
+         WHERE srr.rule_id IN (${placeholders})
+       )${superAdminWhere}`,
+    )
+    .run(...ruleIds);
+}
+
 export async function enforceSessionPolicy(input: {
   userId: number;
   currentTokenHash: string;

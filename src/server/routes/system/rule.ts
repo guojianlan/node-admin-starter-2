@@ -10,6 +10,7 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { assertNotSystemRecords, getSystemFlag } from "@/server/services/protected-records";
+import { revokeTokensForRuleIds } from "@/server/services/security-policy-service";
 
 const ruleSchema = z.object({
   parentId: z.coerce.number().default(0),
@@ -48,6 +49,10 @@ type RuleRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+function shouldRevokeRuleTokenSnapshots(values: Partial<z.infer<typeof ruleSchema>>) {
+  return values.key !== undefined || values.type !== undefined || values.status !== undefined;
+}
 
 const ruleCrud = createCrudRoutes({
   basePath: "/rule",
@@ -110,6 +115,14 @@ const ruleCrud = createCrudRoutes({
         ids,
         message: "系统内置权限不能删除",
       }),
+    afterUpdate: async (ctx, id, values) => {
+      if (shouldRevokeRuleTokenSnapshots(values)) {
+        await revokeTokensForRuleIds({ ruleIds: [id], dbClient: ctx.sql });
+      }
+    },
+    afterDelete: async (ctx, ids) => {
+      await revokeTokensForRuleIds({ ruleIds: ids, dbClient: ctx.sql });
+    },
   },
 });
 
@@ -205,6 +218,7 @@ ruleRoutes.put("/rule/status/:id", authRequired(), ability("system.rule.status")
           "UPDATE sys_rule SET status = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL",
         )
         .run(payload.status, id);
+      await revokeTokensForRuleIds({ ruleIds: [id] });
     },
   );
   return c.json(success(null, "更新成功"));

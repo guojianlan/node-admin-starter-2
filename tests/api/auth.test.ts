@@ -294,6 +294,70 @@ describe("auth and permission API", () => {
     expect(roles.status).toBe(403);
   });
 
+  it("revokes affected token snapshots when rule status changes", async () => {
+    const now = nowIso();
+    const passwordHash = await bcrypt.hash("123456", 10);
+    const roleResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_role
+          (name, code, remark, sort, status, created_at, updated_at)
+         VALUES
+          ('临时权限角色', 'temporary_permission_role', '', 20, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(now, now);
+    const roleId = Number(roleResult.lastInsertRowid);
+    const ruleResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_rule
+          (parent_id, type, key, name, "order", status, hidden, default_auth, is_system, created_at, updated_at)
+         VALUES
+          (0, 'action', 'temporary.demo.action', '临时动作权限', 1, 1, 0, 0, false, ?, ?)
+         RETURNING id`,
+      )
+      .run(now, now);
+    const ruleId = Number(ruleResult.lastInsertRowid);
+    await sqlite
+      .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?)")
+      .run(roleId, ruleId);
+    const userResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_user
+          (username, password_hash, nickname, sex, dept_id, status, created_at, updated_at)
+         VALUES
+          ('rule-token-user', ?, '权限快照用户', 0, 1, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(passwordHash, now, now);
+    const userId = Number(userResult.lastInsertRowid);
+    await sqlite
+      .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)")
+      .run(userId, roleId);
+
+    const { token: affectedToken } = await login("rule-token-user", "123456");
+    expect(affectedToken).toHaveLength(64);
+    const before = (await sqlite
+      .prepare("SELECT COUNT(1)::int AS total FROM sys_access_token WHERE user_id = ?")
+      .get(userId)) as { total: number };
+    expect(Number(before.total)).toBe(1);
+
+    const { token: adminToken } = await login();
+    const response = await app.request(`/api/system/rule/status/${ruleId}`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ status: 0 }),
+    });
+    expect(response.status).toBe(200);
+
+    const after = (await sqlite
+      .prepare("SELECT COUNT(1)::int AS total FROM sys_access_token WHERE user_id = ?")
+      .get(userId)) as { total: number };
+    expect(Number(after.total)).toBe(0);
+  });
+
   it("uploads, lists, downloads and deletes local files", async () => {
     const { token } = await login();
     const form = new FormData();
