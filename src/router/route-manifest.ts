@@ -19,6 +19,7 @@ import { RolePage } from "@/features/system/role/RolePage";
 import { RulePage } from "@/features/system/rule/RulePage";
 import { SettingsPage } from "@/features/system/settings/SettingsPage";
 import { SmsProviderPage } from "@/features/system/sms-provider/SmsProviderPage";
+import { SmsTemplatePage } from "@/features/system/sms-template/SmsTemplatePage";
 import { StoragePage } from "@/features/system/storage/StoragePage";
 import { UserPage } from "@/features/system/user/UserPage";
 
@@ -178,6 +179,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "通知公告",
     auth: "system.notice.query",
     component: NoticePage,
+  },
+  {
+    path: "/system/sms/template",
+    key: "system.smsTemplate",
+    title: "短信模板",
+    auth: "system.smsTemplate.query",
+    component: SmsTemplatePage,
   },
   {
     path: "/profile",

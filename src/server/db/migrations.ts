@@ -1192,6 +1192,66 @@ VALUES
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0022_sms_template_resource",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_sms_template (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  provider_id INTEGER NOT NULL REFERENCES sys_sms_provider(id) ON DELETE RESTRICT,
+  template_code TEXT,
+  signature TEXT,
+  content TEXT NOT NULL,
+  variables_json TEXT,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  remark TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_sms_template_code_active_unique
+  ON sys_sms_template(code)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS sys_sms_template_provider_id_idx
+  ON sys_sms_template(provider_id);
+
+CREATE INDEX IF NOT EXISTS sys_sms_template_status_sort_idx
+  ON sys_sms_template(status, sort)
+  WHERE deleted_at IS NULL;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (220, 180, 'route', 'system.smsTemplate', '短信模板', '/system/sms/template', 'message', 71, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (221, 220, 'action', 'system.smsTemplate.query', '查询短信模板', 1, 1, 0, 0, true, now(), now()),
+  (222, 220, 'action', 'system.smsTemplate.create', '新增短信模板', 2, 1, 0, 0, true, now(), now()),
+  (223, 220, 'action', 'system.smsTemplate.update', '编辑短信模板', 3, 1, 0, 0, true, now(), now()),
+  (224, 220, 'action', 'system.smsTemplate.delete', '删除短信模板', 4, 1, 0, 0, true, now(), now()),
+  (225, 220, 'action', 'system.smsTemplate.status', '启停短信模板', 5, 1, 0, 0, true, now(), now()),
+  (226, 220, 'action', 'system.smsTemplate.test', '测试短信模板', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (220), (221), (222), (223), (224), (225), (226)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

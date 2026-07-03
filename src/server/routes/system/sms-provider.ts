@@ -31,7 +31,7 @@ const smsProviderSchema = z.object({
   remark: z.preprocess(emptyToNull, z.string().optional().nullable()),
 });
 
-type SmsProviderRow = {
+export type SmsProviderRow = {
   id: number;
   code: string;
   name: string;
@@ -65,7 +65,7 @@ function normalizeSmsProvider<T extends Record<string, unknown>>(values: T) {
   } as T;
 }
 
-async function getSmsProvider(id: number) {
+export async function getSmsProvider(id: number) {
   return (await sqlite
     .prepare(
       `SELECT
@@ -87,7 +87,7 @@ async function getSmsProvider(id: number) {
     .get(id)) as SmsProviderRow | undefined;
 }
 
-async function getDefaultSmsProvider() {
+export async function getDefaultSmsProvider() {
   return (await sqlite
     .prepare(
       `SELECT
@@ -118,7 +118,7 @@ async function assertSmsProviderMutable(id: number) {
   if (row.isSystem) throw new Error("系统内置短信配置不能删除");
 }
 
-async function sendWebhookSms(input: {
+export async function sendWebhookSms(input: {
   provider: SmsProviderRow;
   to: string;
   content: string;

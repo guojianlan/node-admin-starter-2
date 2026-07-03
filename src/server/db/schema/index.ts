@@ -796,3 +796,32 @@ export const sysAiModel = pgTable(
     index("sys_ai_model_status_sort_idx").on(table.status, table.sort),
   ],
 );
+export const sysSmsTemplate = pgTable(
+  "sys_sms_template",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    providerId: integer("provider_id")
+      .notNull()
+      .references(() => sysSmsProvider.id, { onDelete: "restrict" }),
+    templateCode: text("template_code"),
+    signature: text("signature"),
+    content: text("content").notNull(),
+    variablesJson: text("variables_json"),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    remark: text("remark"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_sms_template_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_sms_template_provider_id_idx").on(table.providerId),
+    index("sys_sms_template_status_sort_idx").on(table.status, table.sort),
+  ],
+);

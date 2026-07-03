@@ -131,10 +131,17 @@ Configuration boundaries:
 | PUT | `/api/system/sms/provider/status/:id` | Toggle SMS provider status |
 | PUT | `/api/system/sms/provider/default/:id` | Set default SMS provider with protection |
 | POST | `/api/system/sms/provider/test` | Send test SMS through provider |
+| GET/POST | `/api/system/sms/template` | Query and create SMS templates |
+| PUT | `/api/system/sms/template/:id` | Update SMS template |
+| DELETE | `/api/system/sms/template/:id` | Delete SMS template when not system protected |
+| PUT | `/api/system/sms/template/status/:id` | Toggle SMS template status |
+| POST | `/api/system/sms/template/test` | Render variables and send a test SMS through the bound provider |
 
 Default resources are unique. Disabling the active default resource is rejected. Secrets are stored encrypted and returned as boolean flags only.
 
 SMS provider v1 supports a generic `webhook` provider. Test sending posts JSON to the configured endpoint with the target phone, content, signature, template code, and variables. Cloud-vendor SDK adapters can be added later behind the same `sys_sms_provider` model.
+
+SMS templates are stored separately in `sys_sms_template`. They bind to a provider, keep business template content and variable metadata, and do not store provider secrets. Test sending renders `{{variable}}` placeholders from the supplied variables object before posting through the bound provider.
 
 ## OAuth
 

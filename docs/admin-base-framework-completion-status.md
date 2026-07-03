@@ -31,7 +31,7 @@ This document records the final handoff status for the Admin Base backend framew
 - CRUD factory remains the default for ordinary modules.
 - Password, token, OAuth, file physical operations, publish/revoke, and connection tests remain explicit route/service workflows.
 - `sys_config_items` stores ordinary parameters and policy parameters only.
-- Storage, mail, SMS, and OAuth providers remain resource configuration tables with independent APIs.
+- Storage, mail, SMS providers/templates, and OAuth providers remain resource configuration tables with independent APIs.
 - Secrets are hashed or encrypted at rest and are always masked in responses.
 
 ## Production Readiness
@@ -49,7 +49,7 @@ The production path now has these guardrails:
 
 The backend framework can now support a long-running business project baseline:
 
-- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, SMS providers, OAuth providers, notices, files, login logs, online sessions, and operation logs.
+- Admin users can manage users, roles, menus, departments, dictionaries, config, storage, mail, SMS providers/templates, OAuth providers, notices, files, login logs, online sessions, and operation logs.
 - End users can manage profile data, password, avatar, login records, OAuth bindings, and message reads.
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.

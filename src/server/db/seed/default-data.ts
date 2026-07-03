@@ -354,6 +354,25 @@ const moduleRules = [
       ["revoke", "撤回公告"],
     ],
   },
+  {
+    route: {
+      id: 220,
+      parentId: 180,
+      key: "system.smsTemplate",
+      name: "短信模板",
+      path: "/system/sms/template",
+      icon: "message",
+      order: 71,
+    },
+    actions: [
+      ["query", "查询短信模板"],
+      ["create", "新增短信模板"],
+      ["update", "编辑短信模板"],
+      ["delete", "删除短信模板"],
+      ["status", "启停短信模板"],
+      ["test", "测试短信模板"],
+    ],
+  },
 ] as const;
 
 export const seedRules: SeedRule[] = [
