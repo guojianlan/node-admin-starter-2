@@ -150,6 +150,7 @@ const moduleRules = [
       ["upload", "上传文件"],
       ["delete", "删除文件"],
       ["download", "下载文件"],
+      ["forceDelete", "强制删除文件"],
     ],
   },
   {
@@ -318,6 +319,24 @@ const moduleRules = [
       ["chat", "发送 AI Chat 消息"],
       ["update", "编辑 AI Chat 会话"],
       ["delete", "删除 AI Chat 会话"],
+    ],
+  },
+  {
+    route: {
+      id: 280,
+      parentId: 180,
+      key: "system.aiAgent",
+      name: "AI Agent",
+      path: "/system/ai/agent",
+      icon: "api",
+      order: 84,
+    },
+    actions: [
+      ["query", "查询 Agent 和工具"],
+      ["create", "新增 Agent 和工具"],
+      ["update", "编辑 Agent 和工具"],
+      ["delete", "删除 Agent 和工具"],
+      ["approve", "审批 Agent 工具调用"],
     ],
   },
   {

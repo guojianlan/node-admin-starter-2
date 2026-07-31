@@ -49,6 +49,10 @@ type AiRuntimeConfig = {
   };
 };
 
+type AiRuntimeStatus =
+  | (AiRuntimeConfig & { ready: true; reason: null })
+  | { ready: false; reason: string; provider: null; model: null };
+
 type AiGenerationResult = AiRuntimeConfig & {
   text: string;
   finishReason: string;
@@ -121,7 +125,7 @@ export function AiPlaygroundPage() {
   const runtimeQuery = useQuery({
     queryKey: ["system-ai-playground-runtime", usage],
     queryFn: () =>
-      request<AiRuntimeConfig>(`/api/system/ai/playground/runtime-config/${usage}`, {
+      request<AiRuntimeStatus>(`/api/system/ai/playground/runtime-config/${usage}`, {
         silent: true,
       }),
     retry: false,
@@ -131,7 +135,7 @@ export function AiPlaygroundPage() {
     setOutput("");
     setFinish(null);
     setStreamError("");
-    setStreamMeta(runtimeQuery.data ?? null);
+    setStreamMeta(runtimeQuery.data?.ready ? runtimeQuery.data : null);
   };
 
   const buildPayload = () => ({
@@ -224,7 +228,7 @@ export function AiPlaygroundPage() {
     }
   };
 
-  const activeConfig = streamMeta ?? runtimeQuery.data ?? null;
+  const activeConfig = streamMeta ?? (runtimeQuery.data?.ready ? runtimeQuery.data : null);
   const busy = runMutation.isPending || isStreaming;
 
   return (
@@ -241,8 +245,8 @@ export function AiPlaygroundPage() {
         }}
       >
         <Card className="admin-card" variant="borderless" title="调用参数">
-          <Space direction="vertical" size={14} style={{ width: "100%" }}>
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={14} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">业务用途</Typography.Text>
               <Select
                 value={usage}
@@ -254,7 +258,7 @@ export function AiPlaygroundPage() {
                 style={{ width: "100%" }}
               />
             </Space>
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">Prompt</Typography.Text>
               <Input.TextArea
                 value={input}
@@ -265,7 +269,7 @@ export function AiPlaygroundPage() {
                 maxLength={12000}
               />
             </Space>
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
               <Segmented
                 block
@@ -282,7 +286,7 @@ export function AiPlaygroundPage() {
                 style={{ width: "100%" }}
               />
             </Space>
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">超时 ms</Typography.Text>
               <InputNumber
                 min={5000}
@@ -330,19 +334,19 @@ export function AiPlaygroundPage() {
           </Space>
         </Card>
 
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
           <Card className="admin-card" variant="borderless" title="当前运行时">
             {runtimeQuery.isLoading ? (
               <Spin />
-            ) : runtimeQuery.error ? (
+            ) : runtimeQuery.error || !activeConfig ? (
               <Alert
                 showIcon
                 type="warning"
-                message="默认 AI Runtime 未就绪"
+                title="默认 AI Runtime 未就绪"
                 description={
                   runtimeQuery.error instanceof Error
                     ? runtimeQuery.error.message
-                    : "请先启用 AI Provider 并设置默认模型。"
+                    : runtimeQuery.data?.reason || "请先启用 AI Provider 并设置默认模型。"
                 }
               />
             ) : activeConfig ? (
@@ -401,8 +405,8 @@ export function AiPlaygroundPage() {
               </Space>
             }
           >
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              {streamError ? <Alert showIcon type="error" message={streamError} /> : null}
+            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+              {streamError ? <Alert showIcon type="error" title={streamError} /> : null}
               <StreamingMarkdown
                 content={output}
                 minHeight={300}
@@ -413,7 +417,7 @@ export function AiPlaygroundPage() {
                 <Alert
                   showIcon
                   type={finish.finishReason === "length" ? "warning" : "success"}
-                  message={
+                  title={
                     finish.finishReason === "length"
                       ? "模型因为最大输出 tokens 截断"
                       : "模型调用完成"

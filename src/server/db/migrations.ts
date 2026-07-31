@@ -1349,6 +1349,201 @@ WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    id: "0025_ai_agent_and_chat_governance",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_agent (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  description TEXT,
+  instructions TEXT NOT NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  temperature_milli INTEGER NOT NULL DEFAULT 700,
+  max_output_tokens INTEGER,
+  max_steps INTEGER NOT NULL DEFAULT 6,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_agent_code_active_unique ON sys_ai_agent(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_agent_status_sort_idx ON sys_ai_agent(status, sort);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_model_id_idx ON sys_ai_agent(model_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_tool (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  description TEXT NOT NULL,
+  handler_key TEXT NOT NULL,
+  input_schema_json TEXT,
+  config_json TEXT,
+  risk_level TEXT NOT NULL DEFAULT 'low' CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+  approval_required BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_tool_code_active_unique ON sys_ai_tool(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_tool_status_sort_idx ON sys_ai_tool(status, sort);
+CREATE INDEX IF NOT EXISTS sys_ai_tool_handler_key_idx ON sys_ai_tool(handler_key);
+
+CREATE TABLE IF NOT EXISTS sys_ai_agent_tool (
+  agent_id INTEGER NOT NULL REFERENCES sys_ai_agent(id) ON DELETE CASCADE,
+  tool_id INTEGER NOT NULL REFERENCES sys_ai_tool(id) ON DELETE CASCADE,
+  approval_mode TEXT NOT NULL DEFAULT 'inherit' CHECK (approval_mode IN ('inherit', 'always', 'never')),
+  PRIMARY KEY (agent_id, tool_id)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_tool_tool_id_idx ON sys_ai_agent_tool(tool_id);
+
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS agent_id INTEGER REFERENCES sys_ai_agent(id) ON DELETE SET NULL;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS system_prompt TEXT;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS temperature_milli INTEGER NOT NULL DEFAULT 700;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS context_summary TEXT;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS compacted_through_message_id INTEGER;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS total_input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sys_ai_chat_session ADD COLUMN IF NOT EXISTS total_output_tokens INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE sys_ai_chat_message ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed';
+ALTER TABLE sys_ai_chat_message ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE sys_ai_chat_message ADD COLUMN IF NOT EXISTS parent_message_id INTEGER;
+ALTER TABLE sys_ai_chat_message ADD COLUMN IF NOT EXISTS regenerated_from_id INTEGER;
+
+CREATE TABLE IF NOT EXISTS sys_ai_agent_run (
+  id SERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sys_ai_chat_session(id) ON DELETE CASCADE,
+  agent_id INTEGER NOT NULL REFERENCES sys_ai_agent(id) ON DELETE RESTRICT,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued',
+  input_message_id INTEGER,
+  output_message_id INTEGER,
+  total_steps INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER,
+  error_message TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_session_id_idx ON sys_ai_agent_run(session_id, id);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_user_status_idx ON sys_ai_agent_run(user_id, status);
+
+CREATE TABLE IF NOT EXISTS sys_ai_agent_run_step (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_agent_run(id) ON DELETE CASCADE,
+  step_no INTEGER NOT NULL,
+  step_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  tool_id INTEGER REFERENCES sys_ai_tool(id) ON DELETE SET NULL,
+  tool_name TEXT,
+  tool_call_id TEXT,
+  input_json TEXT,
+  output_json TEXT,
+  usage_json TEXT,
+  duration_ms INTEGER,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_step_run_no_idx ON sys_ai_agent_run_step(run_id, step_no);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_step_tool_call_idx ON sys_ai_agent_run_step(tool_call_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_tool_approval (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_agent_run(id) ON DELETE CASCADE,
+  step_id INTEGER REFERENCES sys_ai_agent_run_step(id) ON DELETE SET NULL,
+  session_id INTEGER NOT NULL REFERENCES sys_ai_chat_session(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  tool_id INTEGER REFERENCES sys_ai_tool(id) ON DELETE SET NULL,
+  tool_name TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  input_json TEXT,
+  output_json TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reason TEXT,
+  decided_by INTEGER,
+  decided_at TIMESTAMPTZ,
+  executed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_tool_approval_run_tool_call_unique ON sys_ai_tool_approval(run_id, tool_call_id);
+CREATE INDEX IF NOT EXISTS sys_ai_tool_approval_session_status_idx ON sys_ai_tool_approval(session_id, status);
+CREATE INDEX IF NOT EXISTS sys_ai_tool_approval_user_status_idx ON sys_ai_tool_approval(user_id, status);
+
+INSERT INTO sys_ai_agent
+  (id, name, code, description, instructions, model_id, temperature_milli, max_output_tokens, max_steps, status, sort, is_system)
+VALUES
+  (1, '通用工作助手', 'general-assistant', '用于日常问答和后台信息查询的默认 Agent',
+   '你是 Admin Base 后台工作助手。回答应准确、简洁；调用工具前先判断是否必要；高风险工具必须等待人工审批。',
+   NULL, 700, 16384, 6, 1, 1, true)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_ai_tool
+  (id, name, code, description, handler_key, input_schema_json, risk_level, approval_required, status, sort, is_system)
+VALUES
+  (1, '当前时间', 'current-time', '读取服务器当前时间和时区', 'current_time', '{}', 'low', false, 1, 1, true),
+  (2, '计算器', 'calculator', '执行基础四则运算', 'calculator', '{"expression":"string"}', 'low', false, 1, 2, true),
+  (3, '系统状态', 'system-status', '读取用户、在线会话、今日登录和操作日志摘要', 'system_status', '{}', 'low', false, 1, 3, true),
+  (4, '操作日志摘要', 'operation-log-summary', '读取近期操作日志模块和风险等级统计', 'operation_log_summary', '{"hours":"number"}', 'medium', true, 1, 4, true)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT 1, id, 'inherit' FROM sys_ai_tool WHERE id IN (1, 2, 3, 4)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (280, 180, 'route', 'system.aiAgent', 'AI Agent', '/system/ai/agent', 'api', 84, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (281, 280, 'action', 'system.aiAgent.query', '查询 Agent 和工具', 1, 1, 0, 0, true, now(), now()),
+  (282, 280, 'action', 'system.aiAgent.create', '新增 Agent 和工具', 2, 1, 0, 0, true, now(), now()),
+  (283, 280, 'action', 'system.aiAgent.update', '编辑 Agent 和工具', 3, 1, 0, 0, true, now(), now()),
+  (284, 280, 'action', 'system.aiAgent.delete', '删除 Agent 和工具', 4, 1, 0, 0, true, now(), now()),
+  (285, 280, 'action', 'system.aiAgent.approve', '审批 Agent 工具调用', 5, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (280), (281), (282), (283), (284), (285)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+
+SELECT setval(pg_get_serial_sequence('sys_ai_agent', 'id'), COALESCE((SELECT MAX(id) FROM sys_ai_agent), 1), true);
+SELECT setval(pg_get_serial_sequence('sys_ai_tool', 'id'), COALESCE((SELECT MAX(id) FROM sys_ai_tool), 1), true);
+`,
+  },
+  {
+    id: "0026_ai_tool_approval_unique_scope",
+    sql: `
+DROP INDEX IF EXISTS sys_ai_tool_approval_tool_call_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_tool_approval_run_tool_call_unique
+  ON sys_ai_tool_approval(run_id, tool_call_id);
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

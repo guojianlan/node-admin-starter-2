@@ -3,6 +3,13 @@ import { decryptSecret } from "@/server/services/secret";
 
 export type AiModelUsage = "chat" | "structured" | "embedding";
 
+export class AiRuntimeConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiRuntimeConfigurationError";
+  }
+}
+
 export type AiProviderRuntimeConfig = {
   provider: {
     id: number;
@@ -109,18 +116,20 @@ function modelSelectSql(extraWhere: string) {
 }
 
 function requireActiveProvider(provider?: AiProviderRow | null) {
-  if (!provider) throw new Error("AI Provider 未配置");
-  if (provider.status !== 1) throw new Error("AI Provider 已停用");
+  if (!provider) throw new AiRuntimeConfigurationError("AI Provider 未配置");
+  if (provider.status !== 1) throw new AiRuntimeConfigurationError("AI Provider 已停用");
   const baseUrl = provider.baseUrl;
-  if (!baseUrl) throw new Error("AI Provider Base URL 未配置");
+  if (!baseUrl) throw new AiRuntimeConfigurationError("AI Provider Base URL 未配置");
   const apiKey = decryptSecret(provider.apiKeyEncrypted);
-  if (!apiKey && providerRequiresApiKey(provider)) throw new Error("AI Provider API Key 未配置");
+  if (!apiKey && providerRequiresApiKey(provider)) {
+    throw new AiRuntimeConfigurationError("AI Provider API Key 未配置");
+  }
   return { ...provider, baseUrl, apiKey };
 }
 
 function requireActiveModel(model?: AiModelRow | null) {
-  if (!model) throw new Error("AI 模型未配置");
-  if (model.status !== 1) throw new Error("AI 模型已停用");
+  if (!model) throw new AiRuntimeConfigurationError("AI 模型未配置");
+  if (model.status !== 1) throw new AiRuntimeConfigurationError("AI 模型已停用");
   return model;
 }
 
@@ -154,13 +163,16 @@ export async function getDefaultAiModel(usage: AiModelUsage) {
     .get()) as AiModelRow | undefined;
 }
 
-export async function getAiRuntimeConfig(usage: AiModelUsage = "chat"): Promise<AiProviderRuntimeConfig> {
-  const model = requireActiveModel(await getDefaultAiModel(usage));
+export async function getAiRuntimeConfig(
+  usage: AiModelUsage = "chat",
+  modelId?: number | null,
+): Promise<AiProviderRuntimeConfig> {
+  const model = requireActiveModel(modelId ? await getAiModel(modelId) : await getDefaultAiModel(usage));
   if (usage === "embedding" && model.modelType !== "embedding") {
-    throw new Error("默认 Embedding 模型类型不正确");
+    throw new AiRuntimeConfigurationError("默认 Embedding 模型类型不正确");
   }
   if ((usage === "chat" || usage === "structured") && model.modelType !== "chat") {
-    throw new Error("默认 Chat/Structured 模型类型不正确");
+    throw new AiRuntimeConfigurationError("默认 Chat/Structured 模型类型不正确");
   }
   const provider = requireActiveProvider(await getAiProvider(model.providerId));
   const baseUrl = provider.baseUrl;

@@ -218,14 +218,22 @@ export function AiProviderPage() {
   };
 
   const columns: AdminDataTableColumn<AiProviderRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
     {
       title: "名称",
       dataIndex: "name",
       required: true,
-      width: 180,
+      width: 210,
+      fixed: "left",
       render: (value, record) => (
-        <Space size={8}>
+        <Space size={6} wrap>
           <ThunderboltOutlined />
           <Typography.Text strong>{String(value)}</Typography.Text>
           {record.isSystem ? <Tag color="blue">内置模板</Tag> : null}
@@ -334,6 +342,7 @@ export function AiProviderPage() {
         columns={columns}
         createTitle="新增 AI Provider"
         updateTitle="编辑 AI Provider"
+        actionColumnWidth={176}
         canDelete={(record) => !record.isDefault && !record.isSystem}
         beforeSubmit={normalizePayload}
         onDataChanged={invalidate}
@@ -416,11 +425,11 @@ export function AiProviderPage() {
           setTestResult(null);
         }}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Alert
             showIcon
             type="info"
-            message={testProvider ? `${testProvider.name} / ${testProvider.providerType}` : ""}
+            title={testProvider ? `${testProvider.name} / ${testProvider.providerType}` : ""}
             description={`Base URL 示例：${providerTypeExamples[testProvider?.providerType ?? "custom"] ?? providerTypeExamples.custom}`}
           />
           <Select
@@ -447,7 +456,7 @@ export function AiProviderPage() {
               />
               {testMode === "chat" ? (
                 <Space size={12} wrap>
-                  <Space direction="vertical" size={4}>
+                  <Space orientation="vertical" size={4}>
                     <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
                     <InputNumber
                       min={16}
@@ -457,7 +466,7 @@ export function AiProviderPage() {
                       onChange={(value) => setTestMaxOutputTokens(Number(value ?? 4096))}
                     />
                   </Space>
-                  <Space direction="vertical" size={4}>
+                  <Space orientation="vertical" size={4}>
                     <Typography.Text type="secondary">超时 ms</Typography.Text>
                     <InputNumber
                       min={5000}
@@ -475,7 +484,7 @@ export function AiProviderPage() {
             <Alert
               showIcon
               type={streamError ? "error" : isStreaming ? "info" : "success"}
-              message={
+              title={
                 streamEndpoint
                   ? `AI SDK stream / ${streamStatus ?? "-"} / ${streamEndpoint}`
                   : `AI SDK stream / ${streamStatus ?? "-"}`
@@ -493,7 +502,7 @@ export function AiProviderPage() {
                 ) : null
               }
               description={
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                   {streamError ? (
                     <Typography.Text type="danger">{streamError}</Typography.Text>
                   ) : null}
@@ -506,7 +515,7 @@ export function AiProviderPage() {
             <Alert
               showIcon
               type="success"
-              message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
+              title={`HTTP ${testResult.status} / ${testResult.endpoint}`}
               description={
                 <Typography.Paragraph
                   code

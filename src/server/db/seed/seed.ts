@@ -1,4 +1,7 @@
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { type DbClient, sqlite } from "@/server/db";
 import { getAdminBaseEnv } from "@/server/env";
 import { runMigrations } from "../migrations";
@@ -6,6 +9,101 @@ import { seedDicts, seedRules } from "./default-data";
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+type SeedWebsiteFile = {
+  key: string;
+  originalName: string;
+  filename: string;
+  path: string;
+  mime: string;
+  type: "image" | "document";
+  read: () => Promise<Buffer>;
+};
+
+const seedWebsiteFiles: SeedWebsiteFile[] = [
+  {
+    key: "website.login-background-light",
+    originalName: "网站登录背景-浅色.png",
+    filename: "site-login-light.png",
+    path: "seed/site-login-light.png",
+    mime: "image/png",
+    type: "image",
+    read: () => fs.readFile(path.join(process.cwd(), "public", "static", "bg.png")),
+  },
+  {
+    key: "website.login-background-dark",
+    originalName: "网站登录背景-暗色.jpg",
+    filename: "site-login-dark.jpg",
+    path: "seed/site-login-dark.jpg",
+    mime: "image/jpeg",
+    type: "image",
+    read: () => fs.readFile(path.join(process.cwd(), "public", "static", "bg-dark.jpg")),
+  },
+  {
+    key: "website.robots",
+    originalName: "robots.txt",
+    filename: "robots.txt",
+    path: "seed/robots.txt",
+    mime: "text/plain",
+    type: "document",
+    read: async () => Buffer.from("User-agent: *\nDisallow: /system/\nDisallow: /api/system/\n", "utf8"),
+  },
+];
+
+async function seedDefaultWebsiteFiles(dbClient: DbClient, now: string) {
+  const uploadRoot = path.join(process.cwd(), "storage", "uploads");
+
+  for (const item of seedWebsiteFiles) {
+    const metadataJson = JSON.stringify({
+      seedKey: item.key,
+      source: "admin-base-default-seed",
+      removable: true,
+    });
+    const existing = (await dbClient
+      .prepare(
+        `SELECT id, deleted_at AS deletedAt
+         FROM sys_file
+         WHERE metadata_json = ?
+         ORDER BY id ASC
+         LIMIT 1`,
+      )
+      .get(metadataJson)) as { id: number; deletedAt: string | null } | undefined;
+
+    // A soft-deleted seed file stays deleted. A later full database reset creates it again.
+    if (existing?.deletedAt) continue;
+
+    const content = await item.read();
+    const absolutePath = path.join(uploadRoot, item.path);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, content);
+
+    if (existing) continue;
+
+    const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    await dbClient
+      .prepare(
+        `INSERT INTO sys_file
+          (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type,
+           sha256, metadata_json, uploader_id, created_at, updated_at)
+         VALUES
+          (2, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      )
+      .run(
+        item.originalName,
+        item.filename,
+        item.path,
+        `/uploads/${item.path}`,
+        content.byteLength,
+        path.extname(item.filename).slice(1),
+        item.mime,
+        item.type,
+        sha256,
+        metadataJson,
+        now,
+        now,
+      );
+  }
 }
 
 async function syncSequences(dbClient: DbClient) {
@@ -31,8 +129,13 @@ async function syncSequences(dbClient: DbClient) {
     "sys_sms_provider",
     "sys_ai_provider",
     "sys_ai_model",
+    "sys_ai_agent",
+    "sys_ai_tool",
     "sys_ai_chat_session",
     "sys_ai_chat_message",
+    "sys_ai_agent_run",
+    "sys_ai_agent_run_step",
+    "sys_ai_tool_approval",
     "sys_notice",
   ];
 
@@ -534,6 +637,24 @@ ON CONFLICT DO NOTHING;
       sort: 7,
     },
     {
+      groupId: 4,
+      key: "login.rate_limit_attempts",
+      title: "组合限流失败次数",
+      describe: "同一 IP 与账号在限流窗口内允许的失败次数，0 表示关闭",
+      values: "10",
+      type: "digit",
+      sort: 8,
+    },
+    {
+      groupId: 4,
+      key: "login.rate_limit_window_minutes",
+      title: "组合限流窗口",
+      describe: "按 IP 与账号组合统计登录失败的时间窗口，单位分钟",
+      values: "5",
+      type: "digit",
+      sort: 9,
+    },
+    {
       groupId: 5,
       key: "token.access_token_ttl_days",
       title: "Token 有效天数",
@@ -724,10 +845,13 @@ ON CONFLICT DO NOTHING;
       `INSERT INTO sys_file_group
         (id, parent_id, name, sort, describe, created_at, updated_at)
        VALUES
-        (1, 0, '默认分组', 1, '默认上传文件分组', ?, ?)
+        (1, 0, '默认分组', 1, '默认上传文件分组', ?, ?),
+        (2, 0, '网站素材', 2, '可删除的网站默认素材', ?, ?)
        ON CONFLICT DO NOTHING`,
     )
-    .run(now, now);
+    .run(now, now, now, now);
+
+  await seedDefaultWebsiteFiles(dbClient, now);
 
   await syncSequences(dbClient);
 }

@@ -244,7 +244,14 @@ export function AiModelPage() {
   };
 
   const columns: AdminDataTableColumn<AiModelRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
     {
       title: "Provider",
       dataIndex: "providerId",
@@ -252,6 +259,7 @@ export function AiModelPage() {
       options: providerOptions,
       required: true,
       width: 180,
+      fixed: "left",
       render: (_, record) => (
         <Space size={6} wrap>
           <Typography.Text strong>{record.providerName || record.providerId}</Typography.Text>
@@ -264,9 +272,9 @@ export function AiModelPage() {
       title: "名称",
       dataIndex: "name",
       required: true,
-      width: 160,
+      width: 220,
       render: (value, record) => (
-        <Space size={8}>
+        <Space size={6} wrap>
           <ThunderboltOutlined />
           <Typography.Text strong>{String(value)}</Typography.Text>
           {record.isSystem ? <Tag color="blue">内置模板</Tag> : null}
@@ -395,6 +403,7 @@ export function AiModelPage() {
         columns={columns}
         createTitle="新增 AI 模型"
         updateTitle="编辑 AI 模型"
+        actionColumnWidth={212}
         canDelete={(record) =>
           !record.isSystem &&
           !record.isDefaultChat &&
@@ -487,12 +496,12 @@ export function AiModelPage() {
           setTestResult(null);
         }}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           {testModel ? (
             <Alert
               showIcon
               type="info"
-              message={`${testModel.name} / ${testModel.modelId}`}
+              title={`${testModel.name} / ${testModel.modelId}`}
               description={`${testModel.providerName ?? testModel.providerId} / ${testModel.modelType}`}
             />
           ) : null}
@@ -506,7 +515,7 @@ export function AiModelPage() {
           />
           {testModel?.modelType === "chat" ? (
             <Space size={12} wrap>
-              <Space direction="vertical" size={4}>
+              <Space orientation="vertical" size={4}>
                 <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
                 <InputNumber
                   min={16}
@@ -516,7 +525,7 @@ export function AiModelPage() {
                   onChange={(value) => setTestMaxOutputTokens(Number(value ?? 4096))}
                 />
               </Space>
-              <Space direction="vertical" size={4}>
+              <Space orientation="vertical" size={4}>
                 <Typography.Text type="secondary">超时 ms</Typography.Text>
                 <InputNumber
                   min={5000}
@@ -532,7 +541,7 @@ export function AiModelPage() {
             <Alert
               showIcon
               type={streamError ? "error" : isStreaming ? "info" : "success"}
-              message={
+              title={
                 streamEndpoint
                   ? `AI SDK stream / ${streamStatus ?? "-"} / ${streamEndpoint}`
                   : `AI SDK stream / ${streamStatus ?? "-"}`
@@ -550,7 +559,7 @@ export function AiModelPage() {
                 ) : null
               }
               description={
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                   {streamError ? (
                     <Typography.Text type="danger">{streamError}</Typography.Text>
                   ) : null}
@@ -563,7 +572,7 @@ export function AiModelPage() {
             <Alert
               showIcon
               type="success"
-              message={`HTTP ${testResult.status} / ${testResult.endpoint}`}
+              title={`HTTP ${testResult.status} / ${testResult.endpoint}`}
               description={
                 <Typography.Paragraph
                   code

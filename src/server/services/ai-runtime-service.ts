@@ -12,7 +12,9 @@ export type AiRuntimeCallOptions = {
   usage?: AiModelUsage;
   input?: string;
   messages?: AiRuntimeMessage[];
+  modelId?: number | null;
   maxOutputTokens?: number;
+  temperature?: number;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
 };
@@ -141,7 +143,7 @@ function inputLength(runtime: { input: string; messages: AiRuntimeMessage[] }) {
 
 export async function createAiRuntime(options: AiRuntimeCallOptions) {
   const base = resolveRuntime(options);
-  const config = await getAiRuntimeConfig(base.usage);
+  const config = await getAiRuntimeConfig(base.usage, options.modelId);
   const sdkRuntime = buildAiSdkChatRuntime(config.provider, config.model);
   const maxOutputTokens = clampOutputTokens(options.maxOutputTokens ?? sdkRuntime.maxOutputTokens);
   return {
@@ -149,6 +151,10 @@ export async function createAiRuntime(options: AiRuntimeCallOptions) {
     config,
     sdkRuntime,
     maxOutputTokens,
+    temperature:
+      typeof options.temperature === "number"
+        ? Math.min(Math.max(options.temperature, 0), 2)
+        : undefined,
     publicConfig: publicConfig(config),
   };
 }
@@ -162,6 +168,7 @@ export async function generateAiText(
     model: runtime.sdkRuntime.model,
     ...promptOptions(runtime),
     maxOutputTokens: runtime.maxOutputTokens,
+    temperature: runtime.temperature,
     timeout: runtime.timeoutMs,
     abortSignal: options.abortSignal,
   });
@@ -190,6 +197,7 @@ export async function streamAiText(options: AiRuntimeCallOptions) {
     model: runtime.sdkRuntime.model,
     ...promptOptions(runtime),
     maxOutputTokens: runtime.maxOutputTokens,
+    temperature: runtime.temperature,
     timeout: runtime.timeoutMs,
     abortSignal: options.abortSignal,
   });

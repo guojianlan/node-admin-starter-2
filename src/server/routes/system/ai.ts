@@ -10,19 +10,34 @@ import { sysAiProvider } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import type { AiModelUsage } from "@/server/services/ai-provider-service";
-import { getAiProvider, getAiRuntimeConfig } from "@/server/services/ai-provider-service";
+import {
+  AiRuntimeConfigurationError,
+  getAiProvider,
+  getAiRuntimeConfig,
+} from "@/server/services/ai-provider-service";
 import {
   appendAiChatMessage,
   createAiChatSession,
+  getAiChatMessage,
   getAiChatSession,
   listAiChatMessages,
   listAiChatSessions,
   refreshAiChatSessionSummary,
   softDeleteAiChatSession,
+  supersedeAiChatMessage,
   titleFromContent,
-  toRuntimeMessages,
   updateAiChatSession,
+  updateAiChatMessage,
 } from "@/server/services/ai-chat-service";
+import {
+  appendAgentRunStep,
+  createToolApproval,
+  finishAgentRun,
+  getAiAgent,
+  listAiAgents,
+} from "@/server/services/ai-agent-service";
+import { createAiAgentStream } from "@/server/services/ai-agent-runtime-service";
+import { governAiChatContext } from "@/server/services/ai-context-service";
 import { generateAiText, streamAiText } from "@/server/services/ai-runtime-service";
 import { buildAiSdkChatRuntime } from "@/server/services/ai-sdk-runtime";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
@@ -53,6 +68,33 @@ const supportedProviderTypes = [
 ] as const;
 
 type ProviderTestMode = "listModels" | "chat" | "embedding";
+
+async function getPublicAiRuntimeStatus(usage: AiModelUsage) {
+  try {
+    const runtimeConfig = await getAiRuntimeConfig(usage);
+    return {
+      ready: true as const,
+      reason: null,
+      provider: {
+        id: runtimeConfig.provider.id,
+        code: runtimeConfig.provider.code,
+        name: runtimeConfig.provider.name,
+        providerType: runtimeConfig.provider.providerType,
+        baseUrl: runtimeConfig.provider.baseUrl,
+        hasApiKey: Boolean(runtimeConfig.provider.apiKey),
+      },
+      model: runtimeConfig.model,
+    };
+  } catch (error) {
+    if (!(error instanceof AiRuntimeConfigurationError)) throw error;
+    return {
+      ready: false as const,
+      reason: error.message,
+      provider: null,
+      model: null,
+    };
+  }
+}
 
 const aiProviderSchema = z.object({
   name: z.string().min(1),
@@ -122,13 +164,19 @@ const aiPlaygroundChatSchema = z.object({
 
 const aiChatSessionSchema = z.object({
   title: z.string().optional().nullable(),
+  modelId: z.coerce.number().int().positive().optional().nullable(),
+  agentId: z.coerce.number().int().positive().optional().nullable(),
+  systemPrompt: z.string().max(12000).optional().nullable(),
+  temperature: z.coerce.number().min(0).max(2).optional(),
+  maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional().nullable(),
 });
 
 const aiChatMessageSchema = z.object({
-  content: z.string().min(1),
+  content: z.string().min(1).optional(),
+  resume: z.boolean().optional().default(false),
   maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
   timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
-});
+}).refine((value) => value.resume || Boolean(value.content?.trim()), "请输入聊天内容");
 
 type AiProviderRow = {
   id: number;
@@ -658,46 +706,135 @@ async function buildAiPlaygroundStreamResponse(
 async function buildAiChatStreamResponse(input: {
   userId: number;
   sessionId: number;
-  content: string;
+  content?: string;
+  regenerateMessageId?: number;
+  resume?: boolean;
   maxOutputTokens?: number;
   timeoutMs?: number;
   abortSignal: AbortSignal;
 }) {
   const session = await getAiChatSession({ id: input.sessionId, userId: input.userId });
   if (!session) throw new Error("AI Chat 会话不存在");
-  const existingMessages = await listAiChatMessages({
+  let existingMessages = await listAiChatMessages({
     sessionId: input.sessionId,
     userId: input.userId,
   });
-  const trimmedContent = input.content.trim();
+  if (existingMessages.some((message) => message.status === "pending" || message.status === "streaming")) {
+    throw new Error("当前会话仍在生成中，请等待完成或先停止生成");
+  }
+  const trimmedContent = input.content?.trim() || "";
   const shouldTitleFromContent =
-    existingMessages.length === 0 && (!session.title || session.title === "新的聊天");
+    existingMessages.length === 0 && Boolean(trimmedContent) && (!session.title || session.title === "新的聊天");
+  let inputMessageId: number | null = null;
+  let regeneratedFromId: number | null = null;
 
-  await appendAiChatMessage({
+  if (input.regenerateMessageId) {
+    const original = await getAiChatMessage({
+      id: input.regenerateMessageId,
+      sessionId: input.sessionId,
+      userId: input.userId,
+    });
+    if (!original || original.role !== "assistant") throw new Error("只能重新生成 Assistant 消息");
+    const latestAssistant = [...existingMessages].reverse().find((message) => message.role === "assistant");
+    if (latestAssistant?.id !== original.id) throw new Error("只能重新生成最近一条 Assistant 消息");
+    regeneratedFromId = original.id;
+    inputMessageId = original.parentMessageId;
+    existingMessages = existingMessages.filter((message) => message.id < original.id);
+  } else if (!input.resume) {
+    inputMessageId = await appendAiChatMessage({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      role: "user",
+      content: trimmedContent,
+      status: "completed",
+    });
+    existingMessages = await listAiChatMessages({ sessionId: input.sessionId, userId: input.userId });
+  }
+
+  const agent = session.agentId ? await getAiAgent(session.agentId) : null;
+  if (session.agentId && (!agent || agent.status !== 1)) throw new Error("当前会话绑定的 Agent 不存在或已停用");
+  const selectedModelId = session.modelId || agent?.modelId || null;
+  const config = await getAiRuntimeConfig("chat", selectedModelId);
+  const maxOutputTokens =
+    input.maxOutputTokens || session.maxOutputTokens || agent?.maxOutputTokens || config.model.maxOutputTokens || 16384;
+  const systemPrompt = [agent?.instructions, session.systemPrompt].filter(Boolean).join("\n\n");
+  const governed = governAiChatContext({
+    messages: existingMessages,
+    systemPrompt,
+    previousSummary: session.contextSummary,
+    previouslyCompactedThroughMessageId: session.compactedThroughMessageId,
+    contextWindow: config.model.contextWindow,
+    maxOutputTokens,
+  });
+  const assistantMessageId = await appendAiChatMessage({
     sessionId: input.sessionId,
     userId: input.userId,
-    role: "user",
-    content: trimmedContent,
+    role: "assistant",
+    content: "",
+    status: "streaming",
+    parentMessageId: inputMessageId,
+    regeneratedFromId,
+    providerId: config.provider.id,
+    modelId: config.model.id,
   });
-
-  const runtimeMessages = [
-    ...toRuntimeMessages(existingMessages),
-    { role: "user" as const, content: trimmedContent },
-  ];
-  const runtime = await streamAiText({
-    usage: "chat",
-    messages: runtimeMessages,
-    maxOutputTokens: input.maxOutputTokens,
-    timeoutMs: input.timeoutMs,
-    abortSignal: input.abortSignal,
-  });
-
-  await refreshAiChatSessionSummary({
-    sessionId: input.sessionId,
-    userId: input.userId,
-    title: shouldTitleFromContent ? titleFromContent(trimmedContent) : undefined,
-    runtime: runtime.publicConfig,
-  });
+  const temperature = session.temperatureMilli / 1000;
+  let agentRuntime: Awaited<ReturnType<typeof createAiAgentStream>> | null = null;
+  let plainRuntime: Awaited<ReturnType<typeof streamAiText>> | null = null;
+  try {
+    agentRuntime = agent
+      ? await createAiAgentStream({
+          agentId: agent.id,
+          sessionId: input.sessionId,
+          userId: input.userId,
+          inputMessageId,
+          messages: governed.messages,
+          modelId: selectedModelId,
+          maxOutputTokens,
+          temperature,
+          timeoutMs: input.timeoutMs,
+          abortSignal: input.abortSignal,
+        })
+      : null;
+    plainRuntime = agentRuntime
+      ? null
+      : await streamAiText({
+          usage: "chat",
+          messages: governed.messages,
+          modelId: selectedModelId,
+          maxOutputTokens,
+          temperature,
+          timeoutMs: input.timeoutMs,
+          abortSignal: input.abortSignal,
+        });
+  } catch (error) {
+    await updateAiChatMessage({
+      id: assistantMessageId,
+      sessionId: input.sessionId,
+      userId: input.userId,
+      status: "failed",
+      errorMessage: toErrorMessage(error),
+      finishReason: "error",
+      providerId: config.provider.id,
+      modelId: config.model.id,
+    });
+    await refreshAiChatSessionSummary({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      title: shouldTitleFromContent ? titleFromContent(trimmedContent) : undefined,
+      contextSummary: governed.summary,
+      compactedThroughMessageId: governed.compactedThroughMessageId,
+    });
+    throw error;
+  }
+  const runtime = agentRuntime?.runtime ?? plainRuntime;
+  if (!runtime) throw new Error("AI Runtime 初始化失败");
+  if (regeneratedFromId) {
+    await supersedeAiChatMessage({
+      id: regeneratedFromId,
+      sessionId: input.sessionId,
+      userId: input.userId,
+    });
+  }
 
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -708,36 +845,103 @@ async function buildAiChatStreamResponse(input: {
 
       send("meta", {
         sessionId: input.sessionId,
+        messageId: assistantMessageId,
+        agent: agent ? { id: agent.id, name: agent.name, code: agent.code } : null,
+        runId: agentRuntime?.runId ?? null,
         provider: runtime.publicConfig.provider,
         model: runtime.publicConfig.model,
         endpoint: runtime.endpointHint,
         request: {
           usage: runtime.usage,
-          inputLength: runtimeMessages.reduce((total, item) => total + item.content.length, 0),
+          inputLength: governed.messages.reduce((total, item) => total + item.content.length, 0),
           maxOutputTokens: runtime.maxOutputTokens,
           timeoutMs: runtime.timeoutMs,
         },
+        context: governed.stats,
       });
 
       let assistantText = "";
+      let waitingApproval = false;
+      let finishReason = "stop";
+      let rawFinishReason: string | undefined;
+      let normalizedUsage: Record<string, unknown> = {};
       try {
-        for await (const text of runtime.stream.textStream) {
-          if (!text) continue;
-          assistantText += text;
-          send("delta", { text });
+        if (agentRuntime) {
+          for await (const part of agentRuntime.stream.fullStream) {
+            if (part.type === "text-delta") {
+              assistantText += part.text;
+              send("delta", { text: part.text });
+            } else if (part.type === "tool-call") {
+              send("tool-call", { toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+            } else if (part.type === "tool-result") {
+              send("tool-result", { toolCallId: part.toolCallId, toolName: part.toolName, output: part.output });
+            } else if (part.type === "tool-approval-request") {
+              waitingApproval = true;
+              const toolRow = agentRuntime.toolMap.get(part.toolCall.toolName);
+              const stepNo = agentRuntime.nextStepNo();
+              const stepId = await appendAgentRunStep({
+                runId: agentRuntime.runId,
+                stepNo,
+                stepType: "approval",
+                status: "waiting_approval",
+                toolId: toolRow?.id,
+                toolName: part.toolCall.toolName,
+                toolCallId: part.toolCall.toolCallId,
+                input: part.toolCall.input,
+              });
+              const approvalId = await createToolApproval({
+                runId: agentRuntime.runId,
+                stepId,
+                sessionId: input.sessionId,
+                userId: input.userId,
+                tool: toolRow,
+                toolName: part.toolCall.toolName,
+                toolCallId: part.toolCall.toolCallId,
+                toolInput: part.toolCall.input,
+              });
+              send("approval", {
+                id: approvalId,
+                toolName: part.toolCall.toolName,
+                input: part.toolCall.input,
+              });
+            } else if (part.type === "finish-step") {
+              await appendAgentRunStep({
+                runId: agentRuntime.runId,
+                stepNo: agentRuntime.nextStepNo(),
+                stepType: "model",
+                status: "completed",
+                usage: part.usage,
+                durationMs: Math.round(part.performance.stepTimeMs),
+              });
+            } else if (part.type === "finish") {
+              finishReason = part.finishReason;
+              rawFinishReason = part.rawFinishReason;
+              normalizedUsage = runtime.normalizeUsage(part.totalUsage);
+            }
+          }
+        } else {
+          if (!plainRuntime) throw new Error("AI Runtime 流不存在");
+          for await (const text of plainRuntime.stream.textStream) {
+            if (!text) continue;
+            assistantText += text;
+            send("delta", { text });
+          }
+          const results = await Promise.all([
+            plainRuntime.stream.finishReason,
+            plainRuntime.stream.rawFinishReason,
+            plainRuntime.stream.usage,
+          ]);
+          finishReason = results[0];
+          rawFinishReason = results[1];
+          normalizedUsage = runtime.normalizeUsage(results[2]);
         }
-        const [finishReason, rawFinishReason, usage] = await Promise.all([
-          runtime.stream.finishReason,
-          runtime.stream.rawFinishReason,
-          runtime.stream.usage,
-        ]);
-        const normalizedUsage = runtime.normalizeUsage(usage);
         const durationMs = runtime.resolveDurationMs();
-        const assistantMessageId = await appendAiChatMessage({
+        await updateAiChatMessage({
+          id: assistantMessageId,
           sessionId: input.sessionId,
           userId: input.userId,
-          role: "assistant",
-          content: assistantText,
+          content: assistantText || (waitingApproval ? "等待工具调用审批" : ""),
+          status: "completed",
           providerId: runtime.publicConfig.provider.id,
           modelId: runtime.publicConfig.model.id,
           finishReason,
@@ -753,18 +957,60 @@ async function buildAiChatStreamResponse(input: {
           sessionId: input.sessionId,
           userId: input.userId,
           runtime: runtime.publicConfig,
+          usage: normalizedUsage,
+          contextSummary: governed.summary,
+          compactedThroughMessageId: governed.compactedThroughMessageId,
+          title: shouldTitleFromContent ? titleFromContent(trimmedContent) : undefined,
         });
+        if (agentRuntime) {
+          await finishAgentRun({
+            id: agentRuntime.runId,
+            status: waitingApproval ? "waiting_approval" : "completed",
+            outputMessageId: assistantMessageId,
+            totalSteps: agentRuntime.currentStepNo(),
+            usage: normalizedUsage,
+            durationMs,
+          });
+        }
         send("finish", {
           messageId: assistantMessageId,
           finishReason,
           rawFinishReason,
           usage: normalizedUsage,
           durationMs,
+          waitingApproval,
+          context: governed.stats,
         });
       } catch (error) {
+        const stopped = input.abortSignal.aborted;
+        const durationMs = runtime.resolveDurationMs();
+        await updateAiChatMessage({
+          id: assistantMessageId,
+          sessionId: input.sessionId,
+          userId: input.userId,
+          content: assistantText,
+          status: stopped ? "stopped" : "failed",
+          errorMessage: stopped ? null : toErrorMessage(error),
+          finishReason: stopped ? "abort" : "error",
+          providerId: runtime.publicConfig.provider.id,
+          modelId: runtime.publicConfig.model.id,
+          durationMs,
+        });
+        if (agentRuntime) {
+          await finishAgentRun({
+            id: agentRuntime.runId,
+            status: stopped ? "stopped" : "failed",
+            outputMessageId: assistantMessageId,
+            totalSteps: agentRuntime.currentStepNo(),
+            durationMs,
+            errorMessage: stopped ? null : toErrorMessage(error),
+          });
+        }
         send("error", {
           message: toErrorMessage(error),
-          durationMs: runtime.resolveDurationMs(),
+          messageId: assistantMessageId,
+          status: stopped ? "stopped" : "failed",
+          durationMs,
         });
       } finally {
         controller.close();
@@ -1341,25 +1587,35 @@ aiRoutes.get("/ai/chat/sessions", authRequired(), ability("system.aiChat.query")
   return c.json(success(await listAiChatSessions({ userId: user.id, page, pageSize, keyword })));
 });
 
+aiRoutes.get("/ai/chat/options", authRequired(), ability("system.aiChat.query"), async (c) => {
+  const models = await sqlite
+    .prepare(
+      `SELECT m.id, m.name, m.model_id AS "modelId", m.context_window AS "contextWindow",
+        m.max_output_tokens AS "maxOutputTokens", m.is_default_chat AS "isDefault",
+        p.id AS "providerId", p.name AS "providerName", p.code AS "providerCode"
+       FROM sys_ai_model m INNER JOIN sys_ai_provider p ON p.id = m.provider_id
+       WHERE m.deleted_at IS NULL AND p.deleted_at IS NULL AND m.status = 1 AND p.status = 1
+         AND m.model_type = 'chat'
+       ORDER BY m.is_default_chat DESC, p.sort ASC, m.sort ASC, m.id ASC`,
+    )
+    .all();
+  const agents = (await listAiAgents({ activeOnly: true })).map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    code: agent.code,
+    description: agent.description,
+    modelId: agent.modelId,
+    modelName: agent.modelName,
+  }));
+  return c.json(success({ models, agents }));
+});
+
 aiRoutes.get(
   "/ai/chat/runtime-config",
   authRequired(),
   ability("system.aiChat.query"),
   async (c) => {
-    const runtimeConfig = await getAiRuntimeConfig("chat");
-    return c.json(
-      success({
-        provider: {
-          id: runtimeConfig.provider.id,
-          code: runtimeConfig.provider.code,
-          name: runtimeConfig.provider.name,
-          providerType: runtimeConfig.provider.providerType,
-          baseUrl: runtimeConfig.provider.baseUrl,
-          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
-        },
-        model: runtimeConfig.model,
-      }),
-    );
+    return c.json(success(await getPublicAiRuntimeStatus("chat")));
   },
 );
 
@@ -1380,7 +1636,21 @@ aiRoutes.post(
         details: { title: payload.title },
       },
       async () => {
-        sessionId = await createAiChatSession({ userId: user.id, title: payload.title });
+        if (payload.modelId) await getAiRuntimeConfig("chat", payload.modelId);
+        if (payload.agentId) {
+          const agent = await getAiAgent(payload.agentId);
+          if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
+        }
+        sessionId = await createAiChatSession({
+          userId: user.id,
+          title: payload.title,
+          modelId: payload.modelId,
+          agentId: payload.agentId,
+          systemPrompt: payload.systemPrompt,
+          temperatureMilli:
+            payload.temperature === undefined ? undefined : Math.round(payload.temperature * 1000),
+          maxOutputTokens: payload.maxOutputTokens,
+        });
       },
     );
     return c.json(success({ id: sessionId }, "创建成功"));
@@ -1394,7 +1664,7 @@ aiRoutes.put(
   async (c) => {
     const user = c.get("user");
     const id = Number(c.req.param("id"));
-    const payload = z.object({ title: z.string().min(1) }).parse(await c.req.json());
+    const payload = aiChatSessionSchema.parse(await c.req.json());
     await runWithOperationLog(
       c,
       {
@@ -1402,11 +1672,33 @@ aiRoutes.put(
         action: "update",
         resource: "/ai/chat/sessions",
         resourceId: id,
-        details: { title: payload.title },
+        details: {
+          title: payload.title,
+          modelId: payload.modelId,
+          agentId: payload.agentId,
+          temperature: payload.temperature,
+          maxOutputTokens: payload.maxOutputTokens,
+          systemPromptLength: payload.systemPrompt?.length ?? 0,
+        },
       },
       async () => {
         if (!(await getAiChatSession({ id, userId: user.id }))) throw new Error("AI Chat 会话不存在");
-        await updateAiChatSession({ id, userId: user.id, title: payload.title });
+        if (payload.modelId) await getAiRuntimeConfig("chat", payload.modelId);
+        if (payload.agentId) {
+          const agent = await getAiAgent(payload.agentId);
+          if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
+        }
+        await updateAiChatSession({
+          id,
+          userId: user.id,
+          title: payload.title ?? undefined,
+          modelId: payload.modelId,
+          agentId: payload.agentId,
+          systemPrompt: payload.systemPrompt,
+          temperatureMilli:
+            payload.temperature === undefined ? undefined : Math.round(payload.temperature * 1000),
+          maxOutputTokens: payload.maxOutputTokens,
+        });
       },
     );
     return c.json(success(null, "更新成功"));
@@ -1450,6 +1742,40 @@ aiRoutes.get(
   },
 );
 
+aiRoutes.get(
+  "/ai/chat/sessions/:id/export",
+  authRequired(),
+  ability("system.aiChat.query"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    const session = await getAiChatSession({ id, userId: user.id });
+    if (!session) throw new Error("AI Chat 会话不存在");
+    const messages = await listAiChatMessages({ sessionId: id, userId: user.id });
+    const format = new URL(c.req.url).searchParams.get("format") === "json" ? "json" : "markdown";
+    const body = format === "json"
+      ? JSON.stringify({ session, messages }, null, 2)
+      : [
+          `# ${session.title}`,
+          "",
+          `- Agent: ${session.agentName || "无"}`,
+          `- Model: ${session.modelIdentifier || session.modelName || "默认模型"}`,
+          `- Tokens: ${session.totalInputTokens} input / ${session.totalOutputTokens} output`,
+          "",
+          ...messages.map((message) =>
+            `## ${message.role === "user" ? "用户" : message.role === "assistant" ? "助手" : "系统"}\n\n${message.content}\n`,
+          ),
+        ].join("\n");
+    const filename = `ai-chat-${id}.${format === "json" ? "json" : "md"}`;
+    return new Response(body, {
+      headers: {
+        "content-type": format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8",
+        "content-disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  },
+);
+
 aiRoutes.post(
   "/ai/chat/sessions/:id/messages/stream",
   authRequired(),
@@ -1467,8 +1793,9 @@ aiRoutes.post(
         resource: "/ai/chat/sessions/messages",
         resourceId: id,
         details: {
-          inputLength: payload.content.trim().length,
-          inputPreview: payload.content.trim().slice(0, 120),
+          inputLength: payload.content?.trim().length ?? 0,
+          inputPreview: payload.content?.trim().slice(0, 120),
+          resume: payload.resume,
           maxOutputTokens: payload.maxOutputTokens,
           timeoutMs: payload.timeoutMs,
         },
@@ -1478,6 +1805,7 @@ aiRoutes.post(
           userId: user.id,
           sessionId: id,
           content: payload.content,
+          resume: payload.resume,
           maxOutputTokens: payload.maxOutputTokens,
           timeoutMs: payload.timeoutMs,
           abortSignal: c.req.raw.signal,
@@ -1485,6 +1813,43 @@ aiRoutes.post(
       },
     );
     return response ?? new Response("AI Chat 流式调用未创建响应", { status: 500 });
+  },
+);
+
+aiRoutes.post(
+  "/ai/chat/sessions/:id/messages/:messageId/regenerate",
+  authRequired(),
+  ability("system.aiChat.chat"),
+  async (c) => {
+    const user = c.get("user");
+    const id = Number(c.req.param("id"));
+    const messageId = Number(c.req.param("messageId"));
+    const payload = z.object({
+      maxOutputTokens: z.coerce.number().int().min(16).max(32768).optional(),
+      timeoutMs: z.coerce.number().int().min(5000).max(300000).optional(),
+    }).parse(await c.req.json().catch(() => ({})));
+    let response: Response | null = null;
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.aiChat",
+        action: "regenerate",
+        resource: "/ai/chat/sessions/messages/regenerate",
+        resourceId: messageId,
+        details: { sessionId: id, maxOutputTokens: payload.maxOutputTokens },
+      },
+      async () => {
+        response = await buildAiChatStreamResponse({
+          userId: user.id,
+          sessionId: id,
+          regenerateMessageId: messageId,
+          maxOutputTokens: payload.maxOutputTokens,
+          timeoutMs: payload.timeoutMs,
+          abortSignal: c.req.raw.signal,
+        });
+      },
+    );
+    return response ?? new Response("AI Chat 重新生成流未创建", { status: 500 });
   },
 );
 
@@ -1555,20 +1920,7 @@ aiRoutes.get(
   ability("system.aiPlayground.query"),
   async (c) => {
     const usage = z.enum(["chat", "structured"]).parse(c.req.param("usage"));
-    const runtimeConfig = await getAiRuntimeConfig(usage);
-    return c.json(
-      success({
-        provider: {
-          id: runtimeConfig.provider.id,
-          code: runtimeConfig.provider.code,
-          name: runtimeConfig.provider.name,
-          providerType: runtimeConfig.provider.providerType,
-          baseUrl: runtimeConfig.provider.baseUrl,
-          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
-        },
-        model: runtimeConfig.model,
-      }),
-    );
+    return c.json(success(await getPublicAiRuntimeStatus(usage)));
   },
 );
 
@@ -1578,20 +1930,7 @@ aiRoutes.get(
   ability("system.aiProvider.query"),
   async (c) => {
     const usage = z.enum(["chat", "structured", "embedding"]).parse(c.req.param("usage"));
-    const runtimeConfig = await getAiRuntimeConfig(usage);
-    return c.json(
-      success({
-        provider: {
-          id: runtimeConfig.provider.id,
-          code: runtimeConfig.provider.code,
-          name: runtimeConfig.provider.name,
-          providerType: runtimeConfig.provider.providerType,
-          baseUrl: runtimeConfig.provider.baseUrl,
-          hasApiKey: Boolean(runtimeConfig.provider.apiKey),
-        },
-        model: runtimeConfig.model,
-      }),
-    );
+    return c.json(success(await getPublicAiRuntimeStatus(usage)));
   },
 );
 

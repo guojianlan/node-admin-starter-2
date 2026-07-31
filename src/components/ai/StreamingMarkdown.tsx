@@ -1,48 +1,20 @@
 "use client";
 
-import { memo, type CSSProperties } from "react";
+import { memo } from "react";
 import { Typography } from "antd";
 import { Streamdown, type Components } from "streamdown";
 
-const textStyle: CSSProperties = {
-  color: "#1f2937",
-  fontSize: 14,
-  lineHeight: 1.75,
-  margin: 0,
-};
-
-const headingStyle: CSSProperties = {
-  color: "#111827",
-  fontWeight: 600,
-  lineHeight: 1.45,
-  margin: "10px 0 6px",
-};
-
 const components: Components = {
-  p: ({ children }) => <p style={textStyle}>{children}</p>,
-  h1: ({ children }) => <h1 style={{ ...headingStyle, fontSize: 18 }}>{children}</h1>,
-  h2: ({ children }) => <h2 style={{ ...headingStyle, fontSize: 16 }}>{children}</h2>,
-  h3: ({ children }) => <h3 style={{ ...headingStyle, fontSize: 15 }}>{children}</h3>,
-  h4: ({ children }) => <h4 style={{ ...headingStyle, fontSize: 14 }}>{children}</h4>,
-  ul: ({ children }) => (
-    <ul style={{ ...textStyle, margin: "4px 0", paddingLeft: 22 }}>{children}</ul>
-  ),
-  ol: ({ children }) => (
-    <ol style={{ ...textStyle, margin: "4px 0", paddingLeft: 22 }}>{children}</ol>
-  ),
-  li: ({ children }) => <li style={{ margin: "2px 0" }}>{children}</li>,
+  p: ({ children }) => <p className="streaming-markdown-paragraph">{children}</p>,
+  h1: ({ children }) => <h1 className="streaming-markdown-heading streaming-markdown-h1">{children}</h1>,
+  h2: ({ children }) => <h2 className="streaming-markdown-heading streaming-markdown-h2">{children}</h2>,
+  h3: ({ children }) => <h3 className="streaming-markdown-heading streaming-markdown-h3">{children}</h3>,
+  h4: ({ children }) => <h4 className="streaming-markdown-heading streaming-markdown-h4">{children}</h4>,
+  ul: ({ children }) => <ul className="streaming-markdown-list">{children}</ul>,
+  ol: ({ children }) => <ol className="streaming-markdown-list">{children}</ol>,
+  li: ({ children }) => <li className="streaming-markdown-list-item">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote
-      style={{
-        borderLeft: "3px solid #1677ff",
-        background: "#f5f9ff",
-        margin: "8px 0",
-        padding: "6px 10px",
-        color: "#374151",
-      }}
-    >
-      {children}
-    </blockquote>
+    <blockquote className="streaming-markdown-blockquote">{children}</blockquote>
   ),
   a: ({ children, href }) => (
     <a href={href} target="_blank" rel="noopener noreferrer">
@@ -50,69 +22,30 @@ const components: Components = {
     </a>
   ),
   inlineCode: ({ children, ...props }) => (
-    <code
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 4,
-        background: "#f9fafb",
-        color: "#111827",
-        fontSize: 13,
-        padding: "1px 4px",
-      }}
-      {...props}
-    >
+    <code {...props} className="streaming-markdown-inline-code">
       {children}
     </code>
   ),
   code: ({ children, ...props }) => (
-    <code
-      style={{
-        display: "block",
-        color: "#111827",
-        fontSize: 13,
-        lineHeight: 1.65,
-        whiteSpace: "pre",
-      }}
-      {...props}
-    >
+    <code {...props} className="streaming-markdown-code">
       {children}
     </code>
   ),
   pre: ({ children }) => (
-    <pre
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 6,
-        background: "#f9fafb",
-        margin: "8px 0",
-        overflowX: "auto",
-        padding: "10px 12px",
-      }}
-    >
-      {children}
-    </pre>
+    <pre className="streaming-markdown-pre">{children}</pre>
   ),
   table: ({ children }) => (
-    <div style={{ overflowX: "auto", margin: "8px 0" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>{children}</table>
+    <div className="streaming-markdown-table-wrap">
+      <table className="streaming-markdown-table">{children}</table>
     </div>
   ),
   th: ({ children }) => (
-    <th
-      style={{
-        border: "1px solid #e5e7eb",
-        background: "#f9fafb",
-        padding: "6px 8px",
-        textAlign: "left",
-      }}
-    >
-      {children}
-    </th>
+    <th className="streaming-markdown-th">{children}</th>
   ),
   td: ({ children }) => (
-    <td style={{ border: "1px solid #e5e7eb", padding: "6px 8px" }}>{children}</td>
+    <td className="streaming-markdown-td">{children}</td>
   ),
-  hr: () => <hr style={{ border: 0, borderTop: "1px solid #e5e7eb", margin: "10px 0" }} />,
+  hr: () => <hr className="streaming-markdown-divider" />,
 };
 
 export const StreamingMarkdown = memo(function StreamingMarkdown({
@@ -124,22 +57,19 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({
   content: string;
   placeholder?: string;
   minHeight?: number;
-  maxHeight?: number;
+  maxHeight?: number | null;
 }) {
   return (
     <div
+      className="streaming-markdown"
       style={{
         minHeight,
-        maxHeight,
-        overflow: "auto",
-        border: "1px solid #e5e7eb",
-        borderRadius: 6,
-        background: "#ffffff",
-        padding: 12,
+        maxHeight: maxHeight ?? undefined,
+        overflow: maxHeight == null ? "visible" : "auto",
       }}
     >
       {content ? (
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="streaming-markdown-content">
           <Streamdown mode="streaming" components={components}>
             {content}
           </Streamdown>

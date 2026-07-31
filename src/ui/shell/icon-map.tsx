@@ -1,5 +1,6 @@
 import {
   ApartmentOutlined,
+  ApiOutlined,
   AppstoreOutlined,
   AreaChartOutlined,
   DashboardOutlined,
@@ -8,8 +9,10 @@ import {
   FolderOutlined,
   FormOutlined,
   CloudServerOutlined,
+  CodeOutlined,
   LoginOutlined,
   MailOutlined,
+  MessageOutlined,
   NotificationOutlined,
   SolutionOutlined,
   ProfileOutlined,
@@ -43,6 +46,9 @@ const iconMap: Record<string, React.ReactNode> = {
   notice: <NotificationOutlined />,
   profile: <UserOutlined />,
   settings: <SettingOutlined />,
+  message: <MessageOutlined />,
+  api: <ApiOutlined />,
+  code: <CodeOutlined />,
 };
 
 export function renderMenuIcon(icon?: string | null) {

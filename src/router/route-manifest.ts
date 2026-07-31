@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { AiChatPage } from "@/features/system/ai-chat/AiChatPage";
+import { AiAgentPage } from "@/features/system/ai-agent/AiAgentPage";
 import { AiModelPage } from "@/features/system/ai-model/AiModelPage";
 import { AiPlaygroundPage } from "@/features/system/ai-playground/AiPlaygroundPage";
 import { AiProviderPage } from "@/features/system/ai-provider/AiProviderPage";
@@ -181,6 +182,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "AI Chat",
     auth: "system.aiChat.query",
     component: AiChatPage,
+  },
+  {
+    path: "/system/ai/agent",
+    key: "system.aiAgent",
+    title: "AI Agent",
+    auth: "system.aiAgent.query",
+    component: AiAgentPage,
   },
   {
     path: "/system/module/generator",

@@ -1,0 +1,834 @@
+"use client";
+
+import {
+  BugOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  MessageOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+  SendOutlined,
+  StopOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Button,
+  Card,
+  Drawer,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
+import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
+import { request, requestEventStream, type EventStreamMessage } from "@/lib/request";
+import { feedback } from "@/ui/feedback/feedback";
+import { PageScaffold } from "@/ui/page/PageScaffold";
+
+type AgentRow = {
+  id: number;
+  name: string;
+  code: string;
+  description?: string | null;
+  instructions: string;
+  modelId?: number | null;
+  modelName?: string | null;
+  temperatureMilli: number;
+  maxOutputTokens?: number | null;
+  maxSteps: number;
+  toolIds: number[];
+  status: number;
+  sort: number;
+  isSystem: boolean;
+};
+
+type ToolRow = {
+  id: number;
+  name: string;
+  code: string;
+  description: string;
+  handlerKey: string;
+  inputSchemaJson?: string | null;
+  configJson?: string | null;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  approvalRequired: boolean;
+  status: number;
+  sort: number;
+  isSystem: boolean;
+};
+
+type AgentOptions = {
+  models: Array<{ id: number; name: string; modelId: string; providerName: string }>;
+  tools: ToolRow[];
+};
+
+type RunRow = {
+  id: number;
+  sessionId: number;
+  agentName: string;
+  status: string;
+  totalSteps: number;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs?: number | null;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+};
+
+type StepRow = {
+  id: number;
+  stepNo: number;
+  stepType: string;
+  status: string;
+  toolName?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  usageJson?: string | null;
+  durationMs?: number | null;
+  errorMessage?: string | null;
+};
+
+type DebugStatus = "idle" | "running" | "completed" | "waiting_approval" | "failed" | "stopped";
+
+type DebugTrace = {
+  id: number;
+  event: string;
+  label: string;
+  data: unknown;
+  createdAt: string;
+};
+
+type ToolApproval = {
+  id: number;
+  runId: number;
+  toolName: string;
+  toolDisplayName?: string | null;
+  toolDescription?: string | null;
+  handlerKey?: string | null;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  inputJson?: string | null;
+  outputJson?: string | null;
+  status: "pending" | "approved" | "denied" | "executed" | "failed";
+  reason?: string | null;
+};
+
+const riskColors = { low: "green", medium: "gold", high: "orange", critical: "red" } as const;
+
+function JsonPreview({ value }: { value?: string | null }) {
+  if (!value) return <Typography.Text type="secondary">-</Typography.Text>;
+  let output = value;
+  try {
+    output = JSON.stringify(JSON.parse(value), null, 2);
+  } catch {}
+  return <pre className="ai-agent-json">{output}</pre>;
+}
+
+function DebugDataPreview({ value }: { value: unknown }) {
+  if (value == null) return null;
+  let output = "";
+  try {
+    output = JSON.stringify(value, null, 2);
+  } catch {
+    output = String(value);
+  }
+  return <pre className="ai-agent-json ai-agent-debug-json">{output}</pre>;
+}
+
+function traceLabel(event: string) {
+  const labels: Record<string, string> = {
+    meta: "运行已创建",
+    "tool-call": "调用工具",
+    "tool-result": "工具返回",
+    approval: "等待人工审批",
+    finish: "运行完成",
+    error: "运行失败",
+  };
+  return labels[event] ?? event;
+}
+
+function debugStatusTag(status: DebugStatus) {
+  const options: Record<DebugStatus, { color: string; label: string }> = {
+    idle: { color: "default", label: "未运行" },
+    running: { color: "processing", label: "运行中" },
+    completed: { color: "success", label: "已完成" },
+    waiting_approval: { color: "warning", label: "等待审批" },
+    failed: { color: "error", label: "失败" },
+    stopped: { color: "default", label: "已停止" },
+  };
+  return <Tag color={options[status].color}>{options[status].label}</Tag>;
+}
+
+export function AiAgentPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [agentForm] = Form.useForm();
+  const [toolForm] = Form.useForm();
+  const [agentModal, setAgentModal] = useState(false);
+  const [toolModal, setToolModal] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<AgentRow | null>(null);
+  const [editingTool, setEditingTool] = useState<ToolRow | null>(null);
+  const [activeRun, setActiveRun] = useState<RunRow | null>(null);
+  const [debugAgent, setDebugAgent] = useState<AgentRow | null>(null);
+  const [debugPrompt, setDebugPrompt] = useState("");
+  const [debugSessionId, setDebugSessionId] = useState<number | null>(null);
+  const [debugRunId, setDebugRunId] = useState<number | null>(null);
+  const [debugOutput, setDebugOutput] = useState("");
+  const [debugError, setDebugError] = useState("");
+  const [debugStatus, setDebugStatus] = useState<DebugStatus>("idle");
+  const [debugTrace, setDebugTrace] = useState<DebugTrace[]>([]);
+  const debugControllerRef = useRef<AbortController | null>(null);
+  const debugTraceIdRef = useRef(0);
+
+  const agentsQuery = useQuery({
+    queryKey: ["system-ai-agents"],
+    queryFn: () => request<AgentRow[]>("/api/system/ai/agent"),
+  });
+  const optionsQuery = useQuery({
+    queryKey: ["system-ai-agent-options"],
+    queryFn: () => request<AgentOptions>("/api/system/ai/agent/options"),
+  });
+  const runsQuery = useQuery({
+    queryKey: ["system-ai-agent-runs"],
+    queryFn: () => request<RunRow[]>("/api/system/ai/agent/runs"),
+  });
+  const stepsQuery = useQuery({
+    queryKey: ["system-ai-agent-run-steps", activeRun?.id],
+    enabled: Boolean(activeRun),
+    queryFn: () => request<StepRow[]>(`/api/system/ai/agent/runs/${activeRun?.id}/steps`),
+  });
+  const debugApprovalsQuery = useQuery({
+    queryKey: ["system-ai-agent-debug-approvals", debugSessionId],
+    enabled: Boolean(debugSessionId),
+    queryFn: () =>
+      request<ToolApproval[]>(`/api/system/ai/chat/sessions/${debugSessionId}/approvals`),
+  });
+
+  const saveAgent = useMutation({
+    mutationFn: (values: Record<string, unknown>) =>
+      request(editingAgent ? `/api/system/ai/agent/${editingAgent.id}` : "/api/system/ai/agent", {
+        method: editingAgent ? "PUT" : "POST",
+        body: values,
+      }),
+    onSuccess: async () => {
+      feedback.success(editingAgent ? "Agent 已更新" : "Agent 已创建");
+      setAgentModal(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] }),
+      ]);
+    },
+  });
+  const saveTool = useMutation({
+    mutationFn: (values: Record<string, unknown>) =>
+      request(editingTool ? `/api/system/ai/tool/${editingTool.id}` : "/api/system/ai/tool", {
+        method: editingTool ? "PUT" : "POST",
+        body: values,
+      }),
+    onSuccess: async () => {
+      feedback.success(editingTool ? "工具已更新" : "工具已创建");
+      setToolModal(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] }),
+      ]);
+    },
+  });
+
+  function addDebugTrace(message: EventStreamMessage) {
+    if (message.event === "delta") return;
+    debugTraceIdRef.current += 1;
+    setDebugTrace((previous) => [
+      ...previous,
+      {
+        id: debugTraceIdRef.current,
+        event: message.event,
+        label: traceLabel(message.event),
+        data: message.data,
+        createdAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+      },
+    ]);
+  }
+
+  async function ensureDebugSession(agent: AgentRow) {
+    if (debugSessionId) return debugSessionId;
+    const result = await request<{ id: number }>("/api/system/ai/chat/sessions", {
+      method: "POST",
+      body: {
+        title: `调试 · ${agent.name}`,
+        agentId: agent.id,
+        maxOutputTokens: agent.maxOutputTokens ?? 16384,
+      },
+    });
+    setDebugSessionId(result.id);
+    return result.id;
+  }
+
+  async function executeDebugStream(input: {
+    agent: AgentRow;
+    sessionId: number;
+    content?: string;
+    resume?: boolean;
+    preserveOutput?: boolean;
+  }) {
+    const controller = new AbortController();
+    debugControllerRef.current = controller;
+    setDebugStatus("running");
+    setDebugError("");
+    if (!input.preserveOutput) {
+      setDebugOutput("");
+      setDebugTrace([]);
+      setDebugRunId(null);
+      debugTraceIdRef.current = 0;
+    } else {
+      setDebugOutput((previous) => previous ? `${previous}\n\n---\n\n` : "");
+    }
+
+    try {
+      await requestEventStream(`/api/system/ai/chat/sessions/${input.sessionId}/messages/stream`, {
+        method: "POST",
+        body: {
+          content: input.content,
+          resume: input.resume,
+          maxOutputTokens: input.agent.maxOutputTokens ?? 16384,
+          timeoutMs: 120000,
+        },
+        signal: controller.signal,
+        silent: true,
+        onChunk: (chunk) => setDebugOutput((previous) => previous + chunk),
+        onEvent: (message) => {
+          addDebugTrace(message);
+          const data = message.data && typeof message.data === "object"
+            ? message.data as Record<string, unknown>
+            : null;
+          if (message.event === "meta" && typeof data?.runId === "number") {
+            setDebugRunId(data.runId);
+          }
+          if (message.event === "approval") {
+            setDebugStatus("waiting_approval");
+            void queryClient.invalidateQueries({
+              queryKey: ["system-ai-agent-debug-approvals", input.sessionId],
+            });
+          }
+          if (message.event === "finish") {
+            setDebugStatus(data?.waitingApproval === true ? "waiting_approval" : "completed");
+          }
+          if (message.event === "error") {
+            const messageText = String(data?.message || "Agent 调试失败");
+            setDebugError(messageText);
+            setDebugStatus("failed");
+          }
+        },
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setDebugStatus("stopped");
+      } else {
+        const message = error instanceof Error ? error.message : "Agent 调试失败";
+        setDebugError(message);
+        setDebugStatus("failed");
+      }
+    } finally {
+      if (debugControllerRef.current === controller) debugControllerRef.current = null;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-ai-agent-runs"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["system-ai-agent-debug-approvals", input.sessionId],
+        }),
+      ]);
+    }
+  }
+
+  function openDebug(agent: AgentRow) {
+    setDebugAgent(agent);
+    setDebugPrompt("");
+    setDebugSessionId(null);
+    setDebugRunId(null);
+    setDebugOutput("");
+    setDebugError("");
+    setDebugStatus("idle");
+    setDebugTrace([]);
+    debugTraceIdRef.current = 0;
+  }
+
+  async function runDebug() {
+    if (!debugAgent) return;
+    const content = debugPrompt.trim();
+    if (!content) {
+      feedback.warning("请输入调试消息");
+      return;
+    }
+    const sessionId = await ensureDebugSession(debugAgent);
+    await executeDebugStream({ agent: debugAgent, sessionId, content });
+  }
+
+  async function openAgentInChat(agent: AgentRow, sessionId?: number | null) {
+    let targetSessionId = sessionId ?? null;
+    if (!targetSessionId) {
+      const result = await request<{ id: number }>("/api/system/ai/chat/sessions", {
+        method: "POST",
+        body: {
+          title: agent.name,
+          agentId: agent.id,
+          maxOutputTokens: agent.maxOutputTokens ?? 16384,
+        },
+      });
+      targetSessionId = result.id;
+    }
+    router.push(`/system/ai/chat?sessionId=${targetSessionId}`);
+  }
+
+  const decideDebugApproval = useMutation({
+    mutationFn: ({ id, approved }: { id: number; approved: boolean }) =>
+      request<{ status: string; sessionId: number }>(`/api/system/ai/approval/${id}/decision`, {
+        method: "POST",
+        body: { approved },
+      }),
+    onSuccess: async (result, variables) => {
+      await queryClient.invalidateQueries({
+        queryKey: ["system-ai-agent-debug-approvals", result.sessionId],
+      });
+      if (variables.approved && result.status === "executed" && debugAgent) {
+        await executeDebugStream({
+          agent: debugAgent,
+          sessionId: result.sessionId,
+          resume: true,
+          preserveOutput: true,
+        });
+      } else {
+        setDebugStatus("stopped");
+      }
+    },
+  });
+
+  function openAgent(row?: AgentRow) {
+    setEditingAgent(row ?? null);
+    agentForm.setFieldsValue(
+      row
+        ? { ...row, temperature: row.temperatureMilli / 1000 }
+        : { temperature: 0.7, maxOutputTokens: 16384, maxSteps: 6, status: 1, sort: 0, toolIds: [] },
+    );
+    setAgentModal(true);
+  }
+
+  function openTool(row?: ToolRow) {
+    setEditingTool(row ?? null);
+    toolForm.setFieldsValue(
+      row ?? { handlerKey: "current_time", riskLevel: "low", approvalRequired: false, status: 1, sort: 0 },
+    );
+    setToolModal(true);
+  }
+
+  async function remove(type: "agent" | "tool", id: number) {
+    await request(`/api/system/ai/${type}/${id}`, { method: "DELETE" });
+    feedback.success("已删除");
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
+      queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
+      queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] }),
+    ]);
+  }
+
+  const agents = agentsQuery.data ?? [];
+  const tools = optionsQuery.data?.tools ?? [];
+  const pendingDebugApprovals = (debugApprovalsQuery.data ?? []).filter(
+    (item) => item.status === "pending",
+  );
+
+  return (
+    <PageScaffold
+      title="AI Agent"
+      description="把模型、指令、工具、运行步骤和人工审批组织成可审计的业务 Agent"
+      actions={
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
+            queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
+            queryClient.invalidateQueries({ queryKey: ["system-ai-agent-runs"] }),
+          ])}
+        >
+          刷新
+        </Button>
+      }
+    >
+      <Card className="admin-card ai-agent-workbench" variant="borderless">
+        <Tabs
+          items={[
+            {
+              key: "agents",
+              label: "Agents",
+              children: (
+                <>
+                  <div className="admin-toolbar">
+                    <div className="admin-toolbar-left">
+                      <Typography.Text type="secondary">{agents.length} 个 Agent</Typography.Text>
+                    </div>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openAgent()}>
+                      新建 Agent
+                    </Button>
+                  </div>
+                  <Table
+                    className="admin-table-surface"
+                    rowKey="id"
+                    loading={agentsQuery.isLoading}
+                    dataSource={agents}
+                    pagination={false}
+                    columns={[
+                      {
+                        title: "Agent",
+                        dataIndex: "name",
+                        render: (_, row) => (
+                          <Space orientation="vertical" size={1}>
+                            <Space><Typography.Text strong>{row.name}</Typography.Text>{row.isSystem ? <Tag>内置</Tag> : null}</Space>
+                            <Typography.Text type="secondary" code>{row.code}</Typography.Text>
+                            {row.description ? <Typography.Text type="secondary">{row.description}</Typography.Text> : null}
+                          </Space>
+                        ),
+                      },
+                      { title: "模型", dataIndex: "modelName", render: (value) => value || "系统默认" },
+                      { title: "工具", dataIndex: "toolIds", render: (ids: number[]) => <Tag icon={<ToolOutlined />}>{ids.length}</Tag> },
+                      { title: "最大步骤", dataIndex: "maxSteps", width: 100 },
+                      { title: "状态", dataIndex: "status", width: 90, render: (value) => <Tag color={value === 1 ? "green" : "default"}>{value === 1 ? "启用" : "停用"}</Tag> },
+                      {
+                        title: "操作",
+                        width: 260,
+                        fixed: "right",
+                        render: (_, row) => (
+                          <Space size={4}>
+                            <Button
+                              size="small"
+                              type="primary"
+                              ghost
+                              icon={<BugOutlined />}
+                              disabled={row.status !== 1}
+                              onClick={() => openDebug(row)}
+                            >
+                              调试
+                            </Button>
+                            <Button
+                              size="small"
+                              icon={<MessageOutlined />}
+                              disabled={row.status !== 1}
+                              onClick={() => void openAgentInChat(row)}
+                            >
+                              使用
+                            </Button>
+                            <Tooltip title="编辑 Agent">
+                              <Button type="text" icon={<EditOutlined />} onClick={() => openAgent(row)} />
+                            </Tooltip>
+                            <Popconfirm title="确认删除该 Agent？" onConfirm={() => void remove("agent", row.id)} disabled={row.isSystem}>
+                              <Tooltip title={row.isSystem ? "内置 Agent 不允许删除" : "删除 Agent"}>
+                                <Button type="text" danger icon={<DeleteOutlined />} disabled={row.isSystem} />
+                              </Tooltip>
+                            </Popconfirm>
+                          </Space>
+                        ),
+                      },
+                    ]}
+                    scroll={{ x: 980 }}
+                  />
+                </>
+              ),
+            },
+            {
+              key: "tools",
+              label: "Tools",
+              children: (
+                <>
+                  <div className="admin-toolbar">
+                    <Typography.Text type="secondary">工具执行器由服务端白名单注册，配置不能注入任意代码</Typography.Text>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openTool()}>
+                      新建工具
+                    </Button>
+                  </div>
+                  <Table
+                    className="admin-table-surface"
+                    rowKey="id"
+                    loading={optionsQuery.isLoading}
+                    dataSource={tools}
+                    pagination={false}
+                    columns={[
+                      { title: "工具", dataIndex: "name", render: (_, row) => <Space orientation="vertical" size={1}><Typography.Text strong>{row.name}</Typography.Text><Typography.Text code type="secondary">{row.code}</Typography.Text></Space> },
+                      { title: "处理器", dataIndex: "handlerKey", render: (value) => <Typography.Text code>{value}</Typography.Text> },
+                      { title: "风险", dataIndex: "riskLevel", width: 90, render: (value: ToolRow["riskLevel"]) => <Tag color={riskColors[value]}>{value}</Tag> },
+                      { title: "审批", dataIndex: "approvalRequired", width: 90, render: (value) => value ? <Tag icon={<SafetyCertificateOutlined />} color="orange">需要</Tag> : <Tag>自动</Tag> },
+                      { title: "状态", dataIndex: "status", width: 90, render: (value) => <Tag color={value === 1 ? "green" : "default"}>{value === 1 ? "启用" : "停用"}</Tag> },
+                      { title: "操作", width: 140, fixed: "right", render: (_, row) => <Space><Button type="text" icon={<EditOutlined />} onClick={() => openTool(row)} /><Popconfirm title="确认删除该工具？" onConfirm={() => void remove("tool", row.id)} disabled={row.isSystem}><Button type="text" danger icon={<DeleteOutlined />} disabled={row.isSystem} /></Popconfirm></Space> },
+                    ]}
+                    scroll={{ x: 760 }}
+                  />
+                </>
+              ),
+            },
+            {
+              key: "runs",
+              label: "Runs",
+              children: (
+                <Table
+                  className="admin-table-surface"
+                  rowKey="id"
+                  loading={runsQuery.isLoading}
+                  dataSource={runsQuery.data ?? []}
+                  pagination={{ pageSize: 20 }}
+                  scroll={{ x: 920, y: 480 }}
+                  onRow={(row) => ({ onClick: () => setActiveRun(row), style: { cursor: "pointer" } })}
+                  columns={[
+                    { title: "Run", dataIndex: "id", width: 90, render: (value) => `#${value}` },
+                    { title: "Agent", dataIndex: "agentName" },
+                    { title: "状态", dataIndex: "status", render: (value) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : value === "waiting_approval" ? "orange" : "blue"}>{value}</Tag> },
+                    { title: "步骤", dataIndex: "totalSteps", width: 90 },
+                    { title: "Tokens", render: (_, row) => `${row.inputTokens} / ${row.outputTokens}` },
+                    { title: "耗时", dataIndex: "durationMs", render: (value) => value ? `${value} ms` : "-" },
+                    { title: "开始时间", dataIndex: "startedAt", render: (value) => value ? new Date(value).toLocaleString() : "-" },
+                  ]}
+                />
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Modal title={editingAgent ? "编辑 Agent" : "新建 Agent"} open={agentModal} width={760} okText="保存" cancelText="取消" confirmLoading={saveAgent.isPending} onCancel={() => setAgentModal(false)} onOk={() => void agentForm.validateFields().then((values) => saveAgent.mutateAsync(values))}>
+        <Form form={agentForm} layout="vertical" className="admin-entity-form-grid">
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="code" label="编码" rules={[{ required: true }]}><Input disabled={Boolean(editingAgent?.isSystem)} /></Form.Item>
+          <Form.Item name="modelId" label="模型"><Select allowClear placeholder="使用系统默认模型" options={(optionsQuery.data?.models ?? []).map((item) => ({ value: item.id, label: `${item.providerName} / ${item.name} (${item.modelId})` }))} /></Form.Item>
+          <Form.Item name="toolIds" label="工具"><Select mode="multiple" allowClear options={tools.map((item) => ({ value: item.id, label: `${item.name} · ${item.riskLevel}` }))} /></Form.Item>
+          <Form.Item name="temperature" label="Temperature"><InputNumber min={0} max={2} step={0.1} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="maxOutputTokens" label="最大输出 Tokens"><InputNumber min={16} max={32768} step={512} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="maxSteps" label="最大执行步骤"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="sort" label="排序"><InputNumber style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="status" label="启用" valuePropName="checked" getValueFromEvent={(checked) => checked ? 1 : 0} getValueProps={(value) => ({ checked: value === 1 })}><Switch /></Form.Item>
+          <Form.Item name="description" label="描述" className="admin-form-full"><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="instructions" label="Instructions / System Prompt" className="admin-form-full" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={editingTool ? "编辑工具" : "新建工具"} open={toolModal} width={720} okText="保存" cancelText="取消" confirmLoading={saveTool.isPending} onCancel={() => setToolModal(false)} onOk={() => void toolForm.validateFields().then((values) => saveTool.mutateAsync(values))}>
+        <Form form={toolForm} layout="vertical" className="admin-entity-form-grid">
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="code" label="编码" rules={[{ required: true }]}><Input disabled={Boolean(editingTool?.isSystem)} /></Form.Item>
+          <Form.Item name="handlerKey" label="服务端处理器" rules={[{ required: true }]}><Select disabled={Boolean(editingTool?.isSystem)} options={["current_time", "calculator", "system_status", "operation_log_summary"].map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="riskLevel" label="风险等级"><Select options={Object.keys(riskColors).map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="approvalRequired" label="需要人工审批" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="status" label="启用" valuePropName="checked" getValueFromEvent={(checked) => checked ? 1 : 0} getValueProps={(value) => ({ checked: value === 1 })}><Switch /></Form.Item>
+          <Form.Item name="sort" label="排序"><InputNumber style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="description" label="给模型的工具描述" className="admin-form-full" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="inputSchemaJson" label="输入结构说明 JSON" className="admin-form-full"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="configJson" label="工具配置 JSON" className="admin-form-full"><Input.TextArea rows={3} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Drawer
+        title={
+          <Space size={8} wrap>
+            <BugOutlined />
+            <Typography.Text strong>{debugAgent ? `调试 · ${debugAgent.name}` : "Agent 调试"}</Typography.Text>
+            {debugStatusTag(debugStatus)}
+          </Space>
+        }
+        size="min(1120px, 94vw)"
+        open={Boolean(debugAgent)}
+        destroyOnHidden
+        onClose={() => {
+          debugControllerRef.current?.abort();
+          setDebugAgent(null);
+        }}
+        extra={
+          <Space>
+            <Button
+              icon={<ReloadOutlined />}
+              disabled={!debugSessionId || debugStatus === "running"}
+              onClick={() => {
+                setDebugSessionId(null);
+                setDebugRunId(null);
+                setDebugOutput("");
+                setDebugTrace([]);
+                setDebugStatus("idle");
+              }}
+            >
+              新上下文
+            </Button>
+            <Button
+              type="primary"
+              icon={<MessageOutlined />}
+              disabled={!debugAgent}
+              onClick={() => debugAgent && void openAgentInChat(debugAgent, debugSessionId)}
+            >
+              在 AI Chat 使用
+            </Button>
+          </Space>
+        }
+      >
+        {debugAgent ? (
+          <div className="ai-agent-debug-layout">
+            <section className="ai-agent-debug-main">
+              <Card size="small" className="admin-card" variant="borderless">
+                <Space size={[6, 6]} wrap>
+                  <Tag color="cyan">{debugAgent.code}</Tag>
+                  <Tag>{debugAgent.modelName || "系统默认模型"}</Tag>
+                  <Tag icon={<ToolOutlined />}>{debugAgent.toolIds.length} 个工具</Tag>
+                  <Tag>最多 {debugAgent.maxSteps} 步</Tag>
+                  {debugSessionId ? <Tag>Session #{debugSessionId}</Tag> : null}
+                  {debugRunId ? <Tag color="blue">Run #{debugRunId}</Tag> : null}
+                </Space>
+                {debugAgent.description ? (
+                  <Typography.Paragraph type="secondary" className="ai-agent-debug-description">
+                    {debugAgent.description}
+                  </Typography.Paragraph>
+                ) : null}
+              </Card>
+
+              <Card
+                size="small"
+                className="admin-card"
+                variant="borderless"
+                title="模型回复"
+                extra={debugStatus === "running" ? <Spin size="small" /> : null}
+              >
+                <StreamingMarkdown
+                  content={debugOutput}
+                  minHeight={260}
+                  maxHeight={520}
+                  placeholder={debugStatus === "running" ? "Agent 正在运行..." : "输入消息后开始调试"}
+                />
+                {debugError ? (
+                  <Alert showIcon type="error" title="调试失败" description={debugError} />
+                ) : null}
+              </Card>
+
+              {pendingDebugApprovals.map((approval) => (
+                <Alert
+                  key={approval.id}
+                  showIcon
+                  type="warning"
+                  title={
+                    <Space size={6} wrap>
+                      <Typography.Text strong>
+                        工具审批 · {approval.toolDisplayName || approval.toolName}
+                      </Typography.Text>
+                      <Tag color={riskColors[approval.riskLevel]}>{approval.riskLevel}</Tag>
+                      <Tag>Run #{approval.runId}</Tag>
+                    </Space>
+                  }
+                  description={
+                    <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+                      {approval.toolDescription ? (
+                        <Typography.Text type="secondary">{approval.toolDescription}</Typography.Text>
+                      ) : null}
+                      <Typography.Text type="secondary">即将执行的参数</Typography.Text>
+                      <JsonPreview value={approval.inputJson} />
+                      <Space>
+                        <Button
+                          type="primary"
+                          icon={<SafetyCertificateOutlined />}
+                          loading={decideDebugApproval.isPending}
+                          onClick={() => decideDebugApproval.mutate({ id: approval.id, approved: true })}
+                        >
+                          批准并继续
+                        </Button>
+                        <Button
+                          danger
+                          loading={decideDebugApproval.isPending}
+                          onClick={() => decideDebugApproval.mutate({ id: approval.id, approved: false })}
+                        >
+                          拒绝
+                        </Button>
+                      </Space>
+                    </Space>
+                  }
+                />
+              ))}
+
+              <div className="ai-agent-debug-composer">
+                <Input.TextArea
+                  value={debugPrompt}
+                  rows={4}
+                  maxLength={12000}
+                  showCount
+                  disabled={debugStatus === "running"}
+                  placeholder="输入要交给 Agent 处理的任务"
+                  onChange={(event) => setDebugPrompt(event.target.value)}
+                  onPressEnter={(event) => {
+                    if (event.shiftKey) return;
+                    event.preventDefault();
+                    void runDebug();
+                  }}
+                />
+                {debugStatus === "running" ? (
+                  <Button
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={() => debugControllerRef.current?.abort()}
+                  >
+                    停止
+                  </Button>
+                ) : (
+                  <Button type="primary" icon={<SendOutlined />} onClick={() => void runDebug()}>
+                    运行
+                  </Button>
+                )}
+              </div>
+            </section>
+
+            <aside className="ai-agent-debug-trace">
+              <div className="ai-agent-debug-trace-heading">
+                <Typography.Text strong>运行轨迹</Typography.Text>
+                <Typography.Text type="secondary">{debugTrace.length} 个事件</Typography.Text>
+              </div>
+              {debugTrace.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="运行后显示模型、工具和审批事件" />
+              ) : (
+                <div className="ai-agent-debug-trace-list" role="list">
+                  {debugTrace.map((item, index) => (
+                    <div className="ai-agent-debug-trace-item" key={`${item.createdAt}-${index}`} role="listitem">
+                      <Space orientation="vertical" size={5} style={{ width: "100%" }}>
+                        <Space style={{ justifyContent: "space-between", width: "100%" }}>
+                          <Tag color={item.event === "error" ? "red" : item.event === "approval" ? "orange" : item.event === "finish" ? "green" : "blue"}>
+                            {item.label}
+                          </Tag>
+                          <Typography.Text type="secondary">{item.createdAt}</Typography.Text>
+                        </Space>
+                        <DebugDataPreview value={item.data} />
+                      </Space>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </aside>
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer title={activeRun ? `Run #${activeRun.id} · ${activeRun.agentName}` : "Run 详情"} size="large" open={Boolean(activeRun)} onClose={() => setActiveRun(null)}>
+        <Space orientation="vertical" size={14} style={{ width: "100%" }}>
+          {(stepsQuery.data ?? []).map((step) => (
+            <Card key={step.id} size="small" title={<Space><Tag>{step.stepNo}</Tag><Typography.Text>{step.stepType}</Typography.Text>{step.toolName ? <Typography.Text code>{step.toolName}</Typography.Text> : null}</Space>} extra={<Tag>{step.status}</Tag>}>
+              <Typography.Text type="secondary">输入</Typography.Text><JsonPreview value={step.inputJson} />
+              <Typography.Text type="secondary">输出</Typography.Text><JsonPreview value={step.outputJson || step.usageJson} />
+              {step.errorMessage ? <Typography.Text type="danger">{step.errorMessage}</Typography.Text> : null}
+            </Card>
+          ))}
+        </Space>
+      </Drawer>
+    </PageScaffold>
+  );
+}
