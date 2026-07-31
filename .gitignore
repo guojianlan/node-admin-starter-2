@@ -5,6 +5,8 @@ node_modules/
 out/
 dist/
 coverage/
+!tests/coverage/
+!tests/coverage/*.ts
 test-results/
 playwright-report/
 .env
