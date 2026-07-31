@@ -151,7 +151,7 @@ authRoutes.post("/login", async (c) => {
     }
     const result = await login({
       ...payload,
-      ip: c.req.header("x-forwarded-for") ?? null,
+      ip: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || null,
       userAgent: c.req.header("user-agent") ?? null,
     });
     await recordOperationLog(c, {

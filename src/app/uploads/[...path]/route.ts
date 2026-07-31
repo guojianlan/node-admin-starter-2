@@ -50,8 +50,25 @@ const MIME_BY_EXT: Record<string, string> = {
   xml: "application/xml; charset=utf-8",
 };
 
+const DANGEROUS_EXTENSIONS = new Set([
+  "html",
+  "htm",
+  "svg",
+  "js",
+  "mjs",
+  "vbs",
+  "sh",
+  "bat",
+  "cmd",
+  "ps1",
+]);
+
+function getExtension(relativePath: string) {
+  return path.extname(relativePath).replace(".", "").toLowerCase();
+}
+
 function getContentType(relativePath: string) {
-  const ext = path.extname(relativePath).replace(".", "").toLowerCase();
+  const ext = getExtension(relativePath);
   return MIME_BY_EXT[ext] ?? "application/octet-stream";
 }
 
@@ -111,12 +128,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ path
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return new Response("Not Found", { status: 404 });
 
-    const contentType = getContentType(relativePath);
+    const dangerous = DANGEROUS_EXTENSIONS.has(getExtension(relativePath));
+    const contentType = dangerous ? "application/octet-stream" : getContentType(relativePath);
     const range = parseRange(request.headers.get("range"), stat.size);
     const baseHeaders = {
       "Accept-Ranges": "bytes",
       "Cache-Control": "public, max-age=31536000, immutable",
       "Content-Type": contentType,
+      ...(dangerous
+        ? { "Content-Disposition": `attachment; filename="${encodeURIComponent(path.basename(relativePath))}"` }
+        : {}),
       "X-Content-Type-Options": "nosniff",
     };
 

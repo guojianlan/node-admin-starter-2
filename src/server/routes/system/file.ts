@@ -72,19 +72,6 @@ async function getFileObjectRows(ids: number[]) {
     .all(...ids)) as FileObjectRow[];
 }
 
-async function assertFilesNotReferenced(ids: number[]) {
-  if (!ids.length) return;
-  const row = (await sqlite
-    .prepare(
-      `SELECT file_id AS fileId
-       FROM sys_file_reference
-       WHERE file_id IN (${placeholders(ids)})
-       LIMIT 1`,
-    )
-    .get(...ids)) as { fileId: number } | undefined;
-  if (row) throw new Error(`文件 ${row.fileId} 已被业务引用，不能物理删除`);
-}
-
 function chunkRoot() {
   return path.join(process.cwd(), "storage", "upload-parts");
 }
@@ -106,7 +93,7 @@ const fileCrud = createCrudRoutes({
     actions: {
       update: "system.file.upload",
       restore: "system.file.delete",
-      forceDelete: "system.file.delete",
+      forceDelete: "system.file.forceDelete",
     },
   },
   list: {
@@ -151,7 +138,6 @@ const fileCrud = createCrudRoutes({
   },
   hooks: {
     beforeForceDelete: async (_ctx, ids) => {
-      await assertFilesNotReferenced(ids);
       const rows = await getFileObjectRows(ids);
       await Promise.all(rows.map((row) => deleteStoredObject(row)));
     },

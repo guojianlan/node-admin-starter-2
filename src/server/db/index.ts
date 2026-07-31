@@ -21,6 +21,8 @@ type SqlExecutor = postgres.Sql | postgres.TransactionSql;
 const aliasMap: Record<string, string> = {
   abilitiesjson: "abilitiesJson",
   apikeyencrypted: "apiKeyEncrypted",
+  avatarid: "avatarId",
+  avatarurl: "avatarUrl",
   autocreateuser: "autoCreateUser",
   authurl: "authUrl",
   baseurl: "baseUrl",

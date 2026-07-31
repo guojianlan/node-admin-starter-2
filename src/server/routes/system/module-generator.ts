@@ -238,6 +238,31 @@ async function copyGeneratedSourceFiles(files: GeneratedSourceFile[]) {
   return copied;
 }
 
+async function assertPublishConflicts(
+  name: string,
+  config: Awaited<ReturnType<typeof readGeneratedConfig>>,
+) {
+  const ownMarker = `admin-base-generator:start ${name}`;
+  const [manifest, seedRules, schema] = await Promise.all([
+    readTextIfExists(repoPath("src/router/route-manifest.ts")),
+    readTextIfExists(repoPath("src/server/db/seed/default-data.ts")),
+    readTextIfExists(repoPath("src/server/db/schema/index.ts")),
+  ]);
+  if (manifest.includes(ownMarker)) return;
+  if (config.permission && manifest.includes(`key: "${config.permission}"`)) {
+    throw new Error(`权限标识已存在：${config.permission}`);
+  }
+  if (config.frontendPath && manifest.includes(`path: "${config.frontendPath}"`)) {
+    throw new Error(`页面路由已存在：${config.frontendPath}`);
+  }
+  if (config.permission && seedRules.includes(`key: "${config.permission}"`)) {
+    throw new Error(`Seed 权限已存在：${config.permission}`);
+  }
+  if (config.schemaName && schema.includes(`export const ${config.schemaName}`)) {
+    throw new Error(`Schema 标识已存在：${config.schemaName}`);
+  }
+}
+
 async function publishDraft(name: string) {
   const outputRoot = resolve(generatorOutputRoot, name);
   if (!outputRoot.startsWith(generatorOutputRoot) || !(await pathExists(outputRoot))) {
@@ -247,6 +272,7 @@ async function publishDraft(name: string) {
   if (config.domain !== "system") {
     throw new Error("当前自动发布仅支持 domain=system；业务域模块需要先建立后端 domain 挂载约定");
   }
+  await assertPublishConflicts(name, config);
   const sourceFiles = await collectGeneratedSourceFiles(outputRoot);
   const schemaSnippet = await readFile(resolve(outputRoot, "snippets/schema.entry.ts"), "utf8");
   const migrationSnippet = await readFile(resolve(outputRoot, "snippets/migration.sql"), "utf8");

@@ -263,6 +263,30 @@ export async function getUserMenus(userId: number) {
 
 export async function login(input: LoginInput) {
   const policy = await getSecurityPolicy();
+  const normalizedIp = input.ip?.split(",")[0]?.trim() || null;
+  if (normalizedIp && policy.rateLimitAttempts > 0 && policy.rateLimitWindowMinutes > 0) {
+    const recentFailures = (await sqlite
+      .prepare(
+        `SELECT COUNT(1)::int AS total
+         FROM sys_login_record
+         WHERE username = ?
+           AND ip = ?
+           AND status = 0
+           AND created_at >= now() - (? * interval '1 minute')`,
+      )
+      .get(input.username, normalizedIp, policy.rateLimitWindowMinutes)) as
+      | { total: number }
+      | undefined;
+    if (Number(recentFailures?.total ?? 0) >= policy.rateLimitAttempts) {
+      await recordLogin({
+        ...input,
+        ip: normalizedIp,
+        status: 0,
+        message: "IP 与账号组合登录请求过于频繁",
+      });
+      throw new Error("请求过于频繁，请稍后再试");
+    }
+  }
   const user = (await sqlite
     .prepare(
       `SELECT

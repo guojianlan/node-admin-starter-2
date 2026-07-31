@@ -12,6 +12,17 @@ function numberValue(row: unknown) {
 export const dashboardRoutes = new Hono<{ Variables: HonoVariables }>();
 
 dashboardRoutes.get("/dashboard/summary", authRequired(), async (c) => {
+  const abilities = new Set(c.get("abilities"));
+  const visibility = {
+    login: abilities.has("system.loginLog.query"),
+    onlineUsers: abilities.has("system.onlineUser.query"),
+    operationLogs: abilities.has("system.operationLog.query"),
+    files: abilities.has("system.file.query"),
+    storage: abilities.has("system.storage.query"),
+    mail: abilities.has("system.mail.query"),
+    notices: abilities.has("system.notice.query"),
+    readiness: abilities.has("system.settings.query"),
+  };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayIso = today.toISOString();
@@ -27,28 +38,43 @@ dashboardRoutes.get("/dashboard/summary", authRequired(), async (c) => {
     recentNotices,
     readiness,
   ] = await Promise.all([
-    sqlite
+    visibility.login
+      ? sqlite
       .prepare("SELECT COUNT(1)::int AS total FROM sys_login_record WHERE status = 1 AND created_at >= ?")
-      .get(todayIso),
-    sqlite
+          .get(todayIso)
+      : null,
+    visibility.login
+      ? sqlite
       .prepare("SELECT COUNT(1)::int AS total FROM sys_login_record WHERE status = 0 AND created_at >= ?")
-      .get(todayIso),
-    sqlite
+          .get(todayIso)
+      : null,
+    visibility.onlineUsers
+      ? sqlite
       .prepare("SELECT COUNT(DISTINCT user_id)::int AS total FROM sys_access_token WHERE expires_at IS NULL OR expires_at > now()")
-      .get(),
-    sqlite
+          .get()
+      : null,
+    visibility.operationLogs
+      ? sqlite
       .prepare("SELECT COUNT(1)::int AS total FROM sys_operation_log WHERE created_at >= ?")
-      .get(todayIso),
-    sqlite
+          .get(todayIso)
+      : null,
+    visibility.files
+      ? sqlite
       .prepare("SELECT COUNT(1)::int AS total, COALESCE(SUM(size), 0)::bigint AS bytes FROM sys_file WHERE deleted_at IS NULL")
-      .get(),
-    sqlite
+          .get()
+      : null,
+    visibility.storage
+      ? sqlite
       .prepare("SELECT name, type, status FROM sys_storage WHERE is_default = true AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")
-      .get(),
-    sqlite
+          .get()
+      : null,
+    visibility.mail
+      ? sqlite
       .prepare("SELECT name, host, status FROM sys_mail_account WHERE is_default = true AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")
-      .get(),
-    sqlite
+          .get()
+      : null,
+    visibility.operationLogs
+      ? sqlite
       .prepare(
         `SELECT id, module, action, username, success, risk_level AS "riskLevel", created_at AS "createdAt"
          FROM sys_operation_log
@@ -56,8 +82,10 @@ dashboardRoutes.get("/dashboard/summary", authRequired(), async (c) => {
          ORDER BY created_at DESC
          LIMIT 8`,
       )
-      .all(),
-    sqlite
+          .all()
+      : [],
+    visibility.notices
+      ? sqlite
       .prepare(
         `SELECT id, title, type, published_at AS "publishedAt"
          FROM sys_notice
@@ -65,12 +93,14 @@ dashboardRoutes.get("/dashboard/summary", authRequired(), async (c) => {
          ORDER BY published_at DESC NULLS LAST, id DESC
          LIMIT 5`,
       )
-      .all(),
-    runReadinessChecks({ includeMail: true }),
+          .all()
+      : [],
+    visibility.readiness ? runReadinessChecks({ includeMail: visibility.mail }) : null,
   ]);
 
   return c.json(
     success({
+      visibility,
       metrics: {
         loginSuccessToday: numberValue(loginSuccess),
         loginFailedToday: numberValue(loginFailed),

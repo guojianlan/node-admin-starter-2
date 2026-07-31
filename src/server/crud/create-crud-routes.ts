@@ -106,6 +106,22 @@ function mutationFields(values: Record<string, unknown>) {
   return Object.keys(values).filter((field) => !field.toLowerCase().includes("password"));
 }
 
+type ChangedField = {
+  field: string;
+  before: unknown;
+  after: unknown;
+};
+
+function changedFields(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): ChangedField[] {
+  return Object.entries(after)
+    .filter(([, value]) => value !== undefined)
+    .filter(([field, value]) => JSON.stringify(before[field]) !== JSON.stringify(value))
+    .map(([field, value]) => ({ field, before: before[field] ?? null, after: value ?? null }));
+}
+
 async function runMutation<
   TCreate extends Record<string, unknown>,
   TUpdate extends Record<string, unknown>,
@@ -224,6 +240,13 @@ export function createCrudRoutes<
     routes.put(idPath, ...withPermission(config, "update"), async (c) => {
       const id = readId(c.req.param("id") ?? "");
       const rawValues = config.updateSchema.parse(await c.req.json());
+      const operationDetails: {
+        fields: string[];
+        changedFields: ChangedField[];
+      } = {
+        fields: mutationFields(rawValues),
+        changedFields: [],
+      };
       await runWithOperationLog(
         c,
         {
@@ -231,14 +254,20 @@ export function createCrudRoutes<
           action: "update",
           resource: config.basePath,
           resourceId: id,
-          details: { fields: mutationFields(rawValues) },
+          details: operationDetails,
         },
         async () => {
           await runMutation(config, async (activeDb, activeSql) => {
             const ctx = crudContext(c, activeDb, activeSql);
+            const current = (await activeDb
+              .select()
+              .from(config.table)
+              .where(eq(config.idColumn, id))
+              .limit(1)) as Array<Record<string, unknown>>;
             const hookValues = config.hooks?.beforeUpdate
               ? await config.hooks.beforeUpdate(ctx, id, rawValues)
               : rawValues;
+            operationDetails.changedFields = changedFields(current[0] ?? {}, hookValues);
             const values = mapValuesToColumns(
               config.table,
               addAuditValues({

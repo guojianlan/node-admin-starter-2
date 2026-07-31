@@ -52,13 +52,13 @@ profileRoutes.get("/profile", authRequired(), async (c) => {
         u.mobile,
         u.sex,
         u.bio,
-        u.dept_id AS deptId,
-        d.name AS deptName,
-        u.avatar_id AS avatarId,
-        f.url AS avatarUrl,
-        u.login_ip AS loginIp,
-        u.login_time AS loginTime,
-        u.password_updated_at AS passwordUpdatedAt,
+        u.dept_id AS "deptId",
+        d.name AS "deptName",
+        u.avatar_id AS "avatarId",
+        f.url AS "avatarUrl",
+        u.login_ip AS "loginIp",
+        u.login_time AS "loginTime",
+        u.password_updated_at AS "passwordUpdatedAt",
         u.status
        FROM sys_user u
        LEFT JOIN sys_dept d ON d.id = u.dept_id

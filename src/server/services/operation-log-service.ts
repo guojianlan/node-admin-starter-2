@@ -28,6 +28,35 @@ function toErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+const sensitiveDetailKeys = [
+  "password",
+  "token",
+  "secret",
+  "accesskey",
+  "authorization",
+  "cookie",
+  "apikey",
+];
+
+function isSensitiveDetailKey(key: string) {
+  const normalized = key.replaceAll(/[^a-z0-9]/gi, "").toLowerCase();
+  return sensitiveDetailKeys.some((item) => normalized.includes(item));
+}
+
+export function sanitizeOperationLogDetails(value: unknown, key = ""): unknown {
+  if (key && isSensitiveDetailKey(key)) return "[REDACTED]";
+  if (Array.isArray(value)) return value.map((item) => sanitizeOperationLogDetails(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        sanitizeOperationLogDetails(childValue, childKey),
+      ]),
+    );
+  }
+  return value;
+}
+
 function inferRiskLevel(input: OperationLogInput): "low" | "medium" | "high" | "critical" {
   if (input.riskLevel) return input.riskLevel;
   const action = input.action.toLowerCase();
@@ -71,7 +100,9 @@ export async function recordOperationLog(
 ) {
   const user = c.get("user");
   const url = new URL(c.req.url);
-  const detailsJson = input.details ? JSON.stringify(input.details) : null;
+  const detailsJson = input.details
+    ? JSON.stringify(sanitizeOperationLogDetails(input.details))
+    : null;
   const riskLevel = inferRiskLevel(input);
 
   try {
