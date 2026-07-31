@@ -68,7 +68,8 @@ explicit routes.
 9. App Router page: create the page under `src/app/(admin)`.
 10. React feature page: build the page under `src/features`.
 11. Tests: cover permissions, list filters, writes, data scope, and side effects.
-12. Docs: update API docs when the module exposes non-standard actions.
+12. Test manifests: register every API operation in `tests/coverage/api-test-cases.ts` and every page in `tests/coverage/page-test-cases.ts`.
+13. Docs: update API docs when the module exposes non-standard actions, then run `pnpm test:docs` to regenerate acceptance documents.
 
 ## Naming
 
@@ -285,8 +286,12 @@ Minimum test coverage:
 - Data-scope isolation when applicable.
 - Operation log for high-risk actions.
 - Side effects such as token revocation, publish visibility, or file cleanup.
+- API success, failure, data, security, and audit criteria in `tests/coverage/api-test-cases.ts`.
+- Page loading, empty, error, interaction, permission, desktop, narrow, light, and dark criteria in `tests/coverage/page-test-cases.ts`.
 
 If the page changes a browser workflow, add or update smoke coverage without using `db:reset`.
+
+`pnpm test:check-cases` discovers explicit Hono routes, CRUD factory routes, Next route handlers, and App Router pages from source. It fails for missing or stale test entries and for empty acceptance criteria. After editing either machine-readable manifest, run `pnpm test:docs`; generated Markdown must remain synchronized.
 
 ## Acceptance
 
@@ -296,6 +301,7 @@ Run these commands before the module is considered complete:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:check-cases
 pnpm admin:check-routes
 ```
 

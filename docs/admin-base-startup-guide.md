@@ -109,15 +109,17 @@ pnpm build               # 生产构建
 
 ## 6. 重置开发数据库
 
-`pnpm db:reset` 会删除并重建 PostgreSQL 的 `public` schema，然后重新执行 seed。
+`pnpm db:reset` 会删除并重建 PostgreSQL 的 `public` schema，然后重新执行 seed。命令要求显式允许并重复确认从 `DATABASE_URL` 解析出的数据库名：
 
 ```bash
+ADMIN_BASE_ALLOW_DB_RESET=true \
+ADMIN_BASE_RESET_DATABASE_NAME=admin_base \
 pnpm db:reset
 ```
 
 这个命令会清空本地已经配置过的邮件、存储、用户、文件元数据等数据。只建议在开发库需要完全重来时使用，不要在生产环境执行。
 
-当前 `pnpm e2e` 的 Playwright 配置也会执行 `pnpm db:reset`，因此如果你本地数据库里有已经配置好的 SMTP 或存储数据，先不要直接运行 `pnpm e2e`。
+`pnpm e2e` 固定读取 `TEST_DATABASE_URL`，默认只允许名称以 `_test` 结尾的 `admin_base_test`，并在 3101 端口启动独立服务。它不会复用 3000 端口的开发服务，也不会重置 `DATABASE_URL` 指向的开发库。
 
 ## 7. Docker 的定位
 

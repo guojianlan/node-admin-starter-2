@@ -279,8 +279,8 @@ curl http://localhost:3000/api/ready
 
 注意：
 
-- 当前 `pnpm e2e` 会执行 `pnpm db:reset`，会清空本地配置数据。
-- 后续需要补一个非破坏性 E2E 或 browser smoke 命令，作为日常验收。
+- `pnpm e2e` 只允许使用 `TEST_DATABASE_URL` 指向的 `*_test` 数据库，并在独立 3101 端口启动服务。
+- 日常生产预检继续使用非破坏性的 `pnpm smoke`；smoke 不执行 migration、seed 或 reset。
 
 ## 10. 架构约束
 

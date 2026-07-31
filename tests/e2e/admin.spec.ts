@@ -52,6 +52,19 @@ async function confirmModal(page: Page) {
     .click();
 }
 
+async function clickFirstTableAction(page: Page, name: string) {
+  const button = page.getByRole("button", { name }).first();
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page
+      .locator(".admin-table-wrapper .ant-table-content, .admin-table-wrapper .ant-table-body")
+      .first()
+      .evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+      });
+  }
+  await button.click();
+}
+
 async function getSearchSelectText(page: Page, label: string) {
   return page.locator(".admin-search-form").evaluate((root, labelText) => {
     const item = Array.from(root.querySelectorAll(".ant-form-item")).find(
@@ -123,21 +136,21 @@ test("system management edit forms preload existing data", async ({ page }) => {
   await login(page);
 
   await gotoAdminPage(page, "/system/user", "用户列表");
-  await page.getByRole("button", { name: "编辑" }).first().click();
+  await clickFirstTableAction(page, "编辑");
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#username")).toHaveValue("admin");
   await expect(page.locator(".ant-modal input#nickname")).toHaveValue("超级管理员");
   await page.keyboard.press("Escape");
 
   await gotoAdminPage(page, "/system/role", "角色管理");
-  await page.getByRole("button", { name: "编辑" }).first().click();
+  await clickFirstTableAction(page, "编辑");
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#name")).not.toHaveValue("");
   await expect(page.locator(".ant-modal input#code")).not.toHaveValue("");
   await page.keyboard.press("Escape");
 
   await gotoAdminPage(page, "/system/dict", "字典管理");
-  await page.getByRole("button", { name: "编辑" }).first().click();
+  await clickFirstTableAction(page, "编辑");
   await expect(page.getByTestId("admin-entity-form")).toBeVisible();
   await expect(page.locator(".ant-modal input#name")).toHaveValue("状态");
   await expect(page.locator(".ant-modal input#code")).toHaveValue("status");
@@ -224,7 +237,7 @@ test("unauthorized user only sees permitted shell and no system menu", async ({
   });
 
   await login(page, username, "123456");
-  await expect(page.getByText("总收入")).toBeVisible();
+  await expect(page.getByText("今日登录成功")).toBeVisible();
   await expect(page.getByText("系统管理")).not.toBeVisible();
 
   await page.goto("/system/user");

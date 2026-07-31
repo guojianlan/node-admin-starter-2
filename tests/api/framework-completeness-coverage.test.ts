@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "@/server/app";
+import { GET as getUploadedFile } from "@/app/uploads/[...path]/route";
 import { nowIso } from "@/server/db";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
@@ -397,6 +398,71 @@ describe("framework completeness coverage", () => {
       success: true,
       status: 302,
     });
+
+    const unmatchedRedirect = await app.request("/api/system/oauth/github/redirect", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    const unmatchedState = String(
+      new URL(String(unmatchedRedirect.headers.get("location"))).searchParams.get("state"),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "https://provider.test/oauth/token") {
+          return new Response(JSON.stringify({ access_token: "oauth-new-user-token" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            id: "github-new-user",
+            login: "oauth-new-user",
+            email: "oauth-new-user@example.com",
+            name: "OAuth New User",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const unmatchedCallback = await app.request(
+      `/api/system/oauth/github/callback?code=new-user&state=${unmatchedState}`,
+    );
+    expect(unmatchedCallback.status).toBe(500);
+    expect(
+      await sqlite.prepare("SELECT id FROM sys_user WHERE email = 'oauth-new-user@example.com'").get(),
+    ).toBeUndefined();
+
+    await sqlite
+      .prepare("UPDATE sys_oauth_provider SET auto_create_user = true WHERE key = 'github'")
+      .run();
+    const createRedirect = await app.request("/api/system/oauth/github/redirect", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    const createState = String(
+      new URL(String(createRedirect.headers.get("location"))).searchParams.get("state"),
+    );
+    const createCallback = await app.request(
+      `/api/system/oauth/github/callback?code=create-user&state=${createState}`,
+    );
+    expect(createCallback.status).toBe(302);
+    const createdUser = (await sqlite
+      .prepare(
+        `SELECT id, is_system AS isSystem
+         FROM sys_user
+         WHERE email = 'oauth-new-user@example.com'`,
+      )
+      .get()) as { id: number; isSystem: boolean } | undefined;
+    expect(createdUser).toMatchObject({ isSystem: false });
+    const privilegedRole = await sqlite
+      .prepare(
+        `SELECT 1
+         FROM sys_user_role ur
+         INNER JOIN sys_role r ON r.id = ur.role_id
+         WHERE ur.user_id = ? AND r.code = 'admin'`,
+      )
+      .get(createdUser?.id ?? 0);
+    expect(privilegedRole).toBeUndefined();
   });
 
   it("manages OAuth provider resources and profile account unbinding without leaking secrets", async () => {
@@ -703,6 +769,76 @@ describe("framework completeness coverage", () => {
     }
   });
 
+  it("rejects module generator conflicts and production writes before source mutation", async () => {
+    const { token } = await login();
+    const conflictRoot = path.join(process.cwd(), "generated/module-drafts/qa-user-conflict");
+    await fs.rm(conflictRoot, { recursive: true, force: true });
+    const manifestPath = path.join(process.cwd(), "src/router/route-manifest.ts");
+    const manifestBefore = await fs.readFile(manifestPath, "utf8");
+    try {
+      const generate = await app.request("/api/system/module/generator/generate", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          force: true,
+          config: {
+            name: "qa-user-conflict",
+            title: "用户冲突模块",
+            domain: "system",
+            permission: "system.qa.userConflict",
+            frontendPath: "/system/user",
+            parentId: 180,
+            parentKey: "system.settingsGroup",
+            seedBaseId: 930,
+            fields: [
+              { name: "name", label: "名称", type: "text", required: true },
+            ],
+          },
+        }),
+      });
+      expect(generate.status).toBe(200);
+
+      const publish = await app.request("/api/system/module/generator/publish", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "qa-user-conflict" }),
+      });
+      const publishBody = await readJson(publish);
+      expect(publish.status).toBe(500);
+      expect(publishBody.msg).toContain("页面路由已存在");
+      expect(await fs.readFile(manifestPath, "utf8")).toBe(manifestBefore);
+
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousAdminPassword = process.env.ADMIN_BASE_ADMIN_PASSWORD;
+      Reflect.set(process.env, "NODE_ENV", "production");
+      process.env.ADMIN_BASE_ADMIN_PASSWORD = "production-test-password";
+      try {
+        const productionGenerate = await app.request("/api/system/module/generator/generate", {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify({
+            force: true,
+            config: {
+              name: "production-write",
+              title: "生产写入",
+              fields: [{ name: "name", label: "名称", type: "text", required: true }],
+            },
+          }),
+        });
+        const productionBody = await readJson(productionGenerate);
+        expect(productionGenerate.status).toBe(500);
+        expect(productionBody.msg).toContain("仅允许在非生产环境");
+      } finally {
+        if (previousNodeEnv == null) Reflect.deleteProperty(process.env, "NODE_ENV");
+        else Reflect.set(process.env, "NODE_ENV", previousNodeEnv);
+        if (previousAdminPassword == null) delete process.env.ADMIN_BASE_ADMIN_PASSWORD;
+        else process.env.ADMIN_BASE_ADMIN_PASSWORD = previousAdminPassword;
+      }
+    } finally {
+      await fs.rm(conflictRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unsafe uploads and validates chunk upload failure paths and cleanup", async () => {
     const { token } = await login();
     await sqlite
@@ -738,6 +874,64 @@ describe("framework completeness coverage", () => {
       body: magicForm,
     });
     expect(magicUpload.status).toBe(500);
+
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'html' WHERE key = 'file.allowed_extensions'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'exe' WHERE key = 'file.denied_extensions'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'isolated-download' WHERE key = 'file.dangerous_file_strategy'")
+      .run();
+    const isolatedForm = new FormData();
+    isolatedForm.append(
+      "file",
+      new File(["<h1>isolated</h1>"], "isolated.html", { type: "text/html" }),
+    );
+    const isolatedUpload = await app.request("/api/system/file/list/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: isolatedForm,
+    });
+    const isolatedBody = await readJson<{ id: number }>(isolatedUpload);
+    expect(isolatedUpload.status).toBe(200);
+    const isolatedRow = (await sqlite
+      .prepare("SELECT path FROM sys_file WHERE id = ?")
+      .get(isolatedBody.data?.id ?? 0)) as { path: string };
+    const isolatedDownload = await getUploadedFile(
+      new Request(`http://localhost/uploads/${isolatedRow.path}`),
+      { params: Promise.resolve({ path: isolatedRow.path.split("/") }) },
+    );
+    expect(isolatedDownload.status).toBe(200);
+    expect(isolatedDownload.headers.get("content-type")).toBe("application/octet-stream");
+    expect(isolatedDownload.headers.get("content-disposition")).toContain("attachment");
+    expect(isolatedDownload.headers.get("x-content-type-options")).toBe("nosniff");
+
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'force-download' WHERE key = 'file.dangerous_file_strategy'")
+      .run();
+    const forceForm = new FormData();
+    forceForm.append(
+      "file",
+      new File(["<h1>forced</h1>"], "forced.html", { type: "text/html" }),
+    );
+    const forceUpload = await app.request("/api/system/file/list/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: forceForm,
+    });
+    const forceBody = await readJson<{ id: number }>(forceUpload);
+    expect(forceUpload.status).toBe(200);
+    const forceRow = (await sqlite
+      .prepare("SELECT path FROM sys_file WHERE id = ?")
+      .get(forceBody.data?.id ?? 0)) as { path: string };
+    const forcedDownload = await getUploadedFile(
+      new Request(`http://localhost/uploads/${forceRow.path}`),
+      { params: Promise.resolve({ path: forceRow.path.split("/") }) },
+    );
+    expect(forcedDownload.headers.get("content-type")).toBe("application/octet-stream");
+    expect(forcedDownload.headers.get("content-disposition")).toContain("attachment");
 
     const init = await app.request("/api/system/file/chunk/init", {
       method: "POST",
@@ -837,6 +1031,16 @@ describe("framework completeness coverage", () => {
       fs.stat(path.join(process.cwd(), "storage", "upload-parts", cancelUploadId)),
     ).rejects.toThrow();
 
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'txt,png' WHERE key = 'file.allowed_extensions'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'svg,html,js' WHERE key = 'file.denied_extensions'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = 'reject' WHERE key = 'file.dangerous_file_strategy'")
+      .run();
+
     const txtForm = new FormData();
     txtForm.append("file", new File(["reference"], "reference.txt", { type: "text/plain" }));
     const txtUpload = await app.request("/api/system/file/list/upload", {
@@ -877,6 +1081,119 @@ describe("framework completeness coverage", () => {
       }),
     });
     expect(removeReference.status).toBe(200);
+  });
+
+  it("requires dedicated permission for force deletion and removes referenced files critically", async () => {
+    const admin = await login();
+    const now = nowIso();
+    const passwordHash = await bcrypt.hash("123456", 10);
+    const roleResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_role
+          (name, code, remark, sort, status, created_at, updated_at)
+         VALUES ('文件删除员', 'file_delete_only', '', 31, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(now, now);
+    const roleId = Number(roleResult.lastInsertRowid);
+    const deleteRuleIds = (
+      (await sqlite
+        .prepare(
+          `SELECT id
+           FROM sys_rule
+           WHERE key IN ('system', 'system.file', 'system.file.query', 'system.file.delete')
+           ORDER BY id ASC`,
+        )
+        .all()) as Array<{ id: number }>
+    ).map((row) => row.id);
+    for (const ruleId of deleteRuleIds) {
+      await sqlite
+        .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+        .run(roleId, ruleId);
+    }
+    const userResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_user
+          (username, password_hash, nickname, sex, dept_id, status, created_at, updated_at)
+         VALUES ('file_delete_only', ?, '文件删除员', 0, 1, 1, ?, ?)
+         RETURNING id`,
+      )
+      .run(passwordHash, now, now);
+    await sqlite
+      .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)")
+      .run(Number(userResult.lastInsertRowid), roleId);
+    const deleteOnly = await login("file_delete_only", "123456");
+
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(["force-delete-reference"], "force-delete-reference.txt", {
+        type: "text/plain",
+      }),
+    );
+    const upload = await app.request("/api/system/file/list/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${admin.token}` },
+      body: form,
+    });
+    const uploadBody = await readJson<{ id: number }>(upload);
+    expect(upload.status).toBe(200);
+    const fileId = Number(uploadBody.data?.id);
+    const fileRow = (await sqlite
+      .prepare(
+        `SELECT f.path, COALESCE(s.root_path, 'storage/uploads') AS "rootPath"
+         FROM sys_file f
+         LEFT JOIN sys_storage s ON s.id = f.storage_id
+         WHERE f.id = ?`,
+      )
+      .get(fileId)) as { path: string; rootPath: string };
+    const storageRoot = path.isAbsolute(fileRow.rootPath)
+      ? fileRow.rootPath
+      : path.join(process.cwd(), fileRow.rootPath);
+    const absolutePath = path.join(storageRoot, fileRow.path);
+
+    try {
+      const reference = await app.request("/api/system/file/reference", {
+        method: "POST",
+        headers: authHeaders(admin.token),
+        body: JSON.stringify({
+          fileId,
+          module: "test.force-delete",
+          resourceType: "article",
+          resourceId: "200",
+          field: "attachment",
+        }),
+      });
+      expect(reference.status).toBe(200);
+
+      const denied = await app.request(`/api/system/file/list/force/${fileId}`, {
+        method: "DELETE",
+        headers: authHeaders(deleteOnly.token),
+      });
+      expect(denied.status).toBe(403);
+      expect(await fs.stat(absolutePath)).toBeTruthy();
+
+      const forced = await app.request(`/api/system/file/list/force/${fileId}`, {
+        method: "DELETE",
+        headers: {
+          ...authHeaders(admin.token),
+          "x-request-id": "force-delete-referenced-file",
+        },
+      });
+      expect(forced.status).toBe(200);
+      expect(await sqlite.prepare("SELECT id FROM sys_file WHERE id = ?").get(fileId)).toBeUndefined();
+      expect(
+        await sqlite.prepare("SELECT id FROM sys_file_reference WHERE file_id = ?").get(fileId),
+      ).toBeUndefined();
+      await expect(fs.stat(absolutePath)).rejects.toThrow();
+      expect(await latestOperation("system.file", "forceDelete")).toMatchObject({
+        requestId: "force-delete-referenced-file",
+        success: true,
+        riskLevel: "critical",
+      });
+    } finally {
+      await fs.rm(absolutePath, { force: true });
+    }
   });
 
   it("enforces password policies, lockouts, force-change reset and token revocation", async () => {
@@ -1001,6 +1318,75 @@ describe("framework completeness coverage", () => {
     expect(dashboard.status).toBe(200);
   });
 
+  it("returns real dashboard metrics and hides unauthorized module summaries", async () => {
+    const admin = await login();
+    const adminSummary = await app.request("/api/system/dashboard/summary", {
+      headers: { authorization: `Bearer ${admin.token}` },
+    });
+    const adminBody = await readJson<{
+      visibility: Record<string, boolean>;
+      metrics: { loginSuccessToday: number; fileCount: number; fileBytes: number };
+      defaultStorage: { name: string };
+      readiness: { status: string };
+    }>(adminSummary);
+    expect(adminSummary.status).toBe(200);
+    expect(adminBody.data?.visibility).toMatchObject({
+      login: true,
+      operationLogs: true,
+      files: true,
+      storage: true,
+      notices: true,
+    });
+    expect(adminBody.data?.metrics.loginSuccessToday).toBeGreaterThanOrEqual(1);
+    expect(adminBody.data?.metrics.fileCount).toBe(3);
+    expect(adminBody.data?.metrics.fileBytes).toBeGreaterThan(0);
+    expect(adminBody.data?.defaultStorage.name).toBe("本地存储");
+    expect(adminBody.data?.readiness.status).toBeTruthy();
+
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_role_rule (role_id, rule_id)
+         VALUES (2, 1), (2, 3)
+         ON CONFLICT DO NOTHING`,
+      )
+      .run();
+    const demo = await login("demo", "123456");
+    const limitedSummary = await app.request("/api/system/dashboard/summary", {
+      headers: { authorization: `Bearer ${demo.token}` },
+    });
+    const limitedBody = await readJson<{
+      visibility: Record<string, boolean>;
+      metrics: Record<string, number>;
+      defaultStorage: unknown;
+      readiness: unknown;
+      recentOperations: unknown[];
+      recentNotices: unknown[];
+    }>(limitedSummary);
+    expect(limitedSummary.status).toBe(200);
+    expect(limitedBody.data?.visibility).toMatchObject({
+      login: false,
+      onlineUsers: false,
+      operationLogs: false,
+      files: false,
+      storage: false,
+      mail: false,
+      notices: false,
+      readiness: false,
+    });
+    expect(limitedBody.data?.metrics).toEqual({
+      loginSuccessToday: 0,
+      loginFailedToday: 0,
+      onlineUsers: 0,
+      operationLogsToday: 0,
+      fileCount: 0,
+      fileBytes: 0,
+    });
+    expect(limitedBody.data?.defaultStorage).toBeNull();
+    expect(limitedBody.data?.readiness).toBeNull();
+    expect(limitedBody.data?.recentOperations).toEqual([]);
+    expect(limitedBody.data?.recentNotices).toEqual([]);
+  });
+
   it("requires captcha after configured failed login attempts", async () => {
     await sqlite
       .prepare("UPDATE sys_config_items SET values = 'false' WHERE key = 'login.captcha_enabled'")
@@ -1032,6 +1418,40 @@ describe("framework completeness coverage", () => {
       }),
     });
     expect(passed.status).toBe(200);
+  });
+
+  it("rate limits failed logins by IP and username without affecting other sources", async () => {
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = '2' WHERE key = 'login.rate_limit_attempts'")
+      .run();
+    await sqlite
+      .prepare("UPDATE sys_config_items SET values = '10' WHERE key = 'login.rate_limit_window_minutes'")
+      .run();
+
+    const failedLogin = (ip: string) =>
+      app.request("/api/system/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": ip,
+        },
+        body: JSON.stringify({ username: "unknown-rate-limit-user", password: "bad-password" }),
+      });
+
+    expect((await failedLogin("203.0.113.10")).status).toBe(500);
+    expect((await failedLogin("203.0.113.10")).status).toBe(500);
+    const blocked = await failedLogin("203.0.113.10");
+    const blockedBody = await readJson(blocked);
+    expect(blocked.status).toBe(500);
+    expect(blockedBody.msg).toBe("请求过于频繁，请稍后再试");
+
+    const differentIp = await failedLogin("203.0.113.11");
+    const differentIpBody = await readJson(differentIp);
+    expect(differentIp.status).toBe(500);
+    expect(differentIpBody.msg).toBe("账号或密码错误");
+    expect(
+      await countLoginRecords("IP 与账号组合登录请求过于频繁"),
+    ).toBe(1);
   });
 
   it("records high-value operations and protects log export and cleanup permissions", async () => {

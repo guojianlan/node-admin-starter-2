@@ -9,7 +9,9 @@ import { authRoutes } from "@/server/routes/auth";
 import { systemRoutes } from "@/server/routes/system";
 import { runReadinessChecks } from "@/server/services/readiness-service";
 
-await runMigrations();
+if (process.env.NODE_ENV !== "test") {
+  await runMigrations();
+}
 
 export const app = new Hono<{ Variables: HonoVariables }>().basePath("/api");
 

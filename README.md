@@ -8,6 +8,8 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 当前技术栈、模块边界和运行架构见 [`docs/admin-base-architecture.md`](docs/admin-base-architecture.md)。
 
+测试资产分为三层：业务场景见 [`docs/admin-base-functional-test-cases.md`](docs/admin-base-functional-test-cases.md)，逐接口成功/失败契约见 [`docs/admin-base-api-test-cases.md`](docs/admin-base-api-test-cases.md)，逐页面数据/交互/视觉验收见 [`docs/admin-base-page-test-cases.md`](docs/admin-base-page-test-cases.md)。`pnpm test:check-cases` 会阻止新增接口或页面时遗漏测试用例。
+
 生产级对齐路线和与 XinAdmin / ContiNew 的差距见 [`docs/admin-base-production-readiness-plan.md`](docs/admin-base-production-readiness-plan.md)。
 
 源码启动、环境变量、数据库初始化和常见问题见 [`docs/admin-base-startup-guide.md`](docs/admin-base-startup-guide.md)。
@@ -27,11 +29,14 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 - 登录日志、在线用户会话、个人中心、安全/登录/token 策略配置。
 - 登录验证码按 `login.captcha_enabled` 动态启用，忘记密码支持邮箱重置链接。
 - 通知公告和用户消息入口，支持发布、撤回、未读计数和已读状态。
-- 文件上传扩展名和 MIME 基础校验，默认拒绝 HTML/JS/SVG 等高风险类型。
+- 文件上传扩展名、MIME、魔数和危险类型策略，支持分片上传、引用保护和安全下载。
+- OAuth、SMS、AI Provider/模型资源配置和密钥脱敏。
+- AI Playground、持久化 AI Chat、Agent/Tool/Run/Step/Approval 运行闭环。
+- Web 模块生成器、路由权限一致性检查和业务模块模板。
 
 后置范围：
 
-- 用户导入/导出、代码生成器、AI、SMS、定时任务、租户、复杂实时消息。
+- 多租户、任务调度中心、字段级权限 UI、实时 WebSocket 消息、完整插件市场和高级 AI 评测/计费。
 
 ## 技术栈
 
@@ -76,14 +81,17 @@ admin / 123456
 pnpm dev                 # 启动 Next + Hono
 pnpm db:migrate          # 执行 PostgreSQL 迁移
 pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置、存储、邮件
-pnpm db:reset            # 危险：清空 PostgreSQL public schema 并重新 seed，仅开发重置使用
+ADMIN_BASE_ALLOW_DB_RESET=true ADMIN_BASE_RESET_DATABASE_NAME=admin_base pnpm db:reset
+                         # 危险：确认目标库名后清空 public schema，仅开发重置使用
 pnpm run doctor          # 环境和基础数据自检；pnpm doctor 是 pnpm 内置命令，不会执行项目脚本
 pnpm admin:doctor        # 同上，提供一个不与 pnpm 内置命令冲突的别名
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
 pnpm lint                # ESLint
 pnpm typecheck           # TypeScript
 pnpm test                # API/Service 单测
-pnpm e2e                 # Playwright E2E
+pnpm test:check-cases    # 检查所有 API 和页面均有测试用例
+pnpm test:docs           # 从机器可读清单重新生成测试文档
+pnpm e2e                 # Playwright E2E，固定使用 *_test 数据库和 3101 端口
 pnpm build               # 生产构建
 ```
 

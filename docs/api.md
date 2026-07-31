@@ -168,18 +168,30 @@ AI providers and models are resource configurations stored in `sys_ai_provider` 
 | POST | `/api/system/ai/playground/chat` | Generate text with the default chat or structured model |
 | POST | `/api/system/ai/playground/chat/stream` | Stream text with SSE events: `meta`, `delta`, `finish`, `error` |
 | GET | `/api/system/ai/chat/runtime-config` | Read sanitized runtime config for AI Chat |
+| GET | `/api/system/ai/chat/options` | List active chat models and Agents available to AI Chat |
 | GET | `/api/system/ai/chat/sessions` | Query current user's AI Chat sessions |
 | POST | `/api/system/ai/chat/sessions` | Create an AI Chat session |
-| PUT | `/api/system/ai/chat/sessions/:id` | Rename current user's AI Chat session |
+| PUT | `/api/system/ai/chat/sessions/:id` | Update title, model, Agent, System Prompt, temperature, and output limit |
 | DELETE | `/api/system/ai/chat/sessions/:id` | Soft-delete current user's AI Chat session |
 | GET | `/api/system/ai/chat/sessions/:id/messages` | List messages in current user's AI Chat session |
-| POST | `/api/system/ai/chat/sessions/:id/messages/stream` | Append a user message, stream assistant text, and persist the completed assistant message |
+| POST | `/api/system/ai/chat/sessions/:id/messages/stream` | Append or resume a turn, stream model/Agent output, and persist status/usage |
+| POST | `/api/system/ai/chat/sessions/:id/messages/:messageId/regenerate` | Supersede and regenerate the latest Assistant message |
+| GET | `/api/system/ai/chat/sessions/:id/export` | Export a conversation as Markdown or JSON |
+| GET | `/api/system/ai/chat/sessions/:id/approvals` | List tool approvals for a chat session |
+| GET/POST | `/api/system/ai/agent` | Query and create Agents |
+| PUT/DELETE | `/api/system/ai/agent/:id` | Update or soft-delete an Agent |
+| GET | `/api/system/ai/agent/options` | List models and tools available to Agent configuration |
+| GET/POST | `/api/system/ai/tool` | Query and create registered tools |
+| PUT/DELETE | `/api/system/ai/tool/:id` | Update or soft-delete a tool |
+| GET | `/api/system/ai/agent/runs` | Query current user's Agent runs |
+| GET | `/api/system/ai/agent/runs/:id/steps` | Inspect persisted model/tool/approval steps |
+| POST | `/api/system/ai/approval/:id/decision` | Approve or deny a pending tool execution |
 
 Supported provider types include OpenAI, Anthropic, Google Gemini, OpenAI-compatible gateways, DeepSeek, Qwen/DashScope, Moonshot/Kimi, Zhipu, SiliconFlow, OpenRouter, Ollama, and custom compatible endpoints.
 
 Runtime calls use the configured default model for `chat` or `structured` and return provider/model metadata without secrets. Playground calls write operation logs under `system.aiPlayground`; AI Chat calls write operation logs under `system.aiChat`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
 
-AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. User messages are persisted before streaming begins; assistant messages are persisted after the stream finishes, with provider/model snapshots, `finishReason`, `usage`, and duration metadata.
+AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. Assistant messages transition through `streaming`, `completed`, `stopped`, or `failed`; stale streaming records are recovered as failed. Context governance reserves output tokens, keeps a recent-message window, and stores a deterministic summary of compacted history. Agent execution persists `sys_ai_agent_run`, `sys_ai_agent_run_step`, and `sys_ai_tool_approval` records. Server-side tools are selected from a fixed handler registry; configuration cannot inject executable code.
 
 ## OAuth
 
@@ -247,6 +259,8 @@ Supported notice scopes are all users, selected users, selected roles, and selec
 | PUT | `/api/system/file/list/move` | Move files |
 | POST | `/api/system/file/list/copy` | Copy files |
 | DELETE | `/api/system/file/list/clean-trash` | Physically clean trash when not referenced |
+| DELETE | `/api/system/file/list/force/:id` | Permanently delete a file and its references; requires `system.file.forceDelete` |
+| POST | `/api/system/file/list/batch-force` | Permanently delete files and their references; requires `system.file.forceDelete` |
 
 Chunk upload APIs:
 

@@ -228,6 +228,8 @@ pnpm smoke
 
 `pnpm db:reset` is only for isolated development or test databases. It refuses:
 
+- any invocation without `ADMIN_BASE_ALLOW_DB_RESET=true`
+- any invocation where `ADMIN_BASE_RESET_DATABASE_NAME` does not exactly match the database parsed from `DATABASE_URL`
 - `NODE_ENV=production`
 - production-like host or database names
 - non-local database hosts unless explicitly allowed

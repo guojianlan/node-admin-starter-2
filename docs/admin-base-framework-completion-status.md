@@ -1,6 +1,6 @@
 # Admin Base Framework Completion Status
 
-Updated: 2026-06-28
+Updated: 2026-07-31
 
 This document records the final handoff status for the Admin Base backend framework completeness work. The target is 95%-100% completion for the current core backend framework mainline. Deferred plugin-scale or business-specific capabilities are listed separately and are not counted as gaps in the core mainline.
 
@@ -13,7 +13,7 @@ This document records the final handoff status for the Admin Base backend framew
 | Phase 2 System settings | 95%-100% | 95%-100% | `/system/settings` is a productized settings center. Storage, mail, and OAuth providers remain independent resource models. |
 | Phase 3 API docs and templates | 95%-100% | 95%-100% | `docs/api.md`, `public/openapi.json`, `docs/business-module-template.md`, and `templates/module-crud` are ready for handoff. |
 | Phase 4 Notice v2 | 95%-100% | 95%-100% | User, role, department scopes, pinned/priority/expiry, read stats, read detail, and message-center workflows are implemented. Scheduled visibility is query-time based. |
-| Phase 5 File safety and large upload | 95% | 95% | Upload policy, MIME/magic checks, dangerous-file handling, chunk upload UI/backend, SHA-256 part validation, and file references are implemented. |
+| Phase 5 File safety and large upload | 95% | 95% | Upload policy, MIME/magic checks, safe direct downloads, chunk upload UI/backend, SHA-256 validation, file references, dedicated force-delete permission, and removable website seed files are implemented. |
 | Phase 6 OAuth lifecycle | 95% | 95% | OAuth provider resource table/API/UI, redirect/callback/state validation, profile bind/unbind, login logs, and operation logs are implemented. |
 | Phase 7 Security policy | 95% | 95% | Password policy, password history, force password change, password expiry, failure lock, captcha escalation, token revocation, and sensitive confirmations are implemented. |
 | Phase 8 Operation log governance | 95% | 95% | Risk level, request tracing, JSON detail viewer, changed-field summaries, CSV export, filtered cleanup, and retention setting are implemented. |
@@ -38,7 +38,7 @@ This document records the final handoff status for the Admin Base backend framew
 
 The production path now has these guardrails:
 
-- CI installs dependencies, runs migration/seed, typecheck, lint, tests, route checks, and build.
+- CI installs dependencies, runs migration/seed, typecheck, lint, tests, API/page test-case completeness checks, route checks, and build.
 - `pnpm smoke` is non-destructive and does not call `db:reset`.
 - `db:reset` refuses production environments and production-like database targets unless explicitly and dangerously confirmed.
 - `/api/ready` remains public for infrastructure readiness.
@@ -54,7 +54,8 @@ The backend framework can now support a long-running business project baseline:
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
 - File uploads enforce safety policy and support large upload sessions.
-- AI Runtime can be configured through providers/models, verified through AI Playground, and used in AI Chat with persisted sessions and message history before deeper Agent integration.
+- AI Runtime can be configured through providers/models and verified through AI Playground. AI Chat now supports persisted message states, context compaction, per-session model/System Prompt, usage/export, regeneration, Agent selection, permission-aware tool calls, persisted Runs/Steps, and human approval records.
+- The admin shell supports visited-page tabs and optional in-memory page retention. `ADMIN_PAGE_PERSISTENCE_MODE` in `src/config/admin-navigation.ts` selects `disabled`, `tabs`, or `tabs-cache` behavior.
 - Dashboard is a system status center rather than demo metrics.
 - New business modules have a repeatable implementation template, route/permission checks, CLI draft generator, and Web draft/publish generator.
 
@@ -66,12 +67,14 @@ These capabilities remain intentionally out of the current core mainline:
 | --- | --- |
 | Multi-tenant architecture | Requires tenant isolation across auth, data scope, storage, and audit; this would change many core contracts. |
 | Task scheduler center | Notice scheduled visibility currently works by query-time filtering; scheduler introduces runtime and retry semantics outside the core baseline. |
-| Complex AI agent orchestration | Provider/model runtime and Playground are in place; multi-step agents, tool approval, quota billing, and evaluation workflows should be designed as a separate product module. |
+| Advanced AI evaluation and quota billing | Agent/Tool/Run/Step/Approval foundations are implemented; automated eval suites, budget enforcement, distributed run recovery, and billing remain a separate product layer. |
 | Full plugin marketplace | Requires packaging, install, trust, version, and permission models that exceed the current admin framework. |
 | Field-level permission UI | Data scope and action permission are complete enough for the baseline; field-level UI can be added later as an extension point. |
 | Realtime WebSocket messages | Message center supports polling/read workflows; realtime delivery can be added after a runtime channel is selected. |
 
 ## Handoff Checklist
+
+功能回归范围、P0/P1 优先级、现有自动化追踪和环境测试要求见 [`docs/admin-base-functional-test-cases.md`](admin-base-functional-test-cases.md)。逐接口契约见 [`docs/admin-base-api-test-cases.md`](admin-base-api-test-cases.md)，逐页面数据、交互和视觉验收见 [`docs/admin-base-page-test-cases.md`](admin-base-page-test-cases.md)。每次新增或修改接口、页面时必须同步更新机器可读测试清单，并通过 `pnpm test:check-cases`。
 
 Before merging or tagging this baseline, run:
 
@@ -79,6 +82,7 @@ Before merging or tagging this baseline, run:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:check-cases
 pnpm admin:check-routes
 pnpm build
 pnpm smoke

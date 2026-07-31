@@ -7,6 +7,7 @@ function assertDbResetAllowed() {
   const nodeEnv = process.env.NODE_ENV || "development";
   const databaseUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
   const explicitAllow = process.env.ADMIN_BASE_ALLOW_DB_RESET === "true";
+  const expectedDatabaseName = process.env.ADMIN_BASE_RESET_DATABASE_NAME?.trim().toLowerCase();
   const destructiveConfirmation =
     process.env.ADMIN_BASE_CONFIRM_PRODUCTION_RESET === "I_KNOW_THIS_WILL_DESTROY_DATA";
   const safeNodeEnv = nodeEnv === "development" || nodeEnv === "test";
@@ -24,25 +25,25 @@ function assertDbResetAllowed() {
   const looksProduction =
     /prod|production/.test(databaseName) || /prod|production/.test(host) || nodeEnv === "production";
 
-  if (!safeNodeEnv && !explicitAllow) {
+  if (!explicitAllow) {
     throw new Error(
-      `Refusing db:reset in NODE_ENV=${nodeEnv}. Set ADMIN_BASE_ALLOW_DB_RESET=true only for an intentional isolated reset.`,
+      `Refusing db:reset without ADMIN_BASE_ALLOW_DB_RESET=true (NODE_ENV=${nodeEnv}, host=${parsed.host}, database=${databaseName}).`,
     );
   }
 
-  if (looksProduction && !explicitAllow) {
+  if (!expectedDatabaseName) {
     throw new Error(
-      `Refusing db:reset because DATABASE_URL looks production-like (NODE_ENV=${nodeEnv}, host=${parsed.host}, database=${databaseName}).`,
+      `Refusing db:reset without ADMIN_BASE_RESET_DATABASE_NAME=${databaseName}. Confirm the parsed target database explicitly.`,
     );
   }
 
-  if (!looksLocal && !explicitAllow) {
+  if (expectedDatabaseName !== databaseName) {
     throw new Error(
-      `Refusing db:reset against non-local database host (NODE_ENV=${nodeEnv}, host=${parsed.host}, database=${databaseName}). Set ADMIN_BASE_ALLOW_DB_RESET=true only for an intentional isolated reset.`,
+      `Refusing db:reset because ADMIN_BASE_RESET_DATABASE_NAME=${expectedDatabaseName} does not match DATABASE_URL database=${databaseName}.`,
     );
   }
 
-  if ((looksProduction || !looksLocal) && !destructiveConfirmation) {
+  if ((!safeNodeEnv || looksProduction || !looksLocal) && !destructiveConfirmation) {
     throw new Error(
       `Refusing db:reset for high-risk target (NODE_ENV=${nodeEnv}, host=${parsed.host}, database=${databaseName}). Set ADMIN_BASE_CONFIRM_PRODUCTION_RESET=I_KNOW_THIS_WILL_DESTROY_DATA only for an intentional isolated reset.`,
     );

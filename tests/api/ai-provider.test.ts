@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "@/server/app";
 import { sqlite } from "@/server/db";
+import { executeAgentTool, type AiToolRow } from "@/server/services/ai-agent-service";
 import { getAiRuntimeConfig } from "@/server/services/ai-provider-service";
 import { resetTestDatabase } from "../helpers/db";
 
@@ -93,11 +94,200 @@ function openAiTextStream(chunks: string[]) {
   });
 }
 
+function openAiToolCallStream(toolName: string, input: Record<string, unknown>) {
+  const body = [
+    `data: ${JSON.stringify({
+      id: "chatcmpl-tool",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "test-chat",
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          tool_calls: [{
+            index: 0,
+            id: "call-approval-1",
+            type: "function",
+            function: { name: toolName, arguments: JSON.stringify(input) },
+          }],
+        },
+        finish_reason: null,
+      }],
+    })}`,
+    `data: ${JSON.stringify({
+      id: "chatcmpl-tool",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "test-chat",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    })}`,
+    "data: [DONE]",
+    "",
+  ].join("\n\n");
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
 describe("AI provider configuration", () => {
   beforeEach(async () => {
     vi.unstubAllGlobals();
     await resetTestDatabase();
   }, 120000);
+
+  it("reports an unconfigured runtime as a stable not-ready state", async () => {
+    const token = await login();
+    for (const path of [
+      "/api/system/ai/chat/runtime-config",
+      "/api/system/ai/playground/runtime-config/chat",
+      "/api/system/ai/runtime-config/chat",
+    ]) {
+      const response = await app.request(path, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = await readJson<{
+        ready: boolean;
+        reason: string;
+        provider: null;
+        model: null;
+      }>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.data).toEqual({
+        ready: false,
+        reason: "AI 模型未配置",
+        provider: null,
+        model: null,
+      });
+    }
+  });
+
+  it("manages the AI Agent and Tool lifecycle", async () => {
+    const token = await login();
+    const operationLogTool: AiToolRow = {
+      id: 1,
+      name: "操作日志摘要",
+      code: "operation-log-summary",
+      description: "读取操作日志统计",
+      handlerKey: "operation_log_summary",
+      inputSchemaJson: null,
+      configJson: null,
+      riskLevel: "medium",
+      approvalRequired: true,
+      status: 1,
+      sort: 1,
+      isSystem: true,
+    };
+    await expect(
+      executeAgentTool(operationLogTool, { hours: 6 }, { userId: 2 }),
+    ).rejects.toThrow("没有操作日志查询权限");
+    await expect(
+      executeAgentTool(operationLogTool, { hours: 6 }, { userId: 1 }),
+    ).resolves.toMatchObject({ hours: 6, rows: expect.any(Array) });
+
+    const limitedStatus = await executeAgentTool(
+      { ...operationLogTool, handlerKey: "system_status", code: "system-status" },
+      {},
+      { userId: 2 },
+    );
+    expect(limitedStatus).toMatchObject({
+      hiddenMetrics: expect.arrayContaining([
+        "activeUsers",
+        "onlineSessions",
+        "todayLogins",
+        "todayOperations",
+      ]),
+    });
+    expect(limitedStatus).not.toHaveProperty("todayOperations");
+
+    const createTool = await app.request("/api/system/ai/tool", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "验收计算器",
+        code: "acceptance-calculator",
+        description: "用于 Agent CRUD 验收的计算器",
+        handlerKey: "calculator",
+        inputSchemaJson: JSON.stringify({ expression: "string" }),
+        riskLevel: "low",
+        approvalRequired: false,
+        status: 1,
+        sort: 20,
+      }),
+    });
+    const createToolBody = await readJson<{ id: number }>(createTool);
+    expect(createTool.status).toBe(200);
+
+    const createAgent = await app.request("/api/system/ai/agent", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "验收 Agent",
+        code: "acceptance-agent",
+        description: "用于 Agent CRUD 验收",
+        instructions: "回答前先确认输入，必要时使用计算器。",
+        modelId: null,
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+        maxSteps: 4,
+        status: 1,
+        sort: 20,
+        toolIds: [createToolBody.data?.id],
+      }),
+    });
+    const createAgentBody = await readJson<{ id: number }>(createAgent);
+    expect(createAgent.status).toBe(200);
+
+    const agents = await readJson<Array<{ id: number; code: string; toolIds: number[] }>>(
+      await app.request("/api/system/ai/agent", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(agents.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: createAgentBody.data?.id,
+          code: "acceptance-agent",
+          toolIds: [createToolBody.data?.id],
+        }),
+      ]),
+    );
+
+    const updateAgent = await app.request(
+      `/api/system/ai/agent/${createAgentBody.data?.id}`,
+      {
+        method: "PUT",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          name: "验收 Agent 更新",
+          code: "acceptance-agent",
+          description: "已更新",
+          instructions: "只输出经过确认的结果。",
+          modelId: null,
+          temperature: 0.2,
+          maxOutputTokens: 1024,
+          maxSteps: 3,
+          status: 0,
+          sort: 21,
+          toolIds: [],
+        }),
+      },
+    );
+    expect(updateAgent.status).toBe(200);
+
+    const removeAgent = await app.request(
+      `/api/system/ai/agent/${createAgentBody.data?.id}`,
+      {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+    expect(removeAgent.status).toBe(200);
+    const removeTool = await app.request(`/api/system/ai/tool/${createToolBody.data?.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(removeTool.status).toBe(200);
+  });
 
   it("manages provider secrets, default protection and connection tests", async () => {
     const token = await login();
@@ -713,32 +903,194 @@ describe("AI provider configuration", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     const messagesBody = await readJson<
-      Array<{ role: string; content: string; finishReason?: string; usageJson?: string }>
+      Array<{ id: number; role: string; content: string; status: string; finishReason?: string; usageJson?: string }>
     >(messages);
     expect(messages.status).toBe(200);
     expect(messagesBody.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ role: "user", content: "你好，回复 OK" }),
-        expect.objectContaining({ role: "assistant", content: "OK", finishReason: "stop" }),
+        expect.objectContaining({ role: "assistant", content: "OK", status: "completed", finishReason: "stop" }),
       ]),
     );
     expect(messagesBody.data?.find((item) => item.role === "assistant")?.usageJson).toBeTruthy();
 
+    const configureSession = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        modelId,
+        agentId: 1,
+        systemPrompt: "只用简短中文回答。",
+        temperature: 0.2,
+        maxOutputTokens: 1536,
+      }),
+    });
+    expect(configureSession.status).toBe(200);
+
+    const agentFetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = readRequestBody(init) as { messages?: Array<{ role: string; content: string }>; tools?: unknown[] };
+      expect(body.messages?.[0]).toMatchObject({
+        role: "system",
+        content: expect.stringContaining("Admin Base 后台工作助手"),
+      });
+      expect(body.messages?.[0]?.content).toContain("只用简短中文回答。");
+      expect(body.tools).toBeTruthy();
+      return openAiTextStream(["Agent OK"]);
+    });
+    vi.stubGlobal("fetch", agentFetchMock);
+    const agentStream = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages/stream`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ content: "使用 Agent 回答" }),
+    });
+    expect(agentStream.status).toBe(200);
+    expect(await agentStream.text()).toContain("Agent OK");
+    const runs = await readJson<Array<{ status: string; totalSteps: number }>>(
+      await app.request(`/api/system/ai/agent/runs?sessionId=${sessionId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(runs.data?.[0]).toMatchObject({ status: "completed" });
+    const latestRun = await readJson<{
+      id: number;
+      status: string;
+      agentName: string;
+      modelIdentifier: string;
+      steps: Array<{ stepType: string; status: string }>;
+    }>(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/run/latest`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(latestRun.data).toMatchObject({
+      status: "completed",
+      agentName: "通用工作助手",
+      modelIdentifier: "chat-model",
+    });
+    expect(latestRun.data?.steps).toEqual(
+      expect.arrayContaining([expect.objectContaining({ stepType: "model", status: "completed" })]),
+    );
+
+    const agentMessages = await readJson<Array<{ id: number; role: string }>>(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const latestAssistantId = Number(
+      [...(agentMessages.data ?? [])].reverse().find((item) => item.role === "assistant")?.id,
+    );
+
+    const regenerateMock = vi.fn(async () => openAiTextStream(["重新生成"]));
+    vi.stubGlobal("fetch", regenerateMock);
+    const regenerate = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/${latestAssistantId}/regenerate`,
+      { method: "POST", headers: authHeaders(token), body: JSON.stringify({}) },
+    );
+    expect(regenerate.status).toBe(200);
+    expect(await regenerate.text()).toContain("重新生成");
+
+    const approvalFetchMock = vi.fn(async () =>
+      openAiToolCallStream("operation-log-summary", { hours: 6 }),
+    );
+    vi.stubGlobal("fetch", approvalFetchMock);
+    const approvalStream = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages/stream`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ content: "查看最近操作日志摘要" }),
+    });
+    const approvalStreamText = await approvalStream.text();
+    expect(approvalStreamText).toContain("event: approval");
+    const approvals = await readJson<Array<{
+      id: number;
+      status: string;
+      toolName: string;
+      toolDisplayName: string;
+      toolDescription: string;
+      riskLevel: string;
+    }>>(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/approvals`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(approvals.data?.[0]).toMatchObject({
+      status: "pending",
+      toolName: "operation-log-summary",
+      toolDisplayName: "操作日志摘要",
+      riskLevel: "medium",
+    });
+    expect(approvals.data?.[0]?.toolDescription).toContain("操作日志");
+    const approve = await app.request(`/api/system/ai/approval/${approvals.data?.[0]?.id}/decision`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ approved: true }),
+    });
+    const approveBody = await readJson<{ status: string; output: unknown }>(approve);
+    expect(approve.status).toBe(200);
+    expect(approveBody.data).toMatchObject({
+      status: "executed",
+      output: expect.objectContaining({ hours: 6, rows: expect.any(Array) }),
+    });
+    const duplicateApprove = await app.request(
+      `/api/system/ai/approval/${approvals.data?.[0]?.id}/decision`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ approved: true }),
+      },
+    );
+    expect(duplicateApprove.status).toBe(500);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => openAiToolCallStream("operation-log-summary", { hours: 12 })),
+    );
+    const denyStream = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ content: "再次请求操作日志摘要" }),
+      },
+    );
+    expect(await denyStream.text()).toContain("event: approval");
+    const pendingApprovals = await readJson<Array<{ id: number; status: string }>>(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/approvals`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const pendingApproval = pendingApprovals.data?.find((item) => item.status === "pending");
+    const deny = await app.request(`/api/system/ai/approval/${pendingApproval?.id}/decision`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ approved: false, reason: "本次不允许读取审计摘要" }),
+    });
+    const denyBody = await readJson<{ status: string }>(deny);
+    expect(deny.status).toBe(200);
+    expect(denyBody.data?.status).toBe("denied");
+
+    const exported = await app.request(`/api/system/ai/chat/sessions/${sessionId}/export?format=markdown`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-disposition")).toContain("ai-chat");
+    expect(await exported.text()).toContain("# 测试聊天");
+
     const sessions = await app.request("/api/system/ai/chat/sessions", {
       headers: { authorization: `Bearer ${token}` },
     });
-    const sessionsBody = await readJson<Page<{ id: number; messageCount: number; modelIdentifier: string }>>(
+    const sessionsBody = await readJson<Page<{ id: number; messageCount: number; modelIdentifier: string; agentName?: string }>>(
       sessions,
     );
     expect(sessionsBody.data?.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: sessionId,
-          messageCount: 2,
           modelIdentifier: "chat-model",
+          agentName: "通用工作助手",
         }),
       ]),
     );
+    expect(sessionsBody.data?.data.find((item) => item.id === sessionId)?.messageCount).toBeGreaterThanOrEqual(4);
 
     const rename = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
       method: "PUT",

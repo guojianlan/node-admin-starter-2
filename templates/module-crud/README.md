@@ -58,6 +58,7 @@ Minimum files to add for a production module:
 5. `route-manifest.ts.template` -> frontend route manifest.
 6. `page.tsx.template` -> React feature page.
 7. `test.ts.template` -> API and permission tests.
+8. Register generated operations and pages in `tests/coverage/api-test-cases.ts` and `tests/coverage/page-test-cases.ts`.
 
 Run:
 
@@ -65,6 +66,7 @@ Run:
 corepack pnpm typecheck
 corepack pnpm lint
 corepack pnpm test
+corepack pnpm test:check-cases
 corepack pnpm admin:check-routes
 corepack pnpm build
 ```

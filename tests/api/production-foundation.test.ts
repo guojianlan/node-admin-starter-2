@@ -141,6 +141,7 @@ describe("production foundation", () => {
             NODE_ENV: "development",
             DATABASE_URL: "postgres://admin_base:admin_base@prod-db.internal:5432/admin_base",
             ADMIN_BASE_ALLOW_DB_RESET: "true",
+            ADMIN_BASE_RESET_DATABASE_NAME: "admin_base",
             ADMIN_BASE_SECRET_KEY: "test-admin-base-secret",
             ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
           },
@@ -158,11 +159,45 @@ describe("production foundation", () => {
             NODE_ENV: "production",
             DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base_production",
             ADMIN_BASE_ALLOW_DB_RESET: "true",
+            ADMIN_BASE_RESET_DATABASE_NAME: "admin_base_production",
             ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
             ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
           },
         }),
       /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,
+    );
+  });
+
+  it("requires explicit allow and exact database-name confirmation for every reset", () => {
+    const baseEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      NODE_ENV: "test",
+      DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base_test",
+      ADMIN_BASE_SECRET_KEY: "test-admin-base-secret",
+    };
+
+    expectCommandFailureMessage(
+      () =>
+        execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: baseEnv,
+        }),
+      /ADMIN_BASE_ALLOW_DB_RESET=true/,
+    );
+
+    expectCommandFailureMessage(
+      () =>
+        execFileSync("./node_modules/.bin/tsx", ["scripts/db-reset.ts"], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...baseEnv,
+            ADMIN_BASE_ALLOW_DB_RESET: "true",
+            ADMIN_BASE_RESET_DATABASE_NAME: "admin_base",
+          },
+        }),
+      /does not match DATABASE_URL database=admin_base_test/,
     );
   });
 });

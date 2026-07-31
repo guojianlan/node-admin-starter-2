@@ -43,8 +43,15 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm test:check-cases
       - run: pnpm admin:check-routes
       - run: pnpm build
+      - name: Create isolated browser test database
+        env:
+          PGPASSWORD: admin_base
+        run: createdb -h localhost -U admin_base admin_base_test
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
       - name: Smoke
         run: |
           NODE_ENV=production pnpm start > /tmp/admin-base-next.log 2>&1 &

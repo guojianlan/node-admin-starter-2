@@ -140,6 +140,81 @@ describe("framework completeness modules", () => {
     expect(newLogin.response.status).toBe(200);
   });
 
+  it("uploads an avatar and returns the updated profile avatar fields", async () => {
+    const { token } = await login();
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(
+        [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+        "avatar.png",
+        { type: "image/png" },
+      ),
+    );
+
+    const upload = await app.request("/api/system/profile/avatar", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const uploadBody = await readJson<{ id: number; url: string }>(upload);
+
+    expect(upload.status).toBe(200);
+    expect(uploadBody.data).toMatchObject({
+      id: expect.any(Number),
+      url: expect.stringMatching(/^\/uploads\//),
+    });
+
+    const profile = await app.request("/api/system/profile", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const profileBody = await readJson<{ avatarId: number; avatarUrl: string }>(profile);
+
+    expect(profile.status).toBe(200);
+    expect(profileBody.data).toMatchObject({
+      avatarId: uploadBody.data?.id,
+      avatarUrl: uploadBody.data?.url,
+    });
+  });
+
+  it("rejects non-image and forged avatar uploads without changing the current avatar", async () => {
+    const { token } = await login();
+    const before = await app.request("/api/system/profile", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const beforeBody = await readJson<{ avatarId: number | null; avatarUrl: string | null }>(before);
+
+    const textForm = new FormData();
+    textForm.append("file", new File(["plain text"], "avatar.txt", { type: "text/plain" }));
+    const textUpload = await app.request("/api/system/profile/avatar", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: textForm,
+    });
+    expect(textUpload.status).toBe(500);
+
+    const forgedForm = new FormData();
+    forgedForm.append(
+      "file",
+      new File(["not a png"], "avatar.png", { type: "image/png" }),
+    );
+    const forgedUpload = await app.request("/api/system/profile/avatar", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: forgedForm,
+    });
+    expect(forgedUpload.status).toBe(500);
+
+    const after = await app.request("/api/system/profile", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const afterBody = await readJson<{ avatarId: number | null; avatarUrl: string | null }>(after);
+    expect(afterBody.data).toMatchObject({
+      avatarId: beforeBody.data?.avatarId ?? null,
+      avatarUrl: beforeBody.data?.avatarUrl ?? null,
+    });
+  });
+
   it("publishes notices and supports unread/read state", async () => {
     const { token } = await login();
     const futurePublishedAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { app } from "@/server/app";
 import { nowIso } from "@/server/db";
 import { resetTestDatabase, sqlite } from "../helpers/db";
@@ -102,6 +104,49 @@ describe("admin base completion scope", () => {
     expect(customBody.data?.data.map((item) => item.username)).not.toContain("demo");
   });
 
+  it("copies role permissions and data scope while enforcing a unique code", async () => {
+    const token = await login();
+    const copy = await app.request("/api/system/role/copy/2", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "运营人员副本",
+        code: "operator_copy",
+        copyRules: true,
+        copyDataScope: true,
+      }),
+    });
+    expect(copy.status).toBe(200);
+
+    const source = (await sqlite
+      .prepare("SELECT data_scope AS dataScope FROM sys_role WHERE id = 2")
+      .get()) as { dataScope: string };
+    const target = (await sqlite
+      .prepare("SELECT id, data_scope AS dataScope FROM sys_role WHERE code = 'operator_copy'")
+      .get()) as { id: number; dataScope: string };
+    expect(target.dataScope).toBe(source.dataScope);
+
+    const sourceRules = (await sqlite
+      .prepare("SELECT rule_id AS ruleId FROM sys_role_rule WHERE role_id = 2 ORDER BY rule_id")
+      .all()) as Array<{ ruleId: number }>;
+    const targetRules = (await sqlite
+      .prepare("SELECT rule_id AS ruleId FROM sys_role_rule WHERE role_id = ? ORDER BY rule_id")
+      .all(target.id)) as Array<{ ruleId: number }>;
+    expect(targetRules).toEqual(sourceRules);
+
+    const duplicate = await app.request("/api/system/role/copy/2", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "重复副本",
+        code: "operator_copy",
+        copyRules: false,
+        copyDataScope: false,
+      }),
+    });
+    expect(duplicate.status).toBe(500);
+  });
+
   it("manages local storage and records upload metadata", async () => {
     const token = await login();
     const create = await app.request("/api/system/storage", {
@@ -150,6 +195,43 @@ describe("admin base completion scope", () => {
       .get(uploadBody.data?.id ?? 0)) as { storageId: number; type: string; sha256: string };
     expect(file).toMatchObject({ storageId: storage.id, type: "document" });
     expect(file.sha256).toHaveLength(64);
+  });
+
+  it("seeds removable website files in local storage", async () => {
+    const rows = (await sqlite
+      .prepare(
+        `SELECT id, path, metadata_json AS metadataJson
+         FROM sys_file
+         WHERE metadata_json LIKE '%"source":"admin-base-default-seed"%'
+         ORDER BY id ASC`,
+      )
+      .all()) as Array<{ id: number; path: string; metadataJson: string }>;
+
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => JSON.parse(row.metadataJson).seedKey)).toEqual([
+      "website.login-background-light",
+      "website.login-background-dark",
+      "website.robots",
+    ]);
+    await expect(
+      fs.access(path.join(process.cwd(), "storage", "uploads", rows[0]!.path)),
+    ).resolves.toBeUndefined();
+
+    const token = await login();
+    const remove = await app.request(`/api/system/file/list/${rows[0]!.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(remove.status).toBe(200);
+
+    const forceRemove = await app.request(`/api/system/file/list/force/${rows[0]!.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(forceRemove.status).toBe(200);
+    await expect(
+      fs.access(path.join(process.cwd(), "storage", "uploads", rows[0]!.path)),
+    ).rejects.toThrow();
   });
 
   it("encrypts mail passwords and keeps them out of API responses", async () => {

@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "@/server/app";
 import { nowIso } from "@/server/db";
+import { sanitizeOperationLogDetails } from "@/server/services/operation-log-service";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -172,6 +173,53 @@ describe("operation log", () => {
     });
     expect(JSON.parse(String(log?.detailsJson))).toMatchObject({
       fields: expect.arrayContaining(["name", "code", "status", "sort"]),
+    });
+
+    const row = (await sqlite
+      .prepare("SELECT id FROM sys_dict WHERE code = 'operation_log_dict'")
+      .get()) as { id: number };
+    const update = await app.request(`/api/system/dict/list/${row.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "操作日志字典-更新",
+        code: "operation_log_dict",
+        status: 1,
+        sort: 30,
+      }),
+    });
+    expect(update.status).toBe(200);
+    const updateLog = await latestOperationLog("system.dict", "update");
+    expect(JSON.parse(String(updateLog?.detailsJson))).toMatchObject({
+      changedFields: [
+        {
+          field: "name",
+          before: "操作日志字典",
+          after: "操作日志字典-更新",
+        },
+      ],
+    });
+  });
+
+  it("redacts sensitive operation details recursively", () => {
+    expect(
+      sanitizeOperationLogDetails({
+        password: "plain-password",
+        nested: {
+          clientSecret: "client-secret",
+          accessKey: "access-key",
+          tokenValue: "token-value",
+          safe: "visible",
+        },
+      }),
+    ).toEqual({
+      password: "[REDACTED]",
+      nested: {
+        clientSecret: "[REDACTED]",
+        accessKey: "[REDACTED]",
+        tokenValue: "[REDACTED]",
+        safe: "visible",
+      },
     });
   });
 
