@@ -17,7 +17,17 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Button, Checkbox, Divider, Dropdown, Input, Popover, Space, Table, Tooltip } from "antd";
+import {
+  Button,
+  Checkbox,
+  Divider,
+  Dropdown,
+  Input,
+  Popover,
+  Space,
+  Table,
+  Tooltip,
+} from "antd";
 import type { TableProps } from "antd";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import type { SorterResult, TableCurrentDataSource } from "antd/es/table/interface";
@@ -54,6 +64,8 @@ type AdminDataTableProps<T extends object> = {
   toolbarTitle?: React.ReactNode;
   urlStatePrefix?: string;
   pagination?: false;
+  tableMode?: "standard" | "bounded" | "embedded";
+  actionColumnWidth?: number;
   tableProps?: Omit<
     TableProps<T>,
     "columns" | "dataSource" | "loading" | "onChange" | "pagination" | "rowKey"
@@ -122,6 +134,8 @@ export function AdminDataTable<T extends object>({
   toolbarTitle,
   urlStatePrefix,
   pagination,
+  tableMode = "standard",
+  actionColumnWidth = 148,
   tableProps,
   canUpdate,
   canDelete,
@@ -243,8 +257,10 @@ export function AdminDataTable<T extends object>({
     visibleColumns.push({
       title: "操作栏",
       key: "__operate",
-      width: 132,
+      width: actionColumnWidth,
+      fixed: "right",
       align: "center",
+      className: "admin-table-action-cell",
       render: (_, record) => (
         <Space size={4}>
           {operateRender?.(record, reload)}
@@ -285,6 +301,7 @@ export function AdminDataTable<T extends object>({
     return visibleColumns;
   }, [
     accessName,
+    actionColumnWidth,
     activeColumnKeys,
     columns,
     canDelete,
@@ -356,6 +373,19 @@ export function AdminDataTable<T extends object>({
     ],
     selectedKeys: [density ?? "large"],
   };
+
+  const tableScroll = useMemo<TableProps<T>["scroll"]>(() => {
+    const configuredScroll = tableProps?.scroll;
+    if (tableMode !== "bounded") {
+      return configuredScroll ?? { x: "max-content" };
+    }
+
+    return {
+      ...configuredScroll,
+      x: configuredScroll?.x ?? "max-content",
+      y: configuredScroll?.y ?? "min(560px, calc(100dvh - 360px))",
+    };
+  }, [tableMode, tableProps?.scroll]);
 
   const columnSettingContent = (
     <div className="admin-column-settings">
@@ -452,9 +482,15 @@ export function AdminDataTable<T extends object>({
           </div>
         ) : null}
       </div>
-      <div className="admin-table-wrapper">
+      <div
+        className={[
+          "admin-table-wrapper",
+          `admin-table-wrapper--${tableMode}`,
+        ].join(" ")}
+      >
         <Table<T>
           {...tableProps}
+          className={["admin-data-table", tableProps?.className].filter(Boolean).join(" ")}
           rowKey={rowKey}
           columns={tableColumns}
           dataSource={data}
@@ -462,7 +498,7 @@ export function AdminDataTable<T extends object>({
           bordered={tableProps?.bordered ?? bordered}
           size={tableProps?.size ?? density}
           locale={{ emptyText: <EmptyState /> }}
-          scroll={tableProps?.scroll ?? { x: "max-content" }}
+          scroll={tableScroll}
           pagination={
             pagination === false
               ? false
@@ -471,7 +507,8 @@ export function AdminDataTable<T extends object>({
                   pageSize: state.pageSize,
                   total,
                   size: "small",
-                  showQuickJumper: true,
+                  placement: ["bottomEnd"],
+                  showQuickJumper: total > state.pageSize * 2,
                   showSizeChanger: true,
                   showTotal: (count) => `共 ${count} 条`,
                 }

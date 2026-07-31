@@ -214,13 +214,13 @@ function TextPreview({ url }: { url: string }) {
     };
   }, [url]);
 
-  if (error) return <Alert type="error" showIcon message={error} />;
+  if (error) return <Alert type="error" showIcon title={error} />;
   if (!result) return <LoadingPreview />;
 
   return (
     <div className="system-text-preview">
       {result.truncated ? (
-        <Alert type="warning" showIcon message="文件较大，仅展示前 250000 个字符。" />
+        <Alert type="warning" showIcon title="文件较大，仅展示前 250000 个字符。" />
       ) : null}
       <pre>{result.text || "空文件"}</pre>
     </div>
@@ -273,7 +273,7 @@ function DocxPreview({ url }: { url: string }) {
   return (
     <div className="system-docx-preview">
       {status === "loading" ? <LoadingPreview /> : null}
-      {status === "error" ? <Alert type="error" showIcon message={error} /> : null}
+      {status === "error" ? <Alert type="error" showIcon title={error} /> : null}
       <div ref={containerRef} className={status === "ready" ? "" : "system-preview-hidden"} />
     </div>
   );
@@ -353,7 +353,7 @@ function SheetPreview({ url }: { url: string }) {
     };
   }, [url]);
 
-  if (error) return <Alert type="error" showIcon message={error} />;
+  if (error) return <Alert type="error" showIcon title={error} />;
   if (!result) return <LoadingPreview />;
   if (!result.rows.length) return <Empty description="表格为空" />;
 

@@ -27,6 +27,7 @@ import {
   Image,
   Input,
   Modal,
+  Popconfirm,
   Progress,
   Row,
   Space,
@@ -413,6 +414,7 @@ export function FilePage() {
       hideInForm: true,
       width: 260,
       ellipsis: true,
+      fixed: "left",
       render: (value, record) => (
         <Tooltip title={getFilePreviewKind(record) === "audio" ? "点击播放" : "点击预览"}>
           <a onClick={() => openPreview(record)}>{String(value)}</a>
@@ -511,7 +513,13 @@ export function FilePage() {
   ];
 
   const trashColumns: TableProps<FileRecord>["columns"] = [
-    { title: "文件名", dataIndex: "originalName", ellipsis: true, width: 180 },
+    {
+      title: "文件名",
+      dataIndex: "originalName",
+      ellipsis: true,
+      width: 180,
+      fixed: "left",
+    },
     {
       title: "文件大小",
       dataIndex: "size",
@@ -531,6 +539,7 @@ export function FilePage() {
       title: "操作",
       key: "operate",
       width: 110,
+      fixed: "right",
       align: "center",
       render: (_, record) => (
         <Space>
@@ -541,15 +550,26 @@ export function FilePage() {
               onClick={() => void restoreFile(record.id)}
             />
           </Tooltip>
-          <Tooltip title="彻底删除">
-            <Button
-              danger
-              type="primary"
-              size="small"
-              icon={<DeleteOutlined />}
-              onClick={() => void forceDeleteFile(record.id)}
-            />
-          </Tooltip>
+          <AuthButton auth="system.file.forceDelete">
+            <Popconfirm
+              title="彻底删除文件"
+              description="文件和业务引用将被永久删除，且无法恢复。"
+              okText="确认删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => forceDeleteFile(record.id)}
+            >
+              <Tooltip title="彻底删除">
+                <Button
+                  danger
+                  type="primary"
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  loading={forceDeleteMutation.isPending}
+                />
+              </Tooltip>
+            </Popconfirm>
+          </AuthButton>
         </Space>
       ),
     },
@@ -828,6 +848,8 @@ export function FilePage() {
             showToolbarSettings={false}
             createTitle="上传文件"
             updateTitle="编辑文件"
+            tableMode="embedded"
+            actionColumnWidth={76}
             tableProps={{
               size: "small",
               bordered: true,
@@ -1022,17 +1044,26 @@ export function FilePage() {
         }}
       >
         <Space className="system-trash-toolbar">
-          <Button
-            danger
-            type="primary"
-            icon={<DeleteOutlined />}
-            loading={cleanTrashMutation.isPending}
-            onClick={() => void cleanTrash()}
+          <Popconfirm
+            title="清空回收站"
+            description="回收站中的文件将被永久删除，且无法恢复。"
+            okText="确认清空"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={cleanTrash}
           >
-            清空回收站
-          </Button>
+            <Button
+              danger
+              type="primary"
+              icon={<DeleteOutlined />}
+              loading={cleanTrashMutation.isPending}
+            >
+              清空回收站
+            </Button>
+          </Popconfirm>
         </Space>
         <Table<FileRecord>
+          className="admin-table-surface"
           rowKey="id"
           size="small"
           bordered
@@ -1046,7 +1077,7 @@ export function FilePage() {
             showTotal: (total) => `共 ${total} 条`,
             onChange: (page, pageSize) => void loadTrash(page, pageSize),
           }}
-          scroll={{ x: 760 }}
+          scroll={{ x: 760, y: 480 }}
         />
       </Drawer>
       <Drawer title="文件详情" open={detailOpen} onClose={() => setDetailOpen(false)}>

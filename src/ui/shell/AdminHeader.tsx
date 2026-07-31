@@ -17,6 +17,7 @@ import {
   SettingOutlined,
   SunOutlined,
   TranslationOutlined,
+  UndoOutlined,
   UserOutlined,
   VerticalLeftOutlined,
 } from "@ant-design/icons";
@@ -24,16 +25,13 @@ import {
   Avatar,
   Badge,
   Button,
-  Col,
   Divider,
   Drawer,
   Dropdown,
   Empty,
   Input,
-  List,
   Modal,
   Popover,
-  Row,
   Segmented,
   Space,
   Tag,
@@ -43,6 +41,7 @@ import {
 import type { MenuProps } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { RichTextContent } from "@/components/rich-text/RichTextContent";
 import { request } from "@/lib/request";
@@ -54,6 +53,8 @@ import { BreadcrumbBar } from "./BreadcrumbBar";
 
 type AdminHeaderProps = {
   collapsed: boolean;
+  isMobile?: boolean;
+  navigation?: ReactNode;
   onToggleCollapsed: () => void;
 };
 
@@ -66,51 +67,54 @@ type MyNotice = {
   publishedAt?: string | null;
 };
 
+type HeaderProfile = {
+  avatarUrl?: string | null;
+};
+
 const layoutCards = [
-  { key: "side", title: "侧边菜单" },
-  { key: "top", title: "顶部菜单" },
-  { key: "mix", title: "混合菜单" },
-  { key: "columns", title: "分栏菜单" },
-] satisfies Array<{ key: AdminLayoutMode; title: string }>;
+  { key: "side" },
+  { key: "top" },
+  { key: "mix" },
+  { key: "columns" },
+] satisfies Array<{ key: AdminLayoutMode }>;
 
-function LayoutPreview({ type }: { type: string }) {
-  if (type === "top") {
-    return (
-      <>
-        <div style={{ height: 24, borderRadius: 4, background: "var(--admin-primary)" }} />
-        <div style={{ height: 64, marginTop: 6, borderRadius: 4, background: "var(--admin-primary-bg)" }} />
-      </>
-    );
-  }
-
-  if (type === "columns") {
-    return (
-      <div style={{ display: "flex", height: 96, gap: 6 }}>
-        <div style={{ width: 12, borderRadius: 4, background: "var(--admin-primary)" }} />
-        <div style={{ width: 24, borderRadius: 4, background: "#69b1ff" }} />
-        <div style={{ flex: 1, borderRadius: 4, background: "var(--admin-primary-bg)" }} />
-      </div>
-    );
-  }
-
+function LayoutPreview({
+  type,
+  variant = "compact",
+}: {
+  type: AdminLayoutMode;
+  variant?: "compact" | "live";
+}) {
   return (
-    <>
-      <div
-        style={{
-          height: 24,
-          borderRadius: 4,
-          background: type === "mix" ? "var(--admin-primary)" : "#91caff",
-        }}
-      />
-      <div style={{ display: "flex", height: 64, gap: 6, marginTop: 6 }}>
-        <div style={{ width: 24, borderRadius: 4, background: "var(--admin-primary)" }} />
-        <div style={{ flex: 1, borderRadius: 4, background: "var(--admin-primary-bg)" }} />
-      </div>
-    </>
+    <div
+      className={`xin-layout-preview xin-layout-preview-${type} xin-layout-preview-${variant}`}
+      aria-hidden="true"
+    >
+      <span className="xin-layout-preview-header" />
+      <span className="xin-layout-preview-primary" />
+      <span className="xin-layout-preview-secondary" />
+      <span className="xin-layout-preview-content">
+        <span className="xin-layout-preview-summary">
+          <span className="xin-layout-preview-summary-copy" />
+          <span className="xin-layout-preview-summary-action" />
+        </span>
+        <span className="xin-layout-preview-table">
+          <span className="xin-layout-preview-table-head" />
+          <span className="xin-layout-preview-table-row" />
+          <span className="xin-layout-preview-table-row" />
+          <span className="xin-layout-preview-table-row" />
+        </span>
+      </span>
+    </div>
   );
 }
 
-export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) {
+export function AdminHeader({
+  collapsed,
+  isMobile = false,
+  navigation: headerNavigation,
+  onToggleCollapsed,
+}: AdminHeaderProps) {
   const navigation = useNavigationAdapter();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
@@ -124,7 +128,12 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
     t,
     themeMode,
   } = useAdminPreferences();
+  const canCollapse = isMobile || layoutMode !== "top";
+  const compactBrand =
+    !isMobile && (layoutMode === "columns" || (layoutMode !== "top" && collapsed));
   const queryClient = useQueryClient();
+  const userDisplayName = user?.nickname || user?.username || "超级管理员";
+  const userAvatarFallback = userDisplayName.trim().slice(0, 1).toUpperCase();
   const [fullscreen, setFullscreen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -132,6 +141,12 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
   const [noticeListOpen, setNoticeListOpen] = useState(false);
   const [noticeFilter, setNoticeFilter] = useState<"all" | "unread" | "read">("all");
   const [selectedNotice, setSelectedNotice] = useState<MyNotice | null>(null);
+  const profileQuery = useQuery({
+    queryKey: ["profile"],
+    queryFn: () => request<HeaderProfile>("/api/system/profile", { silent: true }),
+    enabled: Boolean(user),
+    staleTime: 5 * 60_000,
+  });
   const unreadQuery = useQuery({
     queryKey: ["notice", "unread-count"],
     queryFn: () => request<{ total: number }>("/api/system/notice/my/unread-count", { silent: true }),
@@ -209,58 +224,59 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
   });
 
   const renderNoticeList = (limit?: number) => (
-    <List<MyNotice>
+    <div
+      className="admin-notice-list"
+      aria-busy={noticeQuery.isFetching}
       style={{ width: limit ? 320 : "100%" }}
-      size="small"
-      loading={noticeQuery.isFetching}
-      dataSource={limit ? filteredNotices.slice(0, limit) : filteredNotices}
-      locale={{ emptyText: t("noNotice") }}
-      renderItem={(item) => (
-        <List.Item
-          style={{ cursor: "pointer", paddingInline: 4 }}
+      role="list"
+    >
+      {(limit ? filteredNotices.slice(0, limit) : filteredNotices).map((item) => (
+        <button
+          className="admin-notice-list-item"
+          key={item.id}
+          type="button"
           onClick={() => openNoticeDetail(item)}
         >
-          <List.Item.Meta
-            title={
-              <Space size={6}>
-                {!item.readAt ? <Badge status="processing" /> : null}
-                <Typography.Text style={{ maxWidth: limit ? 220 : 420 }} ellipsis>
-                  {item.title}
-                </Typography.Text>
-              </Space>
-            }
-            description={
-              <Typography.Paragraph
-                type="secondary"
-                ellipsis={{ rows: 2 }}
-                style={{ marginBottom: 0 }}
-              >
-                {richTextToPlainText(item.content) || "图片内容"}
-              </Typography.Paragraph>
-            }
-          />
-        </List.Item>
-      )}
-    />
+          <Space size={6}>
+            {!item.readAt ? <Badge status="processing" /> : null}
+            <Typography.Text style={{ maxWidth: limit ? 220 : 420 }} ellipsis>
+              {item.title}
+            </Typography.Text>
+          </Space>
+          <Typography.Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ marginBottom: 0 }}>
+            {richTextToPlainText(item.content) || "图片内容"}
+          </Typography.Paragraph>
+        </button>
+      ))}
+      {!filteredNotices.length ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("noNotice")} />
+      ) : null}
+    </div>
   );
 
   return (
     <>
       <div className="xin-header">
-        <div className={collapsed ? "xin-brand xin-brand-collapsed" : "xin-brand"}>
+        <div className={compactBrand ? "xin-brand xin-brand-collapsed" : "xin-brand"}>
           <span className="xin-brand-logo" aria-label="Admin Base" />
-          {!collapsed ? <span className="xin-brand-title">Admin Base</span> : null}
+          {!compactBrand ? <span className="xin-brand-title">Admin Base</span> : null}
         </div>
         <div className="xin-header-main">
           <div className="xin-header-left">
-            <Button
-              className="xin-header-icon"
-              type="text"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={onToggleCollapsed}
-              aria-label="切换菜单"
-            />
-            <BreadcrumbBar />
+            {canCollapse ? (
+              <Button
+                className="xin-header-icon"
+                type="text"
+                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={onToggleCollapsed}
+                aria-label="切换菜单"
+              />
+            ) : null}
+            {headerNavigation ? (
+              <div className="xin-header-navigation">{headerNavigation}</div>
+            ) : (
+              <BreadcrumbBar />
+            )}
           </div>
           <div className="xin-header-right">
             <Tooltip title={t("home")}>
@@ -334,7 +350,7 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
                 </Space>
               }
               content={
-                <Space direction="vertical" size={10} style={{ width: 320 }}>
+                <Space orientation="vertical" size={10} style={{ width: 320 }}>
                   <Segmented
                     block
                     size="small"
@@ -381,8 +397,14 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
             <Dropdown menu={{ items }} trigger={["click"]}>
               <Button className="xin-user-button" type="text">
                 <Space size={8}>
-                  <span className="xin-user-name">{user?.nickname || user?.username || "超级管理员"}</span>
-                  <Avatar size={24} src="/favicons.svg" icon={<UserOutlined />} />
+                  <span className="xin-user-name">{userDisplayName}</span>
+                  <Avatar
+                    size={24}
+                    src={profileQuery.data?.avatarUrl || undefined}
+                    icon={userAvatarFallback ? undefined : <UserOutlined />}
+                  >
+                    {profileQuery.data?.avatarUrl ? null : userAvatarFallback}
+                  </Avatar>
                 </Space>
               </Button>
             </Dropdown>
@@ -459,10 +481,10 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
       <Drawer
         title={t("noticeCenter")}
         open={noticeListOpen}
-        width={520}
+        size={520}
         onClose={() => setNoticeListOpen(false)}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Segmented
             block
             value={noticeFilter}
@@ -478,20 +500,38 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
       </Drawer>
 
       <Drawer
+        title={t("interfaceSettings")}
         open={settingsOpen}
         placement="right"
-        closable={false}
+        size="min(420px, calc(100vw - 12px))"
+        className="xin-settings-drawer"
         onClose={() => setSettingsOpen(false)}
-        footer={
-          <Button onClick={resetPreferences}>{t("resetSettings")}</Button>
+        extra={
+          <Tooltip title={t("resetSettings")}>
+            <Button
+              type="text"
+              icon={<UndoOutlined />}
+              aria-label={t("resetSettings")}
+              onClick={resetPreferences}
+            />
+          </Tooltip>
         }
-        styles={{ body: { paddingTop: 10 } }}
+        footer={
+          <Button block icon={<UndoOutlined />} onClick={resetPreferences}>
+            {t("resetSettings")}
+          </Button>
+        }
       >
-        <Divider>{t("layoutStyle")}</Divider>
-        <div className="xin-settings-layouts">
-          {layoutCards.map((item) => (
-            <Tooltip
-              title={t(
+        <div className="xin-settings-live-preview">
+          <LayoutPreview type={layoutMode} variant="live" />
+        </div>
+
+        <section className="xin-settings-section">
+          <div className="xin-settings-section-title">{t("layoutStyle")}</div>
+          <div className="xin-settings-layouts">
+            {layoutCards.map((item) => {
+              const active = layoutMode === item.key;
+              const label = t(
                 item.key === "side"
                   ? "sideMenu"
                   : item.key === "top"
@@ -499,51 +539,85 @@ export function AdminHeader({ collapsed, onToggleCollapsed }: AdminHeaderProps) 
                     : item.key === "mix"
                       ? "mixMenu"
                       : "columnsMenu",
-              )}
-              key={item.key}
-            >
-              <div
-                className={
-                  layoutMode === item.key
-                    ? "xin-settings-layout-card xin-settings-layout-card-active"
-                    : "xin-settings-layout-card"
-                }
-                onClick={() => setLayoutMode(item.key)}
-              >
-                <LayoutPreview type={item.key} />
-              </div>
-            </Tooltip>
-          ))}
-        </div>
-        <Divider>{t("presetTheme")}</Divider>
-        <Row gutter={20}>
-          <Col span={8}>
-            <Button
+              );
+              const shortLabel =
+                locale === "zh-CN"
+                  ? item.key === "side"
+                    ? "侧边"
+                    : item.key === "top"
+                      ? "顶部"
+                      : item.key === "mix"
+                        ? "混合"
+                        : "分栏"
+                  : item.key === "side"
+                    ? "Side"
+                    : item.key === "top"
+                      ? "Top"
+                      : item.key === "mix"
+                        ? "Mixed"
+                        : "Columns";
+              return (
+                <button
+                  type="button"
+                  key={item.key}
+                  className={
+                    active
+                      ? "xin-settings-layout-card xin-settings-layout-card-active"
+                      : "xin-settings-layout-card"
+                  }
+                  aria-label={label}
+                  aria-pressed={active}
+                  onClick={() => setLayoutMode(item.key)}
+                >
+                  <LayoutPreview type={item.key} variant="compact" />
+                  <span className="xin-settings-card-label">{shortLabel}</span>
+                  <span className="xin-settings-card-description">{label}</span>
+                  {active ? (
+                    <span className="xin-settings-card-check" aria-hidden="true">
+                      <CheckOutlined />
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="xin-settings-section">
+          <div className="xin-settings-section-title">{t("presetTheme")}</div>
+          <div className="xin-settings-themes">
+            <button
+              type="button"
               aria-label={t("light")}
+              aria-pressed={themeMode === "light"}
               className={
                 themeMode === "light"
                   ? "xin-theme-card xin-theme-card-active"
                   : "xin-theme-card"
               }
-              icon={<SunOutlined />}
               onClick={() => setThemeMode("light")}
-            />
-            <div style={{ marginTop: 6, textAlign: "center" }}>{t("light")}</div>
-          </Col>
-          <Col span={8}>
-            <Button
+            >
+              <SunOutlined className="xin-theme-card-icon" />
+              <span className="xin-settings-card-label">{t("light")}</span>
+              {themeMode === "light" ? <CheckOutlined className="xin-theme-card-check" /> : null}
+            </button>
+            <button
+              type="button"
               aria-label={t("dark")}
+              aria-pressed={themeMode === "dark"}
               className={
                 themeMode === "dark"
-                  ? "xin-theme-card xin-theme-card-dark xin-theme-card-active"
-                  : "xin-theme-card xin-theme-card-dark"
+                  ? "xin-theme-card xin-theme-card-active"
+                  : "xin-theme-card"
               }
-              icon={<MoonOutlined />}
               onClick={() => setThemeMode("dark")}
-            />
-            <div style={{ marginTop: 6, textAlign: "center" }}>{t("dark")}</div>
-          </Col>
-        </Row>
+            >
+              <MoonOutlined className="xin-theme-card-icon" />
+              <span className="xin-settings-card-label">{t("dark")}</span>
+              {themeMode === "dark" ? <CheckOutlined className="xin-theme-card-check" /> : null}
+            </button>
+          </div>
+        </section>
       </Drawer>
     </>
   );

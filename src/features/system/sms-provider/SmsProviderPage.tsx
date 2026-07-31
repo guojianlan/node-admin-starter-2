@@ -87,14 +87,22 @@ export function SmsProviderPage() {
   });
 
   const columns: AdminDataTableColumn<SmsProviderRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
     {
       title: "名称",
       dataIndex: "name",
       required: true,
-      width: 140,
+      width: 180,
+      fixed: "left",
       render: (value, record) => (
-        <Space size={8}>
+        <Space size={6} wrap>
           <MessageOutlined />
           <Typography.Text strong>{String(value)}</Typography.Text>
           {record.isSystem ? <Tag color="blue">内置</Tag> : null}
@@ -193,6 +201,7 @@ export function SmsProviderPage() {
         columns={columns}
         createTitle="新增短信配置"
         updateTitle="编辑短信配置"
+        actionColumnWidth={176}
         canDelete={(record) => !record.isDefault && !record.isSystem}
         beforeSubmit={normalizePayload}
         onDataChanged={invalidate}
@@ -259,7 +268,7 @@ export function SmsProviderPage() {
           setTestContent("Admin Base SMS test");
         }}
       >
-        <Space direction="vertical" className="system-test-panel" size={12}>
+        <Space orientation="vertical" className="system-test-panel" size={12}>
           <div>
             <strong>{testProvider?.name}</strong>
             <span>使用当前 Webhook 短信配置发送一条测试消息。</span>

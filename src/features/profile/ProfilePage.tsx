@@ -411,7 +411,7 @@ export function ProfilePage() {
                   key: "oauth",
                   label: "第三方账号",
                   children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                    <Space orientation="vertical" style={{ width: "100%" }} size={16}>
                       <Space wrap>
                         {(loginOptionsQuery.data?.oauthProviders ?? []).map((provider) => {
                           const bound = (oauthAccountsQuery.data ?? []).some(
@@ -435,6 +435,7 @@ export function ProfilePage() {
                         )}
                       </Space>
                       <Table<OAuthAccount>
+                        className="admin-table-surface"
                         rowKey={(record) => `${record.provider}:${record.providerUserId}`}
                         size="small"
                         loading={oauthAccountsQuery.isFetching}
@@ -462,6 +463,7 @@ export function ProfilePage() {
                           {
                             title: "操作",
                             width: 96,
+                            fixed: "right",
                             render: (_, record) => (
                               <Button
                                 danger
@@ -484,6 +486,7 @@ export function ProfilePage() {
                             ),
                           },
                         ]}
+                        scroll={{ x: 860 }}
                       />
                     </Space>
                   ),
@@ -492,7 +495,7 @@ export function ProfilePage() {
                   key: "login",
                   label: t("loginRecords"),
                   children: (
-                    <Space direction="vertical" style={{ width: "100%" }}>
+                    <Space orientation="vertical" style={{ width: "100%" }}>
                       <Button
                         icon={<ReloadOutlined />}
                         onClick={() => void loginRecordsQuery.refetch()}
@@ -500,11 +503,13 @@ export function ProfilePage() {
                         {t("refresh")}
                       </Button>
                       <Table<LoginRecord>
+                        className="admin-table-surface"
                         rowKey="id"
                         size="small"
                         loading={loginRecordsQuery.isFetching}
                         dataSource={loginRecordsQuery.data?.data ?? []}
                         pagination={false}
+                        scroll={{ x: 760, y: 420 }}
                         columns={[
                           {
                             title: t("result"),

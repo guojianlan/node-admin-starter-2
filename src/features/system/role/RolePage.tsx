@@ -83,7 +83,6 @@ function toTreeData(nodes: RuleNode[]): TreeProps["treeData"] {
 
 export function RolePage() {
   const queryClient = useQueryClient();
-  const [auxOptionsRequested, setAuxOptionsRequested] = useState(false);
   const [selectedRole, setSelectedRole] = useState<RoleRecord | null>(null);
   const [activeTab, setActiveTab] = useState("users");
   const [checkedRuleKeys, setCheckedRuleKeys] = useState<React.Key[]>([]);
@@ -99,7 +98,6 @@ export function RolePage() {
 
   const roleMetaQuery = useQuery({
     queryKey: ["system-role-meta"],
-    enabled: auxOptionsRequested || activeTab === "rules",
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const [ruleRows, deptRows] = await Promise.all([
@@ -192,12 +190,15 @@ export function RolePage() {
       hideInSearch: true,
       width: 72,
       align: "center",
+      fixed: "left",
     },
     {
       title: "角色名称",
       dataIndex: "name",
       required: true,
       align: "center",
+      width: 140,
+      fixed: "left",
       render: (value, record) => (
         <Tooltip title={record.remark || "暂无描述"}>
           <Tag color="blue">{String(value)}</Tag>
@@ -332,6 +333,21 @@ export function RolePage() {
 
   const ruleTreeData = useMemo(() => toTreeData(ruleTree), [ruleTree]);
   const allRuleKeys = useMemo(() => getAllNodeKeys(ruleTree), [ruleTree]);
+  const availableRuleKeys = useMemo(() => new Set(allRuleKeys.map(String)), [allRuleKeys]);
+  const visibleCheckedRuleKeys = useMemo(
+    () =>
+      checkedRuleKeys
+        .filter((key) => availableRuleKeys.has(String(key)))
+        .map((key) => Number(key)),
+    [availableRuleKeys, checkedRuleKeys],
+  );
+  const visibleExpandedRuleKeys = useMemo(
+    () =>
+      expandedRuleKeys
+        .filter((key) => availableRuleKeys.has(String(key)))
+        .map((key) => Number(key)),
+    [availableRuleKeys, expandedRuleKeys],
+  );
   const ruleNameMap = useMemo(() => {
     const map = new Map<number, RuleNode>();
     const visit = (nodes: RuleNode[]) => {
@@ -358,7 +374,7 @@ export function RolePage() {
       title: "确认保存角色权限",
       width: 560,
       content: (
-        <Space direction="vertical" size={10}>
+        <Space orientation="vertical" size={10}>
           <span>
             新增 {added.length} 项，移除 {removed.length} 项，保持 {unchanged} 项。保存后该角色用户的旧 token 会失效。
           </span>
@@ -404,9 +420,8 @@ export function RolePage() {
             columns={roleColumns}
             createTitle="新增角色"
             updateTitle="编辑角色"
-            onFormOpenChange={(open) => {
-              if (open) setAuxOptionsRequested(true);
-            }}
+            tableMode="embedded"
+            actionColumnWidth={164}
             canUpdate={(record) => !record.isSystem}
             canDelete={(record) => !record.isSystem}
             operateRender={(record) => (
@@ -461,10 +476,7 @@ export function RolePage() {
               { key: "rules", icon: <KeyOutlined />, label: "权限管理" },
             ]}
             activeTabKey={activeTab}
-            onTabChange={(key) => {
-              setActiveTab(key);
-              if (key === "rules") setAuxOptionsRequested(true);
-            }}
+            onTabChange={setActiveTab}
             styles={{ body: { minHeight: "70vh" } }}
           >
             {selectedRole ? (
@@ -475,6 +487,7 @@ export function RolePage() {
                     <strong>{roleUsersTotal}</strong>
                   </div>
                   <Table<RoleUserRecord>
+                    className="admin-table-surface"
                     rowKey="id"
                     loading={roleUsersQuery.isLoading || roleUsersQuery.isFetching}
                     dataSource={roleUsers}
@@ -489,7 +502,7 @@ export function RolePage() {
                       showTotal: (total) => `共 ${total} 条`,
                       onChange: (page, pageSize) => setRoleUserPage({ page, pageSize }),
                     }}
-                    scroll={{ x: 600 }}
+                    scroll={{ x: 600, y: 420 }}
                   />
                 </>
               ) : (
@@ -500,8 +513,8 @@ export function RolePage() {
                       checkable
                       checkStrictly
                       treeData={ruleTreeData}
-                      checkedKeys={checkedRuleKeys}
-                      expandedKeys={expandedRuleKeys}
+                      checkedKeys={visibleCheckedRuleKeys}
+                      expandedKeys={visibleExpandedRuleKeys}
                       onCheck={(keys) => {
                         setCheckedRuleKeys(Array.isArray(keys) ? keys : keys.checked);
                       }}
@@ -562,7 +575,7 @@ export function RolePage() {
         onOk={() => copyRoleMutation.mutateAsync()}
         onCancel={() => setCopyRole(null)}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Input
             addonBefore="名称"
             value={copyForm.name}

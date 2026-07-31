@@ -2,7 +2,7 @@
 
 import { CodeOutlined, FileTextOutlined, RocketOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Drawer, Input, List, Modal, Space, Switch, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Drawer, Input, Modal, Space, Switch, Table, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { request } from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
@@ -95,21 +95,21 @@ export function ModuleGeneratorPage() {
 
   return (
     <PageScaffold title="模块生成器" description="从配置生成普通 CRUD 模块草稿">
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           showIcon
           type="warning"
-          message="生成器先生成可审查草稿，发布后才会上线"
+          title="生成器先生成可审查草稿，发布后才会上线"
           description="生成阶段输出到 generated/module-drafts，不会注册页面或 API；点击发布后才会写入 schema、migration、seed rule、route manifest 和路由注册。生产环境会拒绝生成和发布。"
         />
         <Alert
           showIcon
           type="info"
-          message="CMS 配置 CRUD 的当前写法"
+          title="CMS 配置 CRUD 的当前写法"
           description='现阶段自动发布只支持 domain="system"。例如 CMS 配置可使用 frontendPath="/system/cms/config"、backendBasePath="/cms/config"，上线后接口为 /api/system/cms/config。真正 /api/cms/* 需要先增加业务域后端挂载。'
         />
         <Card className="admin-card" variant="borderless">
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={16} style={{ width: "100%" }}>
             <Space wrap>
               <Button
                 type="primary"
@@ -137,7 +137,7 @@ export function ModuleGeneratorPage() {
               ) : null}
             </Space>
             {result ? (
-              <Space direction="vertical" size={8}>
+              <Space orientation="vertical" size={8}>
                 <Space wrap>
                   <Tag color="blue">{result.module.title}</Tag>
                   <Tag>{result.module.permission}</Tag>
@@ -157,6 +157,7 @@ export function ModuleGeneratorPage() {
         </Card>
         <Card className="admin-card" title="模块状态" variant="borderless">
           <Table<ModuleDraft>
+            className="admin-table-surface"
             rowKey="name"
             size="small"
             loading={draftsQuery.isLoading}
@@ -231,11 +232,11 @@ export function ModuleGeneratorPage() {
         onCancel={() => setModalOpen(false)}
         onOk={() => generateMutation.mutate()}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Alert
             showIcon
             type="info"
-            message="这里生成的是 80% CRUD 初稿"
+            title="这里生成的是 80% CRUD 初稿"
             description="复杂资源配置仍需要在生成后补密钥加密、默认实例保护、测试接口和操作日志细节。"
           />
           <Space>
@@ -255,38 +256,38 @@ export function ModuleGeneratorPage() {
       <Drawer
         title="生成结果"
         open={previewOpen}
-        width={1040}
+        size={1040}
         onClose={() => setPreviewOpen(false)}
       >
         {result ? (
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={16} style={{ width: "100%" }}>
             <Alert
               showIcon
               type="success"
-              message={`已生成到 ${result.outputRoot}`}
+              title={`已生成到 ${result.outputRoot}`}
               description="当前仍是草稿状态；点击发布后会写入真实项目集成点。发布后请重新执行 typecheck、lint、test、admin:check-routes。"
             />
             <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
-              <List
-                bordered
-                size="small"
-                dataSource={result.files}
-                renderItem={(file) => (
-                  <List.Item
+              <div className="module-generator-file-list" role="list">
+                {result.files.map((file) => (
+                  <button
+                    key={file.path}
+                    type="button"
+                    className={
+                      file.path === selectedFile?.path
+                        ? "module-generator-file module-generator-file-active"
+                        : "module-generator-file"
+                    }
                     onClick={() => setSelectedPath(file.path)}
-                    style={{
-                      cursor: "pointer",
-                      background: file.path === selectedFile?.path ? "var(--ant-color-fill-tertiary)" : undefined,
-                    }}
                   >
-                    <List.Item.Meta
-                      avatar={<FileTextOutlined />}
-                      title={<Typography.Text ellipsis>{file.path}</Typography.Text>}
-                      description={`${file.size} bytes`}
-                    />
-                  </List.Item>
-                )}
-              />
+                    <FileTextOutlined />
+                    <span>
+                      <Typography.Text ellipsis>{file.path}</Typography.Text>
+                      <Typography.Text type="secondary">{file.size} bytes</Typography.Text>
+                    </span>
+                  </button>
+                ))}
+              </div>
               <Card size="small" title={selectedFile?.path ?? "选择文件"} variant="borderless">
                 <pre
                   style={{

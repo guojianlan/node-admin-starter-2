@@ -97,8 +97,16 @@ export function UserPage() {
       width: 104,
       align: "center",
       sorter: true,
+      fixed: "left",
     },
-    { title: "用户名", dataIndex: "username", required: true, align: "center", width: 88 },
+    {
+      title: "用户名",
+      dataIndex: "username",
+      required: true,
+      align: "center",
+      width: 112,
+      fixed: "left",
+    },
     {
       title: "密码",
       dataIndex: "password",
@@ -108,7 +116,14 @@ export function UserPage() {
       hideInSearch: true,
       hideInUpdate: true,
     },
-    { title: "昵称", dataIndex: "nickname", required: true, align: "center", width: 104 },
+    {
+      title: "昵称",
+      dataIndex: "nickname",
+      required: true,
+      align: "center",
+      width: 120,
+      fixed: "left",
+    },
     {
       title: "性别",
       dataIndex: "sex",

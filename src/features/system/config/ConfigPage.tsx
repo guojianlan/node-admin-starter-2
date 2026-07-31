@@ -379,12 +379,13 @@ export function ConfigPage() {
   const items = itemsQuery.data?.data ?? emptyConfigItems;
 
   useEffect(() => {
+    if (!activeGroupId) return;
     const initialValues: Record<string, unknown> = {};
     items.forEach((item) => {
       initialValues[`item_${item.id}`] = normalizeInitialValue(item);
     });
     form.setFieldsValue(initialValues);
-  }, [form, items]);
+  }, [activeGroupId, form, items]);
 
   const saveGroupMutation = useMutation({
     mutationFn: (values: Record<string, unknown>) => {

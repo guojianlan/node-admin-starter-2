@@ -91,11 +91,14 @@ export function DictPage() {
       width: 90,
       sorter: true,
       align: "center",
+      fixed: "left",
     },
     {
       title: "字典名称",
       dataIndex: "name",
       required: true,
+      width: 160,
+      fixed: "left",
       formHelp: dictNameHelp,
       fieldProps: { placeholder: "例如：状态" },
     },
@@ -175,6 +178,7 @@ export function DictPage() {
             cardClassName="system-dict-master-card"
             createTitle="新增字典"
             updateTitle="编辑字典"
+            tableMode="embedded"
             actionBarRender={() => (
               <Button
                 className="system-dict-cache-button"

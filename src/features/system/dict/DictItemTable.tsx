@@ -74,6 +74,8 @@ export function DictItemTable({ dict, showTitle = true, urlStatePrefix }: DictIt
       title: "名称",
       dataIndex: "label",
       required: true,
+      width: 160,
+      fixed: "left",
       formHelp: dictItemNameHelp,
       fieldProps: { placeholder: "例如：启用" },
     },
@@ -128,6 +130,7 @@ export function DictItemTable({ dict, showTitle = true, urlStatePrefix }: DictIt
       cardClassName="system-dict-detail-card"
       createTitle="新增字典项"
       updateTitle="编辑字典项"
+      tableMode="embedded"
       showSearchForm={false}
       toolbarTitle={
         showTitle ? (

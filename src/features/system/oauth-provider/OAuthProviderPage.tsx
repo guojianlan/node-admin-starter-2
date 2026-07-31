@@ -76,14 +76,22 @@ export function OAuthProviderPage() {
   });
 
   const columns: AdminDataTableColumn<OAuthProviderRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
     {
       title: "名称",
       dataIndex: "name",
       required: true,
-      width: 140,
+      width: 180,
+      fixed: "left",
       render: (value, record) => (
-        <Space size={8}>
+        <Space size={6} wrap>
           <LoginOutlined />
           <Typography.Text strong>{String(value)}</Typography.Text>
           {record.isSystem ? <Tag color="blue">内置模板</Tag> : null}
@@ -195,6 +203,7 @@ export function OAuthProviderPage() {
         columns={columns}
         createTitle="新增 Provider"
         updateTitle="编辑 Provider"
+        actionColumnWidth={164}
         canDelete={(record) => !record.isSystem}
         beforeSubmit={normalizeProviderPayload}
         onDataChanged={() => {

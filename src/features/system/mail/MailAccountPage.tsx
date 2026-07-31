@@ -78,8 +78,15 @@ export function MailAccountPage() {
   });
 
   const columns: AdminDataTableColumn<MailAccountRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
-    { title: "名称", dataIndex: "name", required: true, width: 140 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
+    { title: "名称", dataIndex: "name", required: true, width: 140, fixed: "left" },
     { title: "编码", dataIndex: "code", required: true, width: 120 },
     { title: "SMTP Host", dataIndex: "host", required: true, width: 180 },
     { title: "端口", dataIndex: "port", valueType: "digit", required: true, width: 86 },
@@ -149,6 +156,7 @@ export function MailAccountPage() {
         columns={columns}
         createTitle="新增邮件账号"
         updateTitle="编辑邮件账号"
+        actionColumnWidth={176}
         canDelete={(record) => !record.isDefault && !record.isSystem}
         operateRender={(record, reload) => (
           <>
@@ -209,7 +217,7 @@ export function MailAccountPage() {
           setTestTo("");
         }}
       >
-        <Space direction="vertical" className="system-test-panel" size={12}>
+        <Space orientation="vertical" className="system-test-panel" size={12}>
           <div>
             <strong>{testAccount?.name}</strong>
             <span>使用当前 SMTP 账号发送一封测试邮件。</span>

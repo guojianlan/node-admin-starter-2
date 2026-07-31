@@ -391,6 +391,7 @@ export function DeptPage() {
               </Form>
             ) : (
               <Table<DeptUserRecord>
+                className="admin-table-surface"
                 rowKey="id"
                 dataSource={deptUsers}
                 bordered
@@ -407,7 +408,7 @@ export function DeptPage() {
                     setDeptUserPage({ page, pageSize });
                   },
                 }}
-                scroll={{ x: 600 }}
+                scroll={{ x: 600, y: 420 }}
               />
             )}
           </Card>

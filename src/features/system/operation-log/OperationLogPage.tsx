@@ -178,7 +178,15 @@ export function OperationLogPage() {
   }
 
   const columns: AdminDataTableColumn<OperationLogRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 80, sorter: true },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 80,
+      sorter: true,
+      fixed: "left",
+    },
     {
       title: "结果",
       dataIndex: "success",
@@ -188,6 +196,7 @@ export function OperationLogPage() {
         { label: "失败", value: false },
       ],
       width: 92,
+      fixed: "left",
       render: (value) =>
         value ? <Badge status="success" text="成功" /> : <Badge status="error" text="失败" />,
     },
@@ -197,6 +206,7 @@ export function OperationLogPage() {
       valueType: "select",
       options: moduleOptions,
       width: 128,
+      fixed: "left",
       render: (value) => <Tag color="blue">{String(value)}</Tag>,
     },
     {
@@ -365,6 +375,8 @@ export function OperationLogPage() {
         enableUpdate={false}
         enableDelete={false}
         defaultPageSize={20}
+        tableMode="bounded"
+        actionColumnWidth={124}
         toolbarTitle="审计事件"
         actionBarRender={() => (
           <Space>
@@ -422,7 +434,7 @@ export function OperationLogPage() {
       />
       <Drawer
         title="操作日志详情"
-        width={720}
+        size={720}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
         extra={
@@ -447,7 +459,7 @@ export function OperationLogPage() {
         }
       >
         {activeLog ? (
-          <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <Space orientation="vertical" size={20} style={{ width: "100%" }}>
             <Descriptions bordered size="small" column={2}>
               <Descriptions.Item label="结果">
                 {activeLog.success ? (
@@ -549,7 +561,7 @@ export function OperationLogPage() {
         }}
         onCancel={() => setCleanOpen(false)}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Typography.Text type="secondary">
             清理动作会记录为 critical 操作日志。建议至少选择时间或模块条件。
           </Typography.Text>

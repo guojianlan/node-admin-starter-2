@@ -159,6 +159,8 @@ const sections: ConfigSection[] = [
       "login.allow_multi_session",
       "login.max_online_tokens",
       "login.captcha_after_failures",
+      "login.rate_limit_attempts",
+      "login.rate_limit_window_minutes",
     ],
   },
   {
@@ -285,13 +287,13 @@ function ConfigSectionForm({
         </Button>
       }
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Typography.Text type="secondary">{section.description}</Typography.Text>
         {missingKeys.length ? (
           <Alert
             showIcon
             type="warning"
-            message="配置项未初始化"
+            title="配置项未初始化"
             description={missingKeys.join(", ")}
           />
         ) : null}
@@ -413,9 +415,9 @@ function ResourceSettings({
           }
         >
           {!canQueryStorage ? (
-            <Alert type="warning" showIcon message="当前角色没有存储配置查看权限" />
+            <Alert type="warning" showIcon title="当前角色没有存储配置查看权限" />
           ) : defaultStorage ? (
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultStorage.name}</Typography.Text>
               <Space wrap>
                 <Tag color="blue">{defaultStorage.code}</Tag>
@@ -435,7 +437,7 @@ function ResourceSettings({
               </AuthButton>
             </Space>
           ) : (
-            <Alert type="warning" showIcon message="尚未配置默认存储" />
+            <Alert type="warning" showIcon title="尚未配置默认存储" />
           )}
         </Card>
       </Col>
@@ -454,9 +456,9 @@ function ResourceSettings({
           }
         >
           {!canQueryMail ? (
-            <Alert type="warning" showIcon message="当前角色没有邮件配置查看权限" />
+            <Alert type="warning" showIcon title="当前角色没有邮件配置查看权限" />
           ) : defaultMail ? (
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultMail.name}</Typography.Text>
               <Space wrap>
                 <Tag color="blue">{defaultMail.code}</Tag>
@@ -477,7 +479,7 @@ function ResourceSettings({
               </AuthButton>
             </Space>
           ) : (
-            <Alert type="warning" showIcon message="尚未配置默认邮件账号" />
+            <Alert type="warning" showIcon title="尚未配置默认邮件账号" />
           )}
         </Card>
       </Col>
@@ -496,9 +498,9 @@ function ResourceSettings({
           }
         >
           {!canQuerySms ? (
-            <Alert type="warning" showIcon message="当前角色没有短信配置查看权限" />
+            <Alert type="warning" showIcon title="当前角色没有短信配置查看权限" />
           ) : defaultSms ? (
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultSms.name}</Typography.Text>
               <Space wrap>
                 <Tag color="blue">{defaultSms.code}</Tag>
@@ -519,7 +521,7 @@ function ResourceSettings({
               </AuthButton>
             </Space>
           ) : (
-            <Alert type="warning" showIcon message="尚未配置默认短信配置" />
+            <Alert type="warning" showIcon title="尚未配置默认短信配置" />
           )}
         </Card>
       </Col>
@@ -543,9 +545,9 @@ function ResourceSettings({
           }
         >
           {!canQueryAiProvider ? (
-            <Alert type="warning" showIcon message="当前角色没有 AI Provider 查看权限" />
+            <Alert type="warning" showIcon title="当前角色没有 AI Provider 查看权限" />
           ) : defaultAiProvider ? (
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
               <Typography.Text strong>{defaultAiProvider.name}</Typography.Text>
               <Space wrap>
                 <Tag color="blue">{defaultAiProvider.code}</Tag>
@@ -581,7 +583,7 @@ function ResourceSettings({
               </AuthButton>
             </Space>
           ) : (
-            <Alert type="warning" showIcon message="尚未配置默认 AI Provider" />
+            <Alert type="warning" showIcon title="尚未配置默认 AI Provider" />
           )}
         </Card>
       </Col>
@@ -615,17 +617,17 @@ function LoginMethods({
         </Space>
       }
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           showIcon
           type="info"
-          message="账号密码登录为系统基础能力，始终启用。验证码由登录策略分区控制。"
+          title="账号密码登录为系统基础能力，始终启用。验证码由登录策略分区控制。"
         />
         <div>
           <Typography.Text strong>第三方登录 Provider</Typography.Text>
           <div style={{ marginTop: 8 }}>
             {!canQueryOAuth ? (
-              <Alert type="warning" showIcon message="当前角色没有第三方登录配置查看权限" />
+              <Alert type="warning" showIcon title="当前角色没有第三方登录配置查看权限" />
             ) : providers.length ? (
               <Space wrap>
                 {providers.map((provider) => (
@@ -646,7 +648,7 @@ function LoginMethods({
         <Alert
           showIcon
           type="success"
-          message="OAuth Provider 已按资源型配置独立维护；系统设置只聚合入口，不直接暴露复杂 JSON。"
+          title="OAuth Provider 已按资源型配置独立维护；系统设置只聚合入口，不直接暴露复杂 JSON。"
           action={
             <AuthButton auth="system.oauthProvider.query">
               <Button onClick={() => navigation.push("/system/oauth/provider")}>管理 Provider</Button>
@@ -751,11 +753,11 @@ export function SettingsPage() {
   return (
     <PageScaffold title="系统设置" description="聚合基础参数、安全策略、登录策略、上传策略和资源配置">
       <Spin spinning={loading}>
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
           <Alert
             showIcon
             type="info"
-            message="系统设置是业务化入口；配置项管理、存储、邮件仍保持独立模型和独立权限。"
+            title="系统设置是业务化入口；配置项管理、存储、邮件仍保持独立模型和独立权限。"
           />
           <Tabs
             items={[

@@ -193,12 +193,21 @@ export function NoticePage() {
   });
 
   const columns: AdminDataTableColumn<NoticeRecord>[] = [
-    { title: "ID", dataIndex: "id", width: 80, sorter: true, hideInForm: true, hideInSearch: true },
+    {
+      title: "ID",
+      dataIndex: "id",
+      width: 80,
+      sorter: true,
+      hideInForm: true,
+      hideInSearch: true,
+      fixed: "left",
+    },
     {
       title: "标题",
       dataIndex: "title",
       required: true,
       width: 220,
+      fixed: "left",
       render: (value) => <Typography.Text strong>{String(value)}</Typography.Text>,
     },
     {
@@ -380,6 +389,7 @@ export function NoticePage() {
         columns={columns}
         createTitle="新增公告"
         updateTitle="编辑公告"
+        actionColumnWidth={228}
         toolbarTitle={
           <Space>
             <NotificationOutlined />
@@ -453,10 +463,10 @@ export function NoticePage() {
       <Drawer
         title={statsNotice ? `阅读统计：${statsNotice.title}` : "阅读统计"}
         open={statsOpen}
-        width={760}
+        size={760}
         onClose={() => setStatsOpen(false)}
       >
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
           <Space size={24}>
             <Statistic title="目标人数" value={statsQuery.data?.targetTotal ?? 0} loading={statsQuery.isFetching} />
             <Statistic title="已读人数" value={statsQuery.data?.readTotal ?? 0} loading={statsQuery.isFetching} />
@@ -505,6 +515,7 @@ export function NoticePage() {
             />
           </Space>
           <Table<NoticeReadUser>
+            className="admin-table-surface"
             rowKey="userId"
             size="small"
             loading={readUsersQuery.isFetching}
@@ -515,12 +526,13 @@ export function NoticePage() {
               total: readUsersQuery.data?.total ?? 0,
               onChange: (page) => setReadUserPage(page),
             }}
+            scroll={{ x: 640, y: 420 }}
             columns={[
               {
                 title: "用户",
                 dataIndex: "username",
                 render: (_, record) => (
-                  <Space direction="vertical" size={0}>
+                  <Space orientation="vertical" size={0}>
                     <Typography.Text strong>{record.nickname || record.username}</Typography.Text>
                     <Typography.Text type="secondary">{record.username}</Typography.Text>
                   </Space>

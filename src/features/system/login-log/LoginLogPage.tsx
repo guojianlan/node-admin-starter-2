@@ -37,7 +37,15 @@ export function LoginLogPage() {
   });
 
   const columns: AdminDataTableColumn<LoginLogRecord>[] = [
-    { title: "ID", dataIndex: "id", width: 80, sorter: true, hideInForm: true, hideInSearch: true },
+    {
+      title: "ID",
+      dataIndex: "id",
+      width: 80,
+      sorter: true,
+      hideInForm: true,
+      hideInSearch: true,
+      fixed: "left",
+    },
     {
       title: "结果",
       dataIndex: "status",
@@ -47,6 +55,7 @@ export function LoginLogPage() {
         { label: "失败", value: 0 },
       ],
       width: 96,
+      fixed: "left",
       render: (value) =>
         Number(value) === 1 ? (
           <Badge status="success" text="成功" />
@@ -58,6 +67,7 @@ export function LoginLogPage() {
       title: "用户名",
       dataIndex: "username",
       width: 140,
+      fixed: "left",
       render: (value) => <Typography.Text strong>{String(value)}</Typography.Text>,
     },
     {
@@ -123,6 +133,7 @@ export function LoginLogPage() {
         enableUpdate={false}
         enableDelete
         defaultPageSize={20}
+        tableMode="bounded"
         toolbarTitle="登录记录"
         actionBarRender={() => (
           <AuthButton auth="system.loginLog.clean">

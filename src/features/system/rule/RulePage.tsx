@@ -418,7 +418,7 @@ export function RulePage() {
   };
 
   const columnSettingContent = (
-    <ConfigProvider theme={{ components: { Tree: { nodeHoverBg: "rgba(0, 0, 0, 0.04)" } } }}>
+    <ConfigProvider theme={{ components: { Tree: { nodeHoverBg: "var(--admin-surface-muted)" } } }}>
       <Tree
         checkable
         selectable={false}
@@ -654,7 +654,7 @@ export function RulePage() {
       </div>
 
       <Table<RuleRecord>
-        className="rule-tree-table"
+        className="rule-tree-table admin-table-surface"
         rowKey="id"
         columns={columns}
         dataSource={filteredRows}
@@ -663,7 +663,10 @@ export function RulePage() {
         size={density}
         pagination={false}
         locale={{ emptyText: <EmptyState /> }}
-        scroll={{ x: 1144 }}
+        scroll={{
+          x: 1144,
+          y: "var(--admin-rule-table-body-block-size)",
+        }}
         expandable={{
           expandedRowKeys,
           onExpandedRowsChange: (keys) => setManualExpandedRowKeys([...keys]),

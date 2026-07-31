@@ -108,14 +108,22 @@ export function SmsTemplatePage() {
   });
 
   const columns: AdminDataTableColumn<SmsTemplateRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
     {
       title: "模板名称",
       dataIndex: "name",
       required: true,
-      width: 170,
+      width: 200,
+      fixed: "left",
       render: (value, record) => (
-        <Space size={8}>
+        <Space size={6} wrap>
           <MessageOutlined />
           <Typography.Text strong>{String(value)}</Typography.Text>
           {record.isSystem ? <Tag color="blue">内置</Tag> : null}
@@ -206,6 +214,7 @@ export function SmsTemplatePage() {
         columns={columns}
         createTitle="新增短信模板"
         updateTitle="编辑短信模板"
+        actionColumnWidth={176}
         canDelete={(record) => !record.isSystem}
         beforeSubmit={normalizePayload}
         onDataChanged={invalidate}
@@ -250,7 +259,7 @@ export function SmsTemplatePage() {
           setTestVariables("{}");
         }}
       >
-        <Space direction="vertical" className="system-test-panel" size={12}>
+        <Space orientation="vertical" className="system-test-panel" size={12}>
           <div>
             <strong>{testTemplate?.name}</strong>
             <div>

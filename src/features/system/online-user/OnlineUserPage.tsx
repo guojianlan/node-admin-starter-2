@@ -49,13 +49,22 @@ export function OnlineUserPage() {
   });
 
   const columns: AdminDataTableColumn<OnlineUserRecord>[] = [
-    { title: "Token ID", dataIndex: "id", width: 96, sorter: true, hideInForm: true, hideInSearch: true },
+    {
+      title: "Token ID",
+      dataIndex: "id",
+      width: 96,
+      sorter: true,
+      hideInForm: true,
+      hideInSearch: true,
+      fixed: "left",
+    },
     {
       title: "用户",
       dataIndex: "username",
       width: 180,
+      fixed: "left",
       render: (_, record) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Typography.Text strong>{record.nickname || record.username}</Typography.Text>
           <Typography.Text type="secondary">
             {record.username} #{record.userId}
@@ -68,6 +77,7 @@ export function OnlineUserPage() {
       dataIndex: "expiresAt",
       width: 100,
       hideInSearch: true,
+      fixed: "left",
       render: (value) =>
         isExpired(value ? String(value) : null) ? (
           <Badge status="default" text="已过期" />
@@ -134,6 +144,7 @@ export function OnlineUserPage() {
         enableUpdate={false}
         enableDelete={false}
         defaultPageSize={20}
+        tableMode="bounded"
         toolbarTitle="会话列表"
         actionBarRender={() => (
           <AuthButton auth="system.onlineUser.clean">

@@ -71,8 +71,15 @@ export function StoragePage() {
   });
 
   const columns: AdminDataTableColumn<StorageRecord>[] = [
-    { title: "ID", dataIndex: "id", hideInForm: true, hideInSearch: true, width: 72 },
-    { title: "名称", dataIndex: "name", required: true, width: 140 },
+    {
+      title: "ID",
+      dataIndex: "id",
+      hideInForm: true,
+      hideInSearch: true,
+      width: 72,
+      fixed: "left",
+    },
+    { title: "名称", dataIndex: "name", required: true, width: 140, fixed: "left" },
     { title: "编码", dataIndex: "code", required: true, width: 120 },
     {
       title: "类型",
@@ -151,6 +158,7 @@ export function StoragePage() {
         columns={columns}
         createTitle="新增存储"
         updateTitle="编辑存储"
+        actionColumnWidth={176}
         canDelete={(record) => !record.isDefault && !record.isSystem}
         operateRender={(record, reload) => (
           <>

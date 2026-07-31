@@ -5,6 +5,7 @@ type PageScaffoldProps = {
   description?: string;
   actions?: React.ReactNode;
   hideHeader?: boolean;
+  className?: string;
   children: React.ReactNode;
 };
 
@@ -13,10 +14,11 @@ export function PageScaffold({
   description,
   actions,
   hideHeader = false,
+  className,
   children,
 }: PageScaffoldProps) {
   return (
-    <div className="admin-page">
+    <div className={className ? `admin-page ${className}` : "admin-page"}>
       {hideHeader ? (
         <h1 className="admin-page-title admin-page-title-hidden">{title}</h1>
       ) : (

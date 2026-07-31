@@ -680,7 +680,7 @@ export function AdminRichTextField({
         destroyOnHidden
         onCancel={() => setImagePickerOpen(false)}
       >
-        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={14} style={{ width: "100%" }}>
           <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
             <Upload {...pickerUploadProps}>
               <Button icon={<UploadOutlined />} loading={uploading}>
