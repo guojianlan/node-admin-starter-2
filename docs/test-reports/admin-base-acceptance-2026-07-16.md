@@ -2,7 +2,7 @@
 
 ## 1. 执行信息
 
-- 验收对象：`a825f226f65e` 之后的完整收口实现
+- 验收对象：截至 `8834cadcca17` 的完整收口实现
 - 分支：`codex/admin-base-migration-plan`
 - 环境：local acceptance / production-mode precheck
 - Node.js：`v24.14.0`
@@ -11,7 +11,7 @@
 - 开发数据库：`admin_base`
 - 隔离测试数据库：`admin_base_test`
 - 开始时间：`2026-07-16 17:29:40 CST`
-- 收口复验时间：`2026-07-31 16:40 - 17:20 CST`
+- 收口复验时间：`2026-07-31 16:40 - 17:56 CST`
 - 执行方式：Codex 本机命令行、隔离 PostgreSQL 测试库、Playwright Chromium 桌面/移动项目
 
 本报告先记录了 `2026-07-16` 的完整工作树验收，并在 `2026-07-31` 对拆分提交后的收口实现复验。
@@ -30,6 +30,7 @@
 | GATE-008 | Pass | 逻辑包 commit + push；`git diff --check` Pass | AI、系统安全、Shell/UI、测试与文档按包提交并推送 |
 | GATE-009 | Pass | 220/220 API operations、28/28 pages | 无缺失、重复、过期或空验收标准 |
 | GATE-010 | Pass | 95 E2E passed、29 mobile-only skips；83 acceptance passed、29 skips | 桌面/移动 CRUD 与权限回归、逐页浅色/暗色/窄屏和菜单布局验收通过 |
+| GATE-011 | Pass | [GitHub Actions CI #30620823521](https://github.com/guojianlan/node-admin-starter-2/actions/runs/30620823521) / 15m14s | PostgreSQL migration/seed、292 Vitest、build、Chromium E2E 和 smoke 全部通过 |
 
 ## 3. 自动化结果
 
@@ -47,6 +48,7 @@
 | Visual evidence | Pass | `test-results/acceptance-evidence` 共 83 张 PNG，约 11 MB；该目录被 Git 忽略，可由 `pnpm e2e:acceptance` 重建 |
 | Development smoke | Pass | `http://127.0.0.1:3000` |
 | Production-mode smoke | Pass | 生产环境变量启动后在 `http://127.0.0.1:3000` 完成非破坏性预检 |
+| GitHub Actions | Pass | 提交 `8834cadcca17` 对应 CI #30620823521 全流程通过；CI 管理员密码配置与测试 seed 已统一 |
 | Whitespace | Pass | `git diff --check` |
 | Clean worktree | Pass | 收口内容已按逻辑包提交；最终 push 后工作树无未提交实现 |
 
@@ -115,16 +117,15 @@ AI Agent 页面的定向 Playwright 复验未再出现上述浏览器告警。�
 ## 7. 发布结论
 
 - 结论：**No-Go（生产发布）/ Local Baseline Pass**
-- 自动化产品门禁：本机 typecheck、lint、292 Vitest、route check、build、production-mode smoke、95 E2E 和 83 页面验收均通过
-- 阻断项：GitHub Actions 新流程仍需远端跑绿证据；人工视觉复核和需要真实凭据的外部环境用例未完成
+- 自动化产品门禁：本机 typecheck、lint、292 Vitest、route check、build、production-mode smoke、95 E2E 和 83 页面验收均通过；最终远端 GitHub Actions 也已跑绿
+- 阻断项：人工视觉复核和需要真实凭据的外部环境用例未完成
 - P0 判定：历史 Critical 事故已经记录并完成恢复决策，但在交付与环境门禁通过前仍不能发布
 - 当前服务：smoke 完成后已停止本机临时 production server
 
 ## 8. 下一步
 
-1. 确认 GitHub Actions 对最终远端提交运行通过。
-2. 使用 `test-results/acceptance-evidence` 的 83 张自动截图继续执行人工视觉验收，重点核对暗色登录页、菜单 hover/折叠、页签缓存、固定表头和底边框。
-3. 重新配置独立验收用 S3、SMTP、OAuth、SMS 和 AI Provider，执行 environment 用例。
+1. 使用 `test-results/acceptance-evidence` 的 83 张自动截图继续执行人工视觉验收，重点核对暗色登录页、菜单 hover/折叠、页签缓存、固定表头和底边框。
+2. 重新配置独立验收用 S3、SMTP、OAuth、SMS 和 AI Provider，执行 environment 用例。
 
 ### 已完成的防复发措施
 
