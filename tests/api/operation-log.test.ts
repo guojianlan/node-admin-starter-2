@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "@/server/app";
 import { nowIso } from "@/server/db";
 import { sanitizeOperationLogDetails } from "@/server/services/operation-log-service";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -41,11 +42,13 @@ async function readJson<T = unknown>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
 
-async function login(username = "admin", password = "123456") {
+async function login(username = "admin", password?: string) {
+  const resolvedPassword =
+    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: resolvedPassword }),
   });
   const body = await readJson<{ token: string }>(response);
   return String(body.data?.token ?? "");
@@ -315,7 +318,7 @@ describe("operation log", () => {
         "content-type": "application/json",
         "x-request-id": "operation-log-login-success",
       },
-      body: JSON.stringify({ username: "admin", password: "123456" }),
+      body: JSON.stringify({ username: "admin", password: getAdminTestPassword() }),
     });
     const loginBody = await readJson<{ token: string }>(loginResponse);
     expect(loginResponse.status).toBe(200);

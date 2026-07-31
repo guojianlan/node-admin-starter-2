@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import bcrypt from "bcryptjs";
 import { app } from "@/server/app";
 import { nowIso } from "@/server/db";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
 type TestResponse = {
@@ -14,11 +15,13 @@ async function readJson(response: Response) {
   return (await response.json()) as TestResponse;
 }
 
-async function login(username = "admin", password = "123456") {
+async function login(username = "admin", password?: string) {
+  const resolvedPassword =
+    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: resolvedPassword }),
   });
   const body = await readJson(response);
   return { response, body, token: String(body.data?.token ?? "") };
@@ -64,7 +67,7 @@ describe("auth and permission API", () => {
     const missingCaptcha = await app.request("/api/system/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "123456" }),
+      body: JSON.stringify({ username: "admin", password: getAdminTestPassword() }),
     });
     const missingCaptchaBody = await readJson(missingCaptcha);
     expect(missingCaptcha.status).toBe(500);
@@ -84,7 +87,7 @@ describe("auth and permission API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         username: "admin",
-        password: "123456",
+        password: getAdminTestPassword(),
         captchaId: captchaData.captchaId,
         captchaCode: captchaData.debugCode,
       }),
@@ -161,7 +164,7 @@ describe("auth and permission API", () => {
     expect(confirm.status).toBe(200);
     expect(confirmBody.success).toBe(true);
 
-    const oldPassword = await login("admin", "123456");
+    const oldPassword = await login("admin", getAdminTestPassword());
     expect(oldPassword.response.status).toBe(500);
 
     const newPassword = await login("admin", "reset-password-123");

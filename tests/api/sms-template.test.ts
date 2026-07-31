@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "@/server/app";
 import { sqlite } from "@/server/db";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -18,11 +19,13 @@ async function readJson<T = unknown>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
 
-async function login(username = "admin", password = "123456") {
+async function login(username = "admin", password?: string) {
+  const resolvedPassword =
+    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: resolvedPassword }),
   });
   const body = await readJson<{ token: string }>(response);
   return { response, body, token: String(body.data?.token ?? "") };

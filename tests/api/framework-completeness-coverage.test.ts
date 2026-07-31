@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "@/server/app";
 import { GET as getUploadedFile } from "@/app/uploads/[...path]/route";
 import { nowIso } from "@/server/db";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -22,11 +23,13 @@ async function readJson<T = unknown>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
 
-async function login(username = "admin", password = "123456") {
+async function login(username = "admin", password?: string) {
+  const resolvedPassword =
+    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: resolvedPassword }),
   });
   const body = await readJson<{ token: string; mustChangePassword?: boolean }>(response);
   return { response, body, token: String(body.data?.token ?? "") };
@@ -1204,7 +1207,7 @@ describe("framework completeness coverage", () => {
     const weak = await app.request("/api/system/profile/password", {
       method: "PUT",
       headers: authHeaders(token),
-      body: JSON.stringify({ oldPassword: "123456", newPassword: "short" }),
+      body: JSON.stringify({ oldPassword: getAdminTestPassword(), newPassword: "short" }),
     });
     expect(weak.status).toBe(500);
 
@@ -1217,13 +1220,19 @@ describe("framework completeness coverage", () => {
     const change = await app.request("/api/system/profile/password", {
       method: "PUT",
       headers: authHeaders(token),
-      body: JSON.stringify({ oldPassword: "123456", newPassword: "new-password-123" }),
+      body: JSON.stringify({
+        oldPassword: getAdminTestPassword(),
+        newPassword: "new-password-123",
+      }),
     });
     expect(change.status).toBe(200);
     const reuse = await app.request("/api/system/profile/password", {
       method: "PUT",
       headers: authHeaders(token),
-      body: JSON.stringify({ oldPassword: "new-password-123", newPassword: "123456" }),
+      body: JSON.stringify({
+        oldPassword: "new-password-123",
+        newPassword: getAdminTestPassword(),
+      }),
     });
     expect(reuse.status).toBe(500);
 

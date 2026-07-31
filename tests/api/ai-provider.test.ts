@@ -3,6 +3,7 @@ import { app } from "@/server/app";
 import { sqlite } from "@/server/db";
 import { executeAgentTool, type AiToolRow } from "@/server/services/ai-agent-service";
 import { getAiRuntimeConfig } from "@/server/services/ai-provider-service";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -24,7 +25,7 @@ async function login() {
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username: "admin", password: "123456" }),
+    body: JSON.stringify({ username: "admin", password: getAdminTestPassword() }),
   });
   const body = await readJson<{ token: string }>(response);
   return String(body.data?.token ?? "");

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "@/server/app";
+import { getAdminTestPassword } from "../helpers/auth";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 
 type ApiResponse<T = unknown> = {
@@ -17,7 +18,9 @@ async function readJson<T = unknown>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
 
-async function login(username = "admin", password = "123456", userAgent = "test-agent") {
+async function login(username = "admin", password?: string, userAgent = "test-agent") {
+  const resolvedPassword =
+    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: {
@@ -25,7 +28,7 @@ async function login(username = "admin", password = "123456", userAgent = "test-
       "user-agent": userAgent,
       "x-forwarded-for": "198.51.100.9",
     },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password: resolvedPassword }),
   });
   const body = await readJson<{ token: string }>(response);
   return { response, body, token: String(body.data?.token ?? "") };
@@ -74,8 +77,8 @@ describe("framework completeness modules", () => {
   });
 
   it("tracks online sessions and can force a token offline", async () => {
-    const first = await login("admin", "123456", "first-agent");
-    const second = await login("admin", "123456", "second-agent");
+    const first = await login("admin", getAdminTestPassword(), "first-agent");
+    const second = await login("admin", getAdminTestPassword(), "second-agent");
 
     const list = await app.request("/api/system/online/user?keyword=first-agent&active=true", {
       headers: { authorization: `Bearer ${second.token}` },
@@ -125,7 +128,10 @@ describe("framework completeness modules", () => {
     const changePassword = await app.request("/api/system/profile/password", {
       method: "PUT",
       headers: authHeaders(token),
-      body: JSON.stringify({ oldPassword: "123456", newPassword: "new-password-123" }),
+      body: JSON.stringify({
+        oldPassword: getAdminTestPassword(),
+        newPassword: "new-password-123",
+      }),
     });
     expect(changePassword.status).toBe(200);
 
@@ -134,7 +140,7 @@ describe("framework completeness modules", () => {
     });
     expect(stillValid.status).toBe(200);
 
-    const oldLogin = await login("admin", "123456");
+    const oldLogin = await login("admin", getAdminTestPassword());
     expect(oldLogin.response.status).toBe(500);
     const newLogin = await login("admin", "new-password-123");
     expect(newLogin.response.status).toBe(200);
