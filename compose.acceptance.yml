@@ -1,0 +1,72 @@
+name: admin-base-acceptance
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin-base-minio
+      MINIO_ROOT_PASSWORD: admin-base-minio-secret
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - admin-base-minio-data:/data
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      - minio
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        until mc alias set local http://minio:9000 admin-base-minio admin-base-minio-secret; do sleep 2; done;
+        mc mb --ignore-existing local/admin-base-acceptance;
+        mc anonymous set download local/admin-base-acceptance;
+
+  mailpit:
+    image: axllent/mailpit:v1.27.8
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: 100
+    ports:
+      - "11025:1025"
+      - "18025:8025"
+    volumes:
+      - admin-base-mailpit-data:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.2
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-base-keycloak-secret
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./docker/acceptance/keycloak/admin-base-realm.json:/opt/keycloak/data/import/admin-base-realm.json:ro
+
+  external-mock:
+    image: node:22-alpine
+    command: node /app/mock-external-services.mjs
+    environment:
+      PORT: 8081
+    ports:
+      - "18081:8081"
+    volumes:
+      - ./docker/acceptance/mock-external-services.mjs:/app/mock-external-services.mjs:ro
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - admin-base-ollama-data:/root/.ollama
+
+volumes:
+  admin-base-minio-data:
+  admin-base-mailpit-data:
+  admin-base-ollama-data:

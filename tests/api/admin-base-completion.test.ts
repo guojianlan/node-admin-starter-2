@@ -63,6 +63,23 @@ describe("admin base completion scope", () => {
     await resetTestDatabase();
   });
 
+  it("normalizes PostgreSQL camel-case aliases used by storage backends", async () => {
+    const row = await sqlite
+      .prepare(
+        `SELECT
+          'access' AS accessKey,
+          'storage/uploads' AS rootPath,
+          's3' AS storageType`,
+      )
+      .get();
+
+    expect(row).toMatchObject({
+      accessKey: "access",
+      rootPath: "storage/uploads",
+      storageType: "s3",
+    });
+  });
+
   it("protects built-in users, roles, rules, storage and mail accounts", async () => {
     const token = await login();
     for (const path of [

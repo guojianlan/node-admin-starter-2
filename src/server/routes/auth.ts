@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -35,6 +35,21 @@ const resetPasswordSchema = z.object({
   password: z.string().min(1),
 });
 
+function firstForwardedValue(value?: string) {
+  return value?.split(",", 1)[0]?.trim();
+}
+
+function requestOrigin(c: Context<{ Variables: HonoVariables }>) {
+  const requestUrl = new URL(c.req.url);
+  const host =
+    firstForwardedValue(c.req.header("x-forwarded-host")) ||
+    c.req.header("host") ||
+    requestUrl.host;
+  const protocol =
+    firstForwardedValue(c.req.header("x-forwarded-proto")) || requestUrl.protocol.replace(/:$/, "");
+  return new URL(`${protocol}://${host}`).origin;
+}
+
 async function shouldRequireCaptcha(username: string) {
   const policy = await getSecurityPolicy();
   if (policy.captchaEnabled) return true;
@@ -69,10 +84,9 @@ authRoutes.get("/login/captcha", async (c) => {
 authRoutes.get("/oauth/:provider/redirect", async (c) => {
   const providerKey = c.req.param("provider");
   const url = new URL(c.req.url);
-  const origin = c.req.header("origin") || `${url.protocol}//${url.host}`;
   const redirectUrl = await createOauthRedirect({
     providerKey,
-    origin,
+    origin: requestOrigin(c),
     redirect: url.searchParams.get("redirect"),
   });
   return c.redirect(redirectUrl);
@@ -81,7 +95,7 @@ authRoutes.get("/oauth/:provider/redirect", async (c) => {
 authRoutes.get("/oauth/:provider/callback", async (c) => {
   const providerKey = c.req.param("provider");
   const url = new URL(c.req.url);
-  const origin = `${url.protocol}//${url.host}`;
+  const origin = requestOrigin(c);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state) throw new Error("OAuth callback 参数不完整");

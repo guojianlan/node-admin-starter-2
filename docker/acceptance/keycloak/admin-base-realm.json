@@ -1,0 +1,43 @@
+{
+  "realm": "admin-base",
+  "enabled": true,
+  "displayName": "Admin Base Local Acceptance",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "admin-base-local",
+      "name": "Admin Base Local OAuth",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "admin-base-local-secret",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:3000/api/system/oauth/keycloak-local/callback",
+        "http://localhost:3000/api/system/oauth/keycloak-local/callback"
+      ],
+      "webOrigins": ["http://127.0.0.1:3000", "http://localhost:3000"],
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin-local-oauth",
+      "enabled": true,
+      "email": "admin@xinadmin.test",
+      "emailVerified": true,
+      "firstName": "Local",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-oauth-password",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

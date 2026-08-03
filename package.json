@@ -23,7 +23,10 @@
     "smoke": "tsx scripts/smoke.ts",
     "test": "vitest run",
     "e2e": "playwright test",
-    "e2e:acceptance": "playwright test tests/e2e/page-acceptance.spec.ts"
+    "e2e:acceptance": "playwright test tests/e2e/page-acceptance.spec.ts",
+    "acceptance:deps:up": "docker compose -f compose.acceptance.yml up -d",
+    "acceptance:deps:down": "docker compose -f compose.acceptance.yml down -v --remove-orphans",
+    "acceptance:external": "tsx scripts/external-acceptance.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.3",

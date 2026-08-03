@@ -190,13 +190,13 @@ export async function getDefaultStorage() {
         endpoint,
         region,
         bucket,
-        access_key AS accessKey,
-        secret_key_encrypted AS secretKeyEncrypted,
-        base_url AS baseUrl,
-        root_path AS rootPath,
-        is_default AS isDefault,
+        access_key AS "accessKey",
+        secret_key_encrypted AS "secretKeyEncrypted",
+        base_url AS "baseUrl",
+        root_path AS "rootPath",
+        is_default AS "isDefault",
         status,
-        options_json AS optionsJson
+        options_json AS "optionsJson"
        FROM sys_storage
        WHERE deleted_at IS NULL AND is_default = true AND status = 1
        ORDER BY id ASC
@@ -219,13 +219,13 @@ export async function getStorageById(storageId: number) {
         endpoint,
         region,
         bucket,
-        access_key AS accessKey,
-        secret_key_encrypted AS secretKeyEncrypted,
-        base_url AS baseUrl,
-        root_path AS rootPath,
-        is_default AS isDefault,
+        access_key AS "accessKey",
+        secret_key_encrypted AS "secretKeyEncrypted",
+        base_url AS "baseUrl",
+        root_path AS "rootPath",
+        is_default AS "isDefault",
         status,
-        options_json AS optionsJson
+        options_json AS "optionsJson"
        FROM sys_storage
        WHERE id = ? AND deleted_at IS NULL`,
     )

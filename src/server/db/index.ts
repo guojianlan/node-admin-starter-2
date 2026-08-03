@@ -19,6 +19,7 @@ type QueryResultRow = Record<string, unknown>;
 type SqlExecutor = postgres.Sql | postgres.TransactionSql;
 
 const aliasMap: Record<string, string> = {
+  accesskey: "accessKey",
   abilitiesjson: "abilitiesJson",
   apikeyencrypted: "apiKeyEncrypted",
   avatarid: "avatarId",
@@ -91,11 +92,13 @@ const aliasMap: Record<string, string> = {
   risklevel: "riskLevel",
   roleids: "roleIds",
   rolenames: "roleNames",
+  rootpath: "rootPath",
   ruleids: "ruleIds",
   secretkeyencrypted: "secretKeyEncrypted",
   scopesjson: "scopesJson",
   storageid: "storageId",
   storagename: "storageName",
+  storagetype: "storageType",
   targetuseridsjson: "targetUserIdsJson",
   thumbnailpath: "thumbnailPath",
   thumbnailurl: "thumbnailUrl",

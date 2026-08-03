@@ -23,6 +23,9 @@ Skills 位于 [`.codex/skills`](.codex/skills)，模块生成输入契约见
 
 启动脚手架的维护规则和待办池见 [`docs/admin-base-startup-scaffold-maintenance.md`](docs/admin-base-startup-scaffold-maintenance.md)。
 
+S3、SMTP、OAuth、SMS 和 AI Provider 的 Docker 本地模拟及配置见
+[`docs/local-external-services-acceptance.md`](docs/local-external-services-acceptance.md)。
+
 已进入核心起手式：
 
 - 用户、角色、菜单权限、部门、字典、配置、文件、存储、邮件。

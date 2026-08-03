@@ -16,5 +16,6 @@ data/*.sqlite-*
 data/*.db
 storage/uploads/*
 !storage/uploads/.gitkeep
+storage/uploads-test/
 *.log
 tsconfig.tsbuildinfo

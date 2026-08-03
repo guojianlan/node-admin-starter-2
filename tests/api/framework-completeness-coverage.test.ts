@@ -24,8 +24,7 @@ async function readJson<T = unknown>(response: Response) {
 }
 
 async function login(username = "admin", password?: string) {
-  const resolvedPassword =
-    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
+  const resolvedPassword = password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -42,10 +41,7 @@ function authHeaders(token: string) {
   };
 }
 
-async function createNotice(
-  token: string,
-  payload: Record<string, unknown>,
-): Promise<number> {
+async function createNotice(token: string, payload: Record<string, unknown>): Promise<number> {
   const response = await app.request("/api/system/notice", {
     method: "POST",
     headers: authHeaders(token),
@@ -171,9 +167,11 @@ describe("framework completeness coverage", () => {
     const stats = await app.request(`/api/system/notice/${userNotice.id}/read-stats`, {
       headers: { authorization: `Bearer ${admin.token}` },
     });
-    const statsBody = await readJson<{ targetTotal: number; readTotal: number; unreadTotal: number }>(
-      stats,
-    );
+    const statsBody = await readJson<{
+      targetTotal: number;
+      readTotal: number;
+      unreadTotal: number;
+    }>(stats);
     expect(stats.status).toBe(200);
     expect(statsBody.data).toMatchObject({ targetTotal: 1, readTotal: 0, unreadTotal: 1 });
 
@@ -183,9 +181,8 @@ describe("framework completeness coverage", () => {
         headers: { authorization: `Bearer ${admin.token}` },
       },
     );
-    const unreadUsersBody = await readJson<Page<{ username: string; readStatus: string }>>(
-      unreadUsers,
-    );
+    const unreadUsersBody =
+      await readJson<Page<{ username: string; readStatus: string }>>(unreadUsers);
     expect(unreadUsers.status).toBe(200);
     expect(unreadUsersBody.data?.data).toContainEqual(
       expect.objectContaining({ username: "demo", readStatus: "unread" }),
@@ -217,9 +214,7 @@ describe("framework completeness coverage", () => {
         headers: { authorization: `Bearer ${admin.token}` },
       },
     );
-    const readUsersBody = await readJson<Page<{ username: string; readStatus: string }>>(
-      readUsers,
-    );
+    const readUsersBody = await readJson<Page<{ username: string; readStatus: string }>>(readUsers);
     expect(readUsersBody.data?.data).toContainEqual(
       expect.objectContaining({ username: "demo", readStatus: "read" }),
     );
@@ -254,9 +249,9 @@ describe("framework completeness coverage", () => {
       scope: "all",
     });
 
-    const row = (await sqlite
-      .prepare("SELECT content FROM sys_notice WHERE id = ?")
-      .get(id)) as { content: string } | undefined;
+    const row = (await sqlite.prepare("SELECT content FROM sys_notice WHERE id = ?").get(id)) as
+      | { content: string }
+      | undefined;
 
     expect(row?.content).toContain("<h5>五级标题</h5>");
     expect(row?.content).toContain("<strong>正文</strong>");
@@ -328,6 +323,20 @@ describe("framework completeness coverage", () => {
     const state = String(redirectUrl.searchParams.get("state"));
     expect(state).toHaveLength(48);
 
+    const proxiedRedirect = await app.request(
+      "http://0.0.0.0:3000/api/system/oauth/github/redirect",
+      {
+        headers: {
+          "x-forwarded-host": "admin.example.test",
+          "x-forwarded-proto": "https",
+        },
+      },
+    );
+    expect(proxiedRedirect.status).toBe(302);
+    expect(
+      new URL(String(proxiedRedirect.headers.get("location"))).searchParams.get("redirect_uri"),
+    ).toBe("https://admin.example.test/api/system/oauth/github/callback");
+
     const mismatch = await app.request(
       "/api/system/oauth/github/callback?code=bad-code&state=wrong-state",
       { headers: { "user-agent": "oauth-test" } },
@@ -338,7 +347,9 @@ describe("framework completeness coverage", () => {
     const failedRedirect = await app.request("/api/system/oauth/github/redirect", {
       headers: { origin: "http://localhost:3000" },
     });
-    const failedState = String(new URL(String(failedRedirect.headers.get("location"))).searchParams.get("state"));
+    const failedState = String(
+      new URL(String(failedRedirect.headers.get("location"))).searchParams.get("state"),
+    );
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 500 })),
@@ -433,7 +444,9 @@ describe("framework completeness coverage", () => {
     );
     expect(unmatchedCallback.status).toBe(500);
     expect(
-      await sqlite.prepare("SELECT id FROM sys_user WHERE email = 'oauth-new-user@example.com'").get(),
+      await sqlite
+        .prepare("SELECT id FROM sys_user WHERE email = 'oauth-new-user@example.com'")
+        .get(),
     ).toBeUndefined();
 
     await sqlite
@@ -483,7 +496,8 @@ describe("framework completeness coverage", () => {
         clientId: "custom-client",
         clientSecret: "custom-secret",
         scopes: "openid email",
-        userMapping: '{"id":"sub","username":"preferred_username","email":"email","nickname":"name"}',
+        userMapping:
+          '{"id":"sub","username":"preferred_username","email":"email","nickname":"name"}',
         autoCreateUser: false,
         status: 1,
         sort: 50,
@@ -504,9 +518,9 @@ describe("framework completeness coverage", () => {
     expect(listBody.data?.data[0]).not.toHaveProperty("clientSecretEncrypted");
 
     const loginOptions = await app.request("/api/system/login/options");
-    const loginOptionsBody = await readJson<{ oauthProviders: Array<{ key: string; authUrl: string }> }>(
-      loginOptions,
-    );
+    const loginOptionsBody = await readJson<{
+      oauthProviders: Array<{ key: string; authUrl: string }>;
+    }>(loginOptions);
     expect(loginOptionsBody.data?.oauthProviders).toContainEqual({
       key: "custom",
       name: "Custom OAuth",
@@ -550,7 +564,8 @@ describe("framework completeness coverage", () => {
     const accounts = await app.request("/api/system/profile/oauth/accounts", {
       headers: { authorization: `Bearer ${token}` },
     });
-    const accountsBody = await readJson<Array<{ provider: string; providerUsername: string }>>(accounts);
+    const accountsBody =
+      await readJson<Array<{ provider: string; providerUsername: string }>>(accounts);
     expect(accounts.status).toBe(200);
     expect(accountsBody.data).toContainEqual(
       expect.objectContaining({ provider: "custom", providerUsername: "admin-custom" }),
@@ -563,7 +578,9 @@ describe("framework completeness coverage", () => {
     });
     expect(unbind.status).toBe(200);
     const remaining = (await sqlite
-      .prepare("SELECT COUNT(1)::int AS total FROM sys_oauth_account WHERE user_id = 1 AND provider = 'custom'")
+      .prepare(
+        "SELECT COUNT(1)::int AS total FROM sys_oauth_account WHERE user_id = 1 AND provider = 'custom'",
+      )
       .get()) as { total: number };
     expect(Number(remaining.total)).toBe(0);
     expect(await latestOperation("profile.oauth", "unbind")).toMatchObject({
@@ -625,7 +642,9 @@ describe("framework completeness coverage", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://sms.example.test/send");
       expect(init?.method).toBe("POST");
-      expect((init?.headers as Record<string, string>)["x-admin-base-sms-access-key"]).toBe("sms-access");
+      expect((init?.headers as Record<string, string>)["x-admin-base-sms-access-key"]).toBe(
+        "sms-access",
+      );
       expect((init?.headers as Record<string, string>).authorization).toBe("Bearer sms-secret");
       expect(JSON.parse(String(init?.body))).toMatchObject({
         to: "13800138000",
@@ -1064,10 +1083,14 @@ describe("framework completeness coverage", () => {
   it("rejects unsafe uploads and validates chunk upload failure paths and cleanup", async () => {
     const { token } = await login();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'txt,png,svg' WHERE key = 'file.allowed_extensions'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'txt,png,svg' WHERE key = 'file.allowed_extensions'",
+      )
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'svg,html,js' WHERE key = 'file.denied_extensions'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'svg,html,js' WHERE key = 'file.denied_extensions'",
+      )
       .run();
 
     const svgForm = new FormData();
@@ -1104,7 +1127,9 @@ describe("framework completeness coverage", () => {
       .prepare("UPDATE sys_config_items SET values = 'exe' WHERE key = 'file.denied_extensions'")
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'isolated-download' WHERE key = 'file.dangerous_file_strategy'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'isolated-download' WHERE key = 'file.dangerous_file_strategy'",
+      )
       .run();
     const isolatedForm = new FormData();
     isolatedForm.append(
@@ -1131,13 +1156,12 @@ describe("framework completeness coverage", () => {
     expect(isolatedDownload.headers.get("x-content-type-options")).toBe("nosniff");
 
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'force-download' WHERE key = 'file.dangerous_file_strategy'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'force-download' WHERE key = 'file.dangerous_file_strategy'",
+      )
       .run();
     const forceForm = new FormData();
-    forceForm.append(
-      "file",
-      new File(["<h1>forced</h1>"], "forced.html", { type: "text/html" }),
-    );
+    forceForm.append("file", new File(["<h1>forced</h1>"], "forced.html", { type: "text/html" }));
     const forceUpload = await app.request("/api/system/file/list/upload", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
@@ -1211,7 +1235,9 @@ describe("framework completeness coverage", () => {
         totalParts: 1,
       }),
     });
-    const cancelUploadId = String((await readJson<{ uploadId: string }>(cancelInit)).data?.uploadId);
+    const cancelUploadId = String(
+      (await readJson<{ uploadId: string }>(cancelInit)).data?.uploadId,
+    );
     const cancelPart = new FormData();
     cancelPart.append("uploadId", cancelUploadId);
     cancelPart.append("partNumber", "1");
@@ -1254,13 +1280,19 @@ describe("framework completeness coverage", () => {
     ).rejects.toThrow();
 
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'txt,png' WHERE key = 'file.allowed_extensions'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'txt,png' WHERE key = 'file.allowed_extensions'",
+      )
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'svg,html,js' WHERE key = 'file.denied_extensions'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'svg,html,js' WHERE key = 'file.denied_extensions'",
+      )
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'reject' WHERE key = 'file.dangerous_file_strategy'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'reject' WHERE key = 'file.dangerous_file_strategy'",
+      )
       .run();
 
     const txtForm = new FormData();
@@ -1287,7 +1319,8 @@ describe("framework completeness coverage", () => {
     const references = await app.request(`/api/system/file/${txtUploadBody.data?.id}/references`, {
       headers: { authorization: `Bearer ${token}` },
     });
-    const referencesBody = await readJson<Array<{ module: string; resourceType: string }>>(references);
+    const referencesBody =
+      await readJson<Array<{ module: string; resourceType: string }>>(references);
     expect(referencesBody.data).toContainEqual(
       expect.objectContaining({ module: "test.module", resourceType: "article" }),
     );
@@ -1330,7 +1363,9 @@ describe("framework completeness coverage", () => {
     ).map((row) => row.id);
     for (const ruleId of deleteRuleIds) {
       await sqlite
-        .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+        .prepare(
+          "INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+        )
         .run(roleId, ruleId);
     }
     const userResult = await sqlite
@@ -1403,7 +1438,9 @@ describe("framework completeness coverage", () => {
         },
       });
       expect(forced.status).toBe(200);
-      expect(await sqlite.prepare("SELECT id FROM sys_file WHERE id = ?").get(fileId)).toBeUndefined();
+      expect(
+        await sqlite.prepare("SELECT id FROM sys_file WHERE id = ?").get(fileId),
+      ).toBeUndefined();
       expect(
         await sqlite.prepare("SELECT id FROM sys_file_reference WHERE file_id = ?").get(fileId),
       ).toBeUndefined();
@@ -1420,7 +1457,9 @@ describe("framework completeness coverage", () => {
 
   it("enforces password policies, lockouts, force-change reset and token revocation", async () => {
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = '12' WHERE key = 'security.password_min_length'")
+      .prepare(
+        "UPDATE sys_config_items SET values = '12' WHERE key = 'security.password_min_length'",
+      )
       .run();
     const { token } = await login();
     const weak = await app.request("/api/system/profile/password", {
@@ -1431,10 +1470,14 @@ describe("framework completeness coverage", () => {
     expect(weak.status).toBe(500);
 
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = '6' WHERE key = 'security.password_min_length'")
+      .prepare(
+        "UPDATE sys_config_items SET values = '6' WHERE key = 'security.password_min_length'",
+      )
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = '5' WHERE key = 'security.password_history_count'")
+      .prepare(
+        "UPDATE sys_config_items SET values = '5' WHERE key = 'security.password_history_count'",
+      )
       .run();
     const change = await app.request("/api/system/profile/password", {
       method: "PUT",
@@ -1493,7 +1536,9 @@ describe("framework completeness coverage", () => {
 
   it("blocks non-profile APIs during forced password change and releases after change", async () => {
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = 'true' WHERE key = 'security.force_change_on_first_login'")
+      .prepare(
+        "UPDATE sys_config_items SET values = 'true' WHERE key = 'security.force_change_on_first_login'",
+      )
       .run();
     const { token: adminToken } = await login();
     const create = await app.request("/api/system/user", {
@@ -1620,7 +1665,9 @@ describe("framework completeness coverage", () => {
       .prepare("UPDATE sys_config_items SET values = 'false' WHERE key = 'login.captcha_enabled'")
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = '1' WHERE key = 'login.captcha_after_failures'")
+      .prepare(
+        "UPDATE sys_config_items SET values = '1' WHERE key = 'login.captcha_after_failures'",
+      )
       .run();
 
     expect((await login("demo", "bad-password")).response.status).toBe(500);
@@ -1653,7 +1700,9 @@ describe("framework completeness coverage", () => {
       .prepare("UPDATE sys_config_items SET values = '2' WHERE key = 'login.rate_limit_attempts'")
       .run();
     await sqlite
-      .prepare("UPDATE sys_config_items SET values = '10' WHERE key = 'login.rate_limit_window_minutes'")
+      .prepare(
+        "UPDATE sys_config_items SET values = '10' WHERE key = 'login.rate_limit_window_minutes'",
+      )
       .run();
 
     const failedLogin = (ip: string) =>
@@ -1677,9 +1726,7 @@ describe("framework completeness coverage", () => {
     const differentIpBody = await readJson(differentIp);
     expect(differentIp.status).toBe(500);
     expect(differentIpBody.msg).toBe("账号或密码错误");
-    expect(
-      await countLoginRecords("IP 与账号组合登录请求过于频繁"),
-    ).toBe(1);
+    expect(await countLoginRecords("IP 与账号组合登录请求过于频繁")).toBe(1);
   });
 
   it("records high-value operations and protects log export and cleanup permissions", async () => {
@@ -1822,7 +1869,9 @@ describe("framework completeness coverage", () => {
     ).map((item) => item.id);
     for (const ruleId of ruleIds) {
       await sqlite
-        .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+        .prepare(
+          "INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+        )
         .run(roleId, ruleId);
     }
     const userResult = await sqlite
@@ -1849,7 +1898,7 @@ describe("framework completeness coverage", () => {
     });
     expect(save.status).toBe(200);
     const saved = (await sqlite
-      .prepare("SELECT key, \"values\" AS values FROM sys_config_items WHERE key IN (?, ?, ?)")
+      .prepare('SELECT key, "values" AS values FROM sys_config_items WHERE key IN (?, ?, ?)')
       .all("site_name", "file.mime_check_enabled", "file.magic_check_enabled")) as Array<{
       key: string;
       values: string;
