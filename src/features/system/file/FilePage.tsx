@@ -374,9 +374,10 @@ export function FilePage() {
   });
 
   const cleanTrashMutation = useMutation({
-    mutationFn: () => request<{ count: number }>("/api/system/file/list/clean-trash", {
-      method: "DELETE",
-    }),
+    mutationFn: () =>
+      request<{ count: number }>("/api/system/file/list/clean-trash", {
+        method: "DELETE",
+      }),
     onSuccess: (result) => {
       feedback.success(`已清空 ${result.count} 个文件`);
       void queryClient.invalidateQueries({ queryKey: ["system-file-trash"] });
@@ -840,6 +841,23 @@ export function FilePage() {
                 {selectedGroupId ? <Tag color="blue">当前文件夹</Tag> : <Tag>全量资源</Tag>}
               </div>
             }
+            emptyText={
+              <div className="system-file-empty-state">
+                <span className="system-file-empty-icon" aria-hidden="true">
+                  <FolderOpenOutlined />
+                </span>
+                <strong>{selectedGroupId ? "当前文件夹暂无文件" : "暂无文件"}</strong>
+                <AuthButton auth="system.file.upload">
+                  <Button
+                    type="primary"
+                    icon={<UploadOutlined />}
+                    onClick={() => setUploadOpen(true)}
+                  >
+                    上传文件
+                  </Button>
+                </AuthButton>
+              </div>
+            }
             enableCreate={false}
             enableUpdate={false}
             enableDelete={false}
@@ -848,7 +866,7 @@ export function FilePage() {
             showToolbarSettings={false}
             createTitle="上传文件"
             updateTitle="编辑文件"
-            tableMode="embedded"
+            tableMode="bounded"
             actionColumnWidth={76}
             tableProps={{
               size: "small",

@@ -11,23 +11,8 @@ import {
   SearchOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import {
-  Button,
-  Checkbox,
-  Divider,
-  Dropdown,
-  Input,
-  Popover,
-  Space,
-  Table,
-  Tooltip,
-} from "antd";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Checkbox, Divider, Dropdown, Input, Popover, Space, Table, Tooltip } from "antd";
 import type { TableProps } from "antd";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import type { SorterResult, TableCurrentDataSource } from "antd/es/table/interface";
@@ -62,6 +47,7 @@ type AdminDataTableProps<T extends object> = {
   searchCardClassName?: string;
   searchPlacement?: "inside" | "card";
   toolbarTitle?: React.ReactNode;
+  emptyText?: React.ReactNode;
   urlStatePrefix?: string;
   pagination?: false;
   tableMode?: "standard" | "bounded" | "embedded";
@@ -132,9 +118,10 @@ export function AdminDataTable<T extends object>({
   searchCardClassName,
   searchPlacement = "inside",
   toolbarTitle,
+  emptyText,
   urlStatePrefix,
   pagination,
-  tableMode = "standard",
+  tableMode = "bounded",
   actionColumnWidth = 148,
   tableProps,
   canUpdate,
@@ -189,6 +176,7 @@ export function AdminDataTable<T extends object>({
   const data = tableQuery.data?.data ?? [];
   const total = tableQuery.data?.total ?? 0;
   const loading = tableQuery.isLoading || tableQuery.isFetching;
+  const hasRows = data.length > 0;
 
   const reload = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
@@ -250,6 +238,8 @@ export function AdminDataTable<T extends object>({
         ...column,
         dataIndex: column.dataIndex,
         sorter: column.sorter,
+        fixed: hasRows ? column.fixed : undefined,
+        width: hasRows ? column.width : undefined,
       }));
 
     if (!enableActions) return visibleColumns;
@@ -257,8 +247,8 @@ export function AdminDataTable<T extends object>({
     visibleColumns.push({
       title: "操作栏",
       key: "__operate",
-      width: actionColumnWidth,
-      fixed: "right",
+      width: hasRows ? actionColumnWidth : undefined,
+      fixed: hasRows ? "right" : undefined,
       align: "center",
       className: "admin-table-action-cell",
       render: (_, record) => (
@@ -310,6 +300,7 @@ export function AdminDataTable<T extends object>({
     enableActions,
     enableDelete,
     enableUpdate,
+    hasRows,
     openForm,
     operateRender,
     reload,
@@ -375,6 +366,8 @@ export function AdminDataTable<T extends object>({
   };
 
   const tableScroll = useMemo<TableProps<T>["scroll"]>(() => {
+    if (!hasRows) return undefined;
+
     const configuredScroll = tableProps?.scroll;
     if (tableMode !== "bounded") {
       return configuredScroll ?? { x: "max-content" };
@@ -383,9 +376,16 @@ export function AdminDataTable<T extends object>({
     return {
       ...configuredScroll,
       x: configuredScroll?.x ?? "max-content",
-      y: configuredScroll?.y ?? "min(560px, calc(100dvh - 360px))",
+      y: configuredScroll?.y ?? "100%",
     };
-  }, [tableMode, tableProps?.scroll]);
+  }, [hasRows, tableMode, tableProps?.scroll]);
+
+  const tableRowSelection = tableProps?.rowSelection
+    ? {
+        ...tableProps.rowSelection,
+        fixed: hasRows ? tableProps.rowSelection.fixed : false,
+      }
+    : undefined;
 
   const columnSettingContent = (
     <div className="admin-column-settings">
@@ -482,22 +482,24 @@ export function AdminDataTable<T extends object>({
           </div>
         ) : null}
       </div>
-      <div
-        className={[
-          "admin-table-wrapper",
-          `admin-table-wrapper--${tableMode}`,
-        ].join(" ")}
-      >
+      <div className={["admin-table-wrapper", `admin-table-wrapper--${tableMode}`].join(" ")}>
         <Table<T>
           {...tableProps}
-          className={["admin-data-table", tableProps?.className].filter(Boolean).join(" ")}
+          className={[
+            "admin-data-table",
+            hasRows ? "admin-data-table--populated" : "admin-data-table--empty",
+            tableProps?.className,
+          ]
+            .filter(Boolean)
+            .join(" ")}
           rowKey={rowKey}
           columns={tableColumns}
           dataSource={data}
+          rowSelection={tableRowSelection}
           loading={loading}
           bordered={tableProps?.bordered ?? bordered}
           size={tableProps?.size ?? density}
-          locale={{ emptyText: <EmptyState /> }}
+          locale={{ emptyText: emptyText ?? <EmptyState /> }}
           scroll={tableScroll}
           pagination={
             pagination === false
