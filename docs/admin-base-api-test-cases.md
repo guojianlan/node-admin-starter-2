@@ -4,8 +4,8 @@
 
 ## 1. 范围与判定
 
-- 当前登记 API 操作：**220** 个。
-- 覆盖状态：`automated` 159，`planned` 47，`environment` 14。
+- 当前登记 API 操作：**224** 个。
+- 覆盖状态：`automated` 167，`planned` 43，`environment` 14。
 - 成功不仅指 HTTP 2xx，还必须同时满足响应契约、数据事实、权限范围、副作用和审计要求。
 - 失败不仅指返回错误，还必须验证无越权、无敏感信息泄漏、无部分写入、可追踪且可以恢复或重试。
 - `automated` 表示已有自动化覆盖该模块主路径，不等于该操作的每个分支均已自动化；逐接口自动化仍按风险递增补齐。
@@ -371,195 +371,199 @@
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-182 | `GET /api/system/module/generator/drafts` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
-| API-183 | `GET /api/system/module/generator/example` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
-| API-184 | `POST /api/system/module/generator/generate` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
-| API-185 | `POST /api/system/module/generator/publish` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-182 | `GET /api/system/module/generator/drafts` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-183 | `GET /api/system/module/generator/drafts/{name}/diff` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-184 | `GET /api/system/module/generator/capabilities` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-185 | `GET /api/system/module/generator/example` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-186 | `GET /api/system/module/generator/schema` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-187 | `POST /api/system/module/generator/generate` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-188 | `POST /api/system/module/generator/publish` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-189 | `POST /api/system/module/generator/rollback` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## notice / my
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-186 | `GET /api/system/notice/my` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
-| API-187 | `GET /api/system/notice/my/unread-count` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
-| API-188 | `POST /api/system/notice/my/{id}/read` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
-| API-189 | `POST /api/system/notice/my/read-all` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-190 | `GET /api/system/notice/my` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-191 | `GET /api/system/notice/my/unread-count` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-192 | `POST /api/system/notice/my/{id}/read` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-193 | `POST /api/system/notice/my/read-all` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## profile
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-190 | `GET /api/system/profile` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
-| API-191 | `PUT /api/system/profile` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-194 | `GET /api/system/profile` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-195 | `PUT /api/system/profile` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / deptTree
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-192 | `GET /api/system/role/deptTree` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-196 | `GET /api/system/role/deptTree` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / ruleList
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-193 | `GET /api/system/role/ruleList` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-197 | `GET /api/system/role/ruleList` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / users
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-194 | `GET /api/system/role/users/{id}` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-198 | `GET /api/system/role/users/{id}` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## rule / parent
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-195 | `GET /api/system/rule/parent` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-199 | `GET /api/system/rule/parent` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## rule / tree
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-196 | `GET /api/system/rule/tree` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-200 | `GET /api/system/rule/tree` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## settings / config
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-197 | `GET /api/system/settings/config/items` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
-| API-198 | `PUT /api/system/settings/config/save` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-201 | `GET /api/system/settings/config/items` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-202 | `PUT /api/system/settings/config/save` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## user / dept
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-199 | `GET /api/system/user/dept` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-203 | `GET /api/system/user/dept` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## user / role
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-200 | `GET /api/system/user/role` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-204 | `GET /api/system/user/role` | 1. 合法查询返回 HTTP 2xx、统一成功结构和与当前筛选/权限一致的数据<br>2. 分页、筛选、空结果或详情字段符合接口语义，不泄漏未授权记录 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 返回记录、总数、排序、过滤和数据权限范围与数据库事实一致 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 普通查询不修改业务数据；读取回执、最近活跃等显式例外必须可追踪<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## ai / approval
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-201 | `POST /api/system/ai/approval/{id}/decision` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-205 | `POST /api/system/ai/approval/{id}/decision` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## dept / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-202 | `POST /api/system/dept/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-206 | `POST /api/system/dept/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## notice / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-203 | `POST /api/system/notice/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-207 | `POST /api/system/notice/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## profile / avatar
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-204 | `POST /api/system/profile/avatar` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-208 | `POST /api/system/profile/avatar` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-205 | `POST /api/system/role/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-209 | `POST /api/system/role/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / copy
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-206 | `POST /api/system/role/copy/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-210 | `POST /api/system/role/copy/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / setRule
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-207 | `POST /api/system/role/setRule` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-211 | `POST /api/system/role/setRule` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## rule / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-208 | `POST /api/system/rule/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-212 | `POST /api/system/rule/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## storage / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-209 | `POST /api/system/storage/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-213 | `POST /api/system/storage/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## storage / test
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-210 | `POST /api/system/storage/test` | 1. 合法临时参数或已保存资源完成真实连接/请求测试，并返回可读的耗时与结果<br>2. 测试不覆盖已保存密钥，不改变默认资源或业务数据，流式测试能够正常结束 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `environment` |
+| API-214 | `POST /api/system/storage/test` | 1. 合法临时参数或已保存资源完成真实连接/请求测试，并返回可读的耗时与结果<br>2. 测试不覆盖已保存密钥，不改变默认资源或业务数据，流式测试能够正常结束 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `environment` |
 
 ## user / batch-delete
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-211 | `POST /api/system/user/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-215 | `POST /api/system/user/batch-delete` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## notice / publish
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-212 | `PUT /api/system/notice/publish/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-216 | `PUT /api/system/notice/publish/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## notice / revoke
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-213 | `PUT /api/system/notice/revoke/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-217 | `PUT /api/system/notice/revoke/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## profile / password
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-214 | `PUT /api/system/profile/password` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-218 | `PUT /api/system/profile/password` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## role / status
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-215 | `PUT /api/system/role/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-219 | `PUT /api/system/role/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## rule / hidden
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-216 | `PUT /api/system/rule/hidden/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-220 | `PUT /api/system/rule/hidden/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## rule / status
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-217 | `PUT /api/system/rule/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-221 | `PUT /api/system/rule/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## storage / default
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-218 | `PUT /api/system/storage/default/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-222 | `PUT /api/system/storage/default/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## storage / status
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-219 | `PUT /api/system/storage/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
+| API-223 | `PUT /api/system/storage/status/{id}` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 路径参数不存在、格式非法或目标越权时失败，不能误操作其他记录 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `planned` |
 
 ## user / resetPassword
 
 | ID | Operation | 成功标准 | 失败标准 | 数据断言 | 安全要求 | 副作用/审计 | 覆盖 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| API-220 | `PUT /api/system/user/resetPassword` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
+| API-224 | `PUT /api/system/user/resetPassword` | 1. 合法输入返回 HTTP 2xx 和统一成功结构，目标业务动作只执行一次<br>2. 数据库状态、缓存或外部资源状态与响应一致，刷新后仍可观察到结果 | 1. 未登录返回 401；缺少对应 ability 返回 403，且不产生业务写入<br>2. 非法查询或请求体、业务约束冲突和依赖失败时返回明确错误，不能产生半完成状态 | 1. 响应 code、message、data 或分页字段符合统一响应契约<br>2. 成功时目标记录和关联关系正确；失败时事务回滚且原数据保持不变 | 1. 接口要求有效 token 和声明的最小权限<br>2. 响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文 | 1. 写动作按风险要求写入操作日志，并记录 requestId、用户、动作和成功/失败状态<br>2. 缓存、token、文件、邮件、OAuth 或 AI 调用等副作用必须与事务结果一致且可重试 | `automated` |
 
 ## 执行记录
 

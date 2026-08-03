@@ -39,26 +39,33 @@ Use `--force` to replace an existing generated draft:
 corepack pnpm generate:module -- --config tmp/sms-config.module.json --force
 ```
 
-Replace these placeholders before use:
+## Template ownership
 
-| Placeholder | Meaning | Example |
-| --- | --- | --- |
-| `Example` | PascalCase feature name | `Project` |
-| `example` | camelCase or URL segment | `project` |
-| `sys_example` | database table | `sys_project` |
-| `system.example` | permission prefix | `system.project` |
-| `/system/example` | frontend route | `/system/project` |
+- `*.eta` files are the active, generator-owned templates used by `pnpm generate:module` and the
+  Web generator. Change these files when extending generated output.
+- `*.template` files are deprecated historical examples. They are kept only for migration context;
+  do not copy them into new modules and do not update them as a second generator implementation.
+- Source published from a Web draft becomes repository-owned code. The generator may show a diff,
+  but it must not overwrite source that differs from the draft.
 
-Minimum files to add for a production module:
+The placeholders below describe only the deprecated `*.template` examples:
 
-1. `schema.ts.template` -> schema export.
-2. `migration.sql.template` -> migration entry.
-3. `seed-rule.ts.template` -> route and action rules.
-4. `route.ts.template` -> backend CRUD route.
-5. `route-manifest.ts.template` -> frontend route manifest.
-6. `page.tsx.template` -> React feature page.
-7. `test.ts.template` -> API and permission tests.
-8. Register generated operations and pages in `tests/coverage/api-test-cases.ts` and `tests/coverage/page-test-cases.ts`.
+| Placeholder       | Meaning                  | Example           |
+| ----------------- | ------------------------ | ----------------- |
+| `Example`         | PascalCase feature name  | `Project`         |
+| `example`         | camelCase or URL segment | `project`         |
+| `sys_example`     | database table           | `sys_project`     |
+| `system.example`  | permission prefix        | `system.project`  |
+| `/system/example` | frontend route           | `/system/project` |
+
+The active Eta generator produces these minimum production artifacts:
+
+1. Schema and migration snippets.
+2. Seed route/action rules and route-manifest snippets.
+3. Backend CRUD route and system-route registration snippet.
+4. React feature page and App Router page.
+5. Focused API test.
+6. API/page acceptance inventory snippets for `tests/coverage/generated-module-test-cases.ts`.
 
 Run:
 

@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "contractVersion": { "default": 1, "type": "number", "const": 1 },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 48,
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "domain": { "default": "system", "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "table": { "type": "string", "maxLength": 63, "pattern": "^[a-z][a-z0-9_]*$" },
+    "schemaName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
+    "permission": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9]+)+$" },
+    "frontendPath": { "type": "string", "pattern": "^\\/[a-z0-9-/]+$" },
+    "backendBasePath": { "type": "string", "pattern": "^\\/[a-z0-9-/]+$" },
+    "apiPath": { "type": "string", "pattern": "^\\/api\\/[a-z0-9-/]+$" },
+    "featureDir": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "componentName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*Page$" },
+    "routeExportName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*Routes$" },
+    "parentId": {
+      "default": 180,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "parentKey": { "default": "system.settingsGroup", "type": "string" },
+    "seedBaseId": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+    "icon": { "default": "appstore", "type": "string" },
+    "order": {
+      "default": 100,
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "actions": {
+      "default": ["query", "create", "update", "delete", "batchDelete"],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "query",
+          "create",
+          "update",
+          "delete",
+          "batchDelete",
+          "restore",
+          "forceDelete",
+          "status"
+        ]
+      }
+    },
+    "fields": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "maxLength": 48, "pattern": "^[a-z][A-Za-z0-9]*$" },
+          "label": { "type": "string", "minLength": 1 },
+          "type": {
+            "default": "text",
+            "type": "string",
+            "enum": [
+              "text",
+              "textarea",
+              "richText",
+              "integer",
+              "boolean",
+              "select",
+              "datetime",
+              "date",
+              "image",
+              "json"
+            ]
+          },
+          "dbType": { "type": "string", "enum": ["text", "integer", "boolean", "timestamp"] },
+          "valueType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "password",
+              "textarea",
+              "richText",
+              "digit",
+              "select",
+              "treeSelect",
+              "radio",
+              "radioButton",
+              "switch",
+              "date",
+              "datetime",
+              "dateRange",
+              "image"
+            ]
+          },
+          "column": { "type": "string", "maxLength": 48, "pattern": "^[a-z][a-z0-9_]*$" },
+          "required": { "default": false, "type": "boolean" },
+          "nullable": { "type": "boolean" },
+          "default": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "number" },
+              { "type": "boolean" },
+              { "type": "null" }
+            ]
+          },
+          "unique": { "default": false, "type": "boolean" },
+          "search": { "type": "boolean" },
+          "searchOperator": { "type": "string", "enum": ["=", "like", "betweenDate"] },
+          "quickSearch": { "default": false, "type": "boolean" },
+          "sortable": { "default": false, "type": "boolean" },
+          "table": { "type": "boolean" },
+          "select": { "type": "boolean" },
+          "form": { "type": "boolean" },
+          "create": { "type": "boolean" },
+          "update": { "type": "boolean" },
+          "width": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+          "fullWidth": { "default": false, "type": "boolean" },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "minLength": 1 },
+                "value": {
+                  "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }]
+                }
+              },
+              "required": ["label", "value"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "type",
+          "required",
+          "unique",
+          "quickSearch",
+          "sortable",
+          "fullWidth"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "includeSystemField": { "default": true, "type": "boolean" },
+    "softDelete": { "default": true, "type": "boolean" },
+    "audit": { "default": true, "type": "boolean" },
+    "defaultSort": {
+      "type": "object",
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "order": { "type": "string", "enum": ["asc", "desc"] }
+      },
+      "required": ["field", "order"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "contractVersion",
+    "name",
+    "title",
+    "domain",
+    "parentId",
+    "parentKey",
+    "icon",
+    "order",
+    "actions",
+    "includeSystemField",
+    "softDelete",
+    "audit"
+  ],
+  "additionalProperties": false,
+  "$id": "https://admin-base.local/schemas/admin-module.schema.json",
+  "title": "Admin Base Module Contract",
+  "description": "Machine-readable contract shared by the Admin Base CLI, Web generator, and coding-agent workflow."
+}

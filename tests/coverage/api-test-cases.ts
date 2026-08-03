@@ -1,4 +1,5 @@
 import type { ApiTestCase, CoverageMode } from "./types";
+import { generatedModuleApiOperations } from "./generated-module-test-cases";
 
 const operationsByMethod = {
   DELETE: [
@@ -78,7 +79,10 @@ const operationsByMethod = {
     "/api/system/mail/account",
     "/api/system/menu",
     "/api/system/module/generator/drafts",
+    "/api/system/module/generator/drafts/{name}/diff",
+    "/api/system/module/generator/capabilities",
     "/api/system/module/generator/example",
+    "/api/system/module/generator/schema",
     "/api/system/notice",
     "/api/system/notice/{id}/read-stats",
     "/api/system/notice/{id}/read-users",
@@ -154,6 +158,7 @@ const operationsByMethod = {
     "/api/system/mail/account/test",
     "/api/system/module/generator/generate",
     "/api/system/module/generator/publish",
+    "/api/system/module/generator/rollback",
     "/api/system/notice",
     "/api/system/notice/batch-delete",
     "/api/system/notice/my/{id}/read",
@@ -245,15 +250,27 @@ export const publicApiOperations = new Set([
 ]);
 
 function areaFor(path: string) {
-  if (path === "/api/health" || path === "/api/ready" || path.includes("/doctor")) return "生产诊断";
-  if (path.includes("/password-reset") || path.includes("/login") || path.includes("/logout") || path.includes("/oauth/")) return "认证安全";
+  if (path === "/api/health" || path === "/api/ready" || path.includes("/doctor"))
+    return "生产诊断";
+  if (
+    path.includes("/password-reset") ||
+    path.includes("/login") ||
+    path.includes("/logout") ||
+    path.includes("/oauth/")
+  )
+    return "认证安全";
   const match = path.match(/^\/api\/system\/([^/]+)(?:\/([^/{]+))?/);
   return [match?.[1], match?.[2]].filter(Boolean).join(" / ") || "系统接口";
 }
 
 function coverageFor(path: string): CoverageMode {
   if (/\/(test|callback|redirect|download|stream)\b/.test(path)) return "environment";
-  if (/\/(health|ready|login|profile|notice|file|config|dict|role|user|operation|sms|ai)\b/.test(path)) return "automated";
+  if (
+    /\/(health|ready|login|profile|notice|file|config|dict|role|user|operation|sms|ai|module)\b/.test(
+      path,
+    )
+  )
+    return "automated";
   return "planned";
 }
 
@@ -262,8 +279,10 @@ function createCase(method: string, path: string): ApiTestCase {
   const isPublic = publicApiOperations.has(operation);
   const isRead = method === "GET";
   const isStream = path.endsWith("/stream");
-  const isDownload = path.startsWith("/uploads/") || path.includes("/download/") || path.endsWith("/export");
-  const isRedirect = path.includes("/oauth/") && (path.endsWith("/redirect") || path.endsWith("/callback"));
+  const isDownload =
+    path.startsWith("/uploads/") || path.includes("/download/") || path.endsWith("/export");
+  const isRedirect =
+    path.includes("/oauth/") && (path.endsWith("/redirect") || path.endsWith("/callback"));
   const isReadiness = path === "/api/health" || path === "/api/ready" || path.endsWith("/doctor");
   const isConnectionTest = path.endsWith("/test") || path.endsWith("/test/stream");
   const hasPathParameter = path.includes("{");
@@ -320,7 +339,9 @@ function createCase(method: string, path: string): ApiTestCase {
           ]
         : isStream
           ? [
-              isPublic ? "无效参数或上游拒绝时返回受控错误" : "未登录返回 401；缺少对应 ability 返回 403，且不启动模型或外部请求",
+              isPublic
+                ? "无效参数或上游拒绝时返回受控错误"
+                : "未登录返回 401；缺少对应 ability 返回 403，且不启动模型或外部请求",
               "参数非法、Provider 超时/断流、主动取消或工具失败时结束流并持久化准确状态，不重复消息、Step 或副作用",
             ]
           : [
@@ -366,7 +387,9 @@ function createCase(method: string, path: string): ApiTestCase {
     failures,
     dataAssertions,
     security: [
-      isPublic ? "接口允许匿名访问，但必须执行限流、状态校验或防枚举规则" : "接口要求有效 token 和声明的最小权限",
+      isPublic
+        ? "接口允许匿名访问，但必须执行限流、状态校验或防枚举规则"
+        : "接口要求有效 token 和声明的最小权限",
       "响应、日志和导出内容不得包含 password、token、secret、accessKey 或 clientSecret 明文",
     ],
     sideEffects: [
@@ -379,6 +402,9 @@ function createCase(method: string, path: string): ApiTestCase {
   };
 }
 
-export const apiTestCases: ApiTestCase[] = Object.entries(operationsByMethod).flatMap(
-  ([method, paths]) => paths.map((path) => createCase(method, path)),
-);
+export const apiTestCases: ApiTestCase[] = [
+  ...Object.entries(operationsByMethod).flatMap(([method, paths]) =>
+    paths.map((path) => createCase(method, path)),
+  ),
+  ...generatedModuleApiOperations.map((operation) => createCase(operation.method, operation.path)),
+];

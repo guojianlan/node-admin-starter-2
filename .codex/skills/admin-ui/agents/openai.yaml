@@ -1,0 +1,4 @@
+interface:
+  display_name: "Admin UI"
+  short_description: "Build consistent Admin Base pages and interactions"
+  default_prompt: "Use $admin-ui to build or refine an Admin Base business page with repository UI conventions."

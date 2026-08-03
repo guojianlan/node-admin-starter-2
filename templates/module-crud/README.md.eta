@@ -18,17 +18,26 @@ the real project source.
 | App Router page | `<%= module.targetPaths.appPage %>` |
 | Route manifest snippet | `<%= module.targetPaths.routeManifest %>` |
 | Seed rule snippet | `<%= module.targetPaths.seedRule %>` |
+| API acceptance snippet | `<%= module.targetPaths.apiTestCases %>` |
+| Page acceptance snippet | `<%= module.targetPaths.pageTestCases %>` |
 | API test | `<%= module.targetPaths.test %>` |
 
-## Apply Order
+## Publish Or Apply
 
-1. Paste `snippets/schema.entry.ts` into `<%= module.targetPaths.schema %>`.
-2. Paste `snippets/migration.sql` into the next migration block in `<%= module.targetPaths.migration %>`.
-3. Add `<%= module.table %>` to `triggerTables` when the table uses `updated_at`.
-4. Copy `<%= module.targetPaths.route %>`, `<%= module.targetPaths.feature %>`, `<%= module.targetPaths.appPage %>`, and `<%= module.targetPaths.test %>` into the project.
-5. Apply `snippets/system-route.entry.ts` to `<%= module.targetPaths.systemRoute %>`.
-6. Apply `snippets/route-manifest.entry.ts` to `<%= module.targetPaths.routeManifest %>`.
-7. Apply `snippets/seed-rule.entry.ts` to `<%= module.targetPaths.seedRule %>` and review the route ID.
+For a Web draft, use the per-file diff in `/system/module/generator`. The reviewed plan hash must
+still match before isolated preflight and source publication can start. Do not copy the files by
+hand before using that flow.
+
+For a CLI-only draft, apply the artifacts manually in this order:
+
+1. Apply the schema and migration snippets.
+2. Copy the backend route, feature page, App Router page, and API test.
+3. Apply the system-route, route-manifest, and seed-rule snippets; review the rule ID.
+4. Apply the API/page acceptance snippets to the generator-owned sections in
+   `tests/coverage/generated-module-test-cases.ts`.
+
+After publication, these files are repository-owned source. Regeneration is diff-only and must not
+overwrite hand-written changes.
 
 ## Module
 
@@ -42,8 +51,5 @@ the real project source.
 ## Validate
 
 ```bash
-corepack pnpm typecheck
-corepack pnpm lint
-corepack pnpm test -- <%= module.targetPaths.test %>
-corepack pnpm admin:check-routes
+corepack pnpm admin:verify --module <%= module.kebabName %>
 ```

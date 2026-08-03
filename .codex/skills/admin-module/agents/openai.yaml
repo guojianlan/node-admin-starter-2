@@ -1,0 +1,4 @@
+interface:
+  display_name: "Admin Module"
+  short_description: "Design and implement Admin Base business modules"
+  default_prompt: "Use $admin-module to design and implement a business module in this Admin Base repository."

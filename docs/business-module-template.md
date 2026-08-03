@@ -13,16 +13,45 @@ corepack pnpm generate:module -- --example > tmp/example.module.json
 corepack pnpm generate:module -- --config tmp/example.module.json
 ```
 
-The same draft-generation flow is available in the admin UI at `/system/module/generator`. The Web page opens a generation window, writes the draft to `generated/module-drafts/<module>`, previews generated files, and tracks whether the module is still a draft or has been published. Production environments reject generation and publish requests.
+The same draft-generation flow is available in the admin UI at `/system/module/generator`. The Web page opens a generation window, writes the draft to `generated/module-drafts/<module>`, previews generated files, and tracks whether the module is still a draft or has been published. Production environments reject generation, source diff preview, publish, and rollback requests.
+
+CLI, Web, and Coding Agent inputs share [`schemas/admin-module.schema.json`](../schemas/admin-module.schema.json), generated from `src/shared/module-generator-contract.ts`. After changing the contract, run:
+
+```bash
+corepack pnpm generate:module-schema
+```
 
 The generator is intentionally conservative. It renders a draft under
-`generated/module-drafts/<module>`. When you click publish in the Web UI, the framework applies the generated schema snippet, migration block, seed rule, route manifest entry, route registration, feature page, App Router page, backend route, and test file to the real project. Review the generated files before publishing:
+`generated/module-drafts/<module>`. Before publish, the Web UI builds a deterministic plan with a
+plan hash and per-file before/after diff. The framework applies that plan in an isolated project
+copy and runs module verification. Only a successful preflight can write the generated schema,
+migration, seed rule, route manifest, route registration, feature page, App Router page, backend
+route, machine-readable test cases, and API test into the real project.
 
 - `src/server/db/schema/index.ts`
 - `src/server/db/migrations.ts`
 - `src/server/db/seed/default-data.ts`
 - `src/router/route-manifest.ts`
 - `src/server/routes/system/index.ts`
+- `tests/coverage/generated-module-test-cases.ts`
+
+Each successful publish stores rollback metadata inside the ignored draft directory. Source files
+become repository-owned after publication. Regeneration cannot silently overwrite different files,
+and rollback refuses files changed by a developer after publication. Source rollback does not
+reverse database migrations that have already run. Source publication and rollback share one
+filesystem lock so two modules cannot concurrently rewrite the common schema, migration, seed,
+route-manifest, and test-inventory files.
+
+The shared contract is strict: module names use kebab-case, `query` is mandatory, field names and
+database columns must be unique, generated system fields are reserved, `status` requires an integer
+status field, and `restore` requires soft delete. Delete-family routes (`batchDelete`, `restore`,
+`forceDelete`) share the `<permission>.delete` ability. The generated table page has built-in UI for
+query/create/update/delete; batch delete, restore, force delete, and status routes require a module-
+specific UI extension. These limits are also returned by the capabilities endpoint.
+
+Drafts created before the current contract may not contain machine-readable API/page acceptance
+snippets. The diff endpoint rejects those drafts with a clear version error; regenerate them before
+publication instead of manually filling only the missing files.
 
 Automatic publish currently supports `domain: "system"` only. This matches the mounted backend route
 tree (`/api/system/*`) and avoids generating unreachable business-domain APIs. For example, a CMS
@@ -40,9 +69,23 @@ configuration CRUD module should be generated as a system-admin page:
   "parentKey": "system.settingsGroup",
   "fields": [
     { "name": "name", "label": "名称", "type": "text", "required": true, "search": true },
-    { "name": "code", "label": "编码", "type": "text", "required": true, "unique": true, "search": true },
+    {
+      "name": "code",
+      "label": "编码",
+      "type": "text",
+      "required": true,
+      "unique": true,
+      "search": true
+    },
     { "name": "value", "label": "配置值", "type": "textarea", "required": true },
-    { "name": "status", "label": "状态", "type": "integer", "valueType": "select", "required": true, "default": 1 }
+    {
+      "name": "status",
+      "label": "状态",
+      "type": "integer",
+      "valueType": "select",
+      "required": true,
+      "default": 1
+    }
   ]
 }
 ```
@@ -75,13 +118,13 @@ explicit routes.
 
 Use stable, predictable names:
 
-| Layer | Pattern | Example |
-| --- | --- | --- |
-| Table | `sys_<resource>` or business prefix | `sys_example` |
-| Permission prefix | `<domain>.<resource>` | `system.example` |
-| Route path | `/api/system/<resource>` | `/api/system/example` |
-| Frontend route | `/system/<resource>` | `/system/example` |
-| Feature component | `<Resource>Page` | `ExamplePage` |
+| Layer             | Pattern                             | Example               |
+| ----------------- | ----------------------------------- | --------------------- |
+| Table             | `sys_<resource>` or business prefix | `sys_example`         |
+| Permission prefix | `<domain>.<resource>`               | `system.example`      |
+| Route path        | `/api/system/<resource>`            | `/api/system/example` |
+| Frontend route    | `/system/<resource>`                | `/system/example`     |
+| Feature component | `<Resource>Page`                    | `ExamplePage`         |
 
 Action permissions should use the standard suffixes where possible:
 
@@ -90,13 +133,16 @@ query
 create
 update
 delete
-batchDelete
 export
 import
 status
 publish
 revoke
 ```
+
+For CRUD Factory routes, batch delete, restore, and force delete use the `delete` ability rather than
+creating separate authorization semantics. Custom business actions still require their own explicit
+permission.
 
 ## Schema
 
@@ -228,21 +274,19 @@ Every high-risk action must be logged:
 For updates, record a changed-field summary where possible:
 
 ```ts
-changedFields: [
-  { field: "name", before: "Old", after: "New" },
-]
+changedFields: [{ field: "name", before: "Old", after: "New" }];
 ```
 
 Mask sensitive fields such as `password`, `token`, `secret`, `accessKey`, `clientSecret`, and SMTP credentials.
 
 Risk levels:
 
-| Level | Typical actions |
-| --- | --- |
-| low | low-risk saves and routine system actions |
-| medium | create, update, upload, test connection |
-| high | delete, batch delete, reset password, force offline, publish, permission assignment |
-| critical | clear logs, force physical delete, destructive system-record attempts |
+| Level    | Typical actions                                                                     |
+| -------- | ----------------------------------------------------------------------------------- |
+| low      | low-risk saves and routine system actions                                           |
+| medium   | create, update, upload, test connection                                             |
+| high     | delete, batch delete, reset password, force offline, publish, permission assignment |
+| critical | clear logs, force physical delete, destructive system-record attempts               |
 
 ## Frontend Page
 

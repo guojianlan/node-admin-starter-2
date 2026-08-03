@@ -5,155 +5,22 @@ import { fileURLToPath } from "node:url";
 import { Eta } from "eta";
 import prettier from "prettier";
 import { z } from "zod";
+import {
+  adminModuleConfigSchema as configSchema,
+  adminModuleFieldSchema as fieldSchema,
+  defaultAdminModuleFields as defaultFields,
+  type AdminModuleConfig as ModuleConfig,
+  type AdminModuleDbType as DbType,
+  type AdminModuleFieldType as FieldType,
+  type AdminModulePrimitive as Primitive,
+  type AdminModuleValueType as ValueType,
+} from "../src/shared/module-generator-contract";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDir = dirname(scriptPath);
 const repoRoot = resolve(scriptDir, "..");
 const templateDir = join(repoRoot, "templates/module-crud");
 export const defaultOutputRoot = join(repoRoot, "tmp/generated/modules");
-
-const crudActions = [
-  "query",
-  "get",
-  "create",
-  "update",
-  "delete",
-  "batchDelete",
-  "restore",
-  "forceDelete",
-  "status",
-  "export",
-  "import",
-] as const;
-
-const fieldTypes = [
-  "text",
-  "textarea",
-  "richText",
-  "integer",
-  "boolean",
-  "select",
-  "datetime",
-  "date",
-  "image",
-  "json",
-] as const;
-
-const valueTypes = [
-  "text",
-  "password",
-  "textarea",
-  "richText",
-  "digit",
-  "select",
-  "treeSelect",
-  "radio",
-  "radioButton",
-  "switch",
-  "date",
-  "datetime",
-  "dateRange",
-  "image",
-] as const;
-
-const dbTypes = ["text", "integer", "boolean", "timestamp"] as const;
-
-const defaultFields = [
-  { name: "name", label: "名称", type: "text", required: true, search: true, quickSearch: true },
-  { name: "code", label: "编码", type: "text", required: true, unique: true, search: true, quickSearch: true },
-  { name: "remark", label: "备注", type: "textarea", table: false },
-  {
-    name: "status",
-    label: "状态",
-    type: "integer",
-    valueType: "select",
-    required: true,
-    default: 1,
-    search: true,
-    options: [
-      { label: "启用", value: 1 },
-      { label: "停用", value: 0 },
-    ],
-  },
-  { name: "sort", label: "排序", type: "integer", required: true, default: 0, sortable: true },
-] satisfies InputField[];
-
-const primitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-
-const optionSchema = z
-  .object({
-    label: z.string().min(1),
-    value: z.union([z.string(), z.number(), z.boolean()]),
-  })
-  .strict();
-
-const fieldSchema = z
-  .object({
-    name: z.string().regex(/^[a-z][A-Za-z0-9]*$/, "field name must be camelCase"),
-    label: z.string().min(1),
-    type: z.enum(fieldTypes).default("text"),
-    dbType: z.enum(dbTypes).optional(),
-    valueType: z.enum(valueTypes).optional(),
-    column: z.string().regex(/^[a-z][a-z0-9_]*$/).optional(),
-    required: z.boolean().default(false),
-    nullable: z.boolean().optional(),
-    default: primitiveSchema.optional(),
-    unique: z.boolean().default(false),
-    search: z.boolean().optional(),
-    searchOperator: z.enum(["=", "like", "betweenDate"]).optional(),
-    quickSearch: z.boolean().default(false),
-    sortable: z.boolean().default(false),
-    table: z.boolean().optional(),
-    select: z.boolean().optional(),
-    form: z.boolean().optional(),
-    create: z.boolean().optional(),
-    update: z.boolean().optional(),
-    width: z.number().int().positive().optional(),
-    fullWidth: z.boolean().default(false),
-    options: z.array(optionSchema).optional(),
-  })
-  .strict();
-
-const configSchema = z
-  .object({
-    name: z.string().min(1),
-    title: z.string().min(1),
-    description: z.string().optional(),
-    domain: z.string().regex(/^[a-z][a-z0-9-]*$/).default("system"),
-    table: z.string().regex(/^[a-z][a-z0-9_]*$/).optional(),
-    schemaName: z.string().regex(/^[a-z][A-Za-z0-9]*$/).optional(),
-    permission: z.string().regex(/^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/).optional(),
-    frontendPath: z.string().regex(/^\/[a-z0-9-/]+$/).optional(),
-    backendBasePath: z.string().regex(/^\/[a-z0-9-/]+$/).optional(),
-    apiPath: z.string().regex(/^\/api\/[a-z0-9-/]+$/).optional(),
-    featureDir: z.string().regex(/^[a-z0-9-]+$/).optional(),
-    componentName: z.string().regex(/^[A-Z][A-Za-z0-9]*Page$/).optional(),
-    routeExportName: z.string().regex(/^[a-z][A-Za-z0-9]*Routes$/).optional(),
-    parentId: z.number().int().positive().default(180),
-    parentKey: z.string().default("system.settingsGroup"),
-    seedBaseId: z.number().int().positive().optional(),
-    icon: z.string().default("appstore"),
-    order: z.number().int().default(100),
-    actions: z.array(z.enum(crudActions)).default(["query", "create", "update", "delete", "batchDelete"]),
-    fields: z.array(fieldSchema).optional(),
-    includeSystemField: z.boolean().default(true),
-    softDelete: z.boolean().default(true),
-    audit: z.boolean().default(true),
-    defaultSort: z
-      .object({
-        field: z.string().min(1),
-        order: z.enum(["asc", "desc"]),
-      })
-      .optional(),
-  })
-  .strict();
-
-type Primitive = z.infer<typeof primitiveSchema>;
-type InputField = z.input<typeof fieldSchema>;
-type ModuleConfig = z.infer<typeof configSchema>;
-type FieldType = (typeof fieldTypes)[number];
-type DbType = (typeof dbTypes)[number];
-type ValueType = (typeof valueTypes)[number];
 
 type NormalizedField = {
   name: string;
@@ -221,6 +88,7 @@ type NormalizedModule = ModuleConfig & {
   sortableFields: string[];
   optionConstants: string[];
   actionRuleEntries: Array<{ action: string; title: string; order: number }>;
+  apiOperations: Array<{ method: "DELETE" | "GET" | "POST" | "PUT"; path: string }>;
   targetPaths: Record<string, string>;
   generatedConfig: Record<string, unknown>;
   blocks: {
@@ -256,13 +124,46 @@ export const exampleModuleConfig = {
   icon: "message",
   order: 70,
   fields: [
-    { name: "name", label: "配置名称", type: "text", required: true, search: true, quickSearch: true },
-    { name: "provider", label: "服务商", type: "select", required: true, search: true, options: [{ label: "Webhook", value: "webhook" }] },
+    {
+      name: "name",
+      label: "配置名称",
+      type: "text",
+      required: true,
+      search: true,
+      quickSearch: true,
+    },
+    {
+      name: "provider",
+      label: "服务商",
+      type: "select",
+      required: true,
+      search: true,
+      options: [{ label: "Webhook", value: "webhook" }],
+    },
     { name: "endpoint", label: "Endpoint", type: "text", search: true },
     { name: "accessKey", label: "Access Key", type: "text", table: false },
-    { name: "secretKey", label: "Secret Key", type: "text", valueType: "password", table: false, select: false },
+    {
+      name: "secretKey",
+      label: "Secret Key",
+      type: "text",
+      valueType: "password",
+      table: false,
+      select: false,
+    },
     { name: "signature", label: "短信签名", type: "text" },
-    { name: "status", label: "状态", type: "integer", valueType: "select", required: true, default: 1, search: true, options: [{ label: "启用", value: 1 }, { label: "停用", value: 0 }] },
+    {
+      name: "status",
+      label: "状态",
+      type: "integer",
+      valueType: "select",
+      required: true,
+      default: 1,
+      search: true,
+      options: [
+        { label: "启用", value: 1 },
+        { label: "停用", value: 0 },
+      ],
+    },
     { name: "sort", label: "排序", type: "integer", required: true, default: 0, sortable: true },
     { name: "remark", label: "备注", type: "textarea", table: false },
   ],
@@ -468,6 +369,36 @@ function buildActionTitle(action: string, title: string) {
   return titles[action] ?? `${action}${title}`;
 }
 
+function permissionActionForCrud(action: ModuleConfig["actions"][number]) {
+  if (["batchDelete", "restore", "forceDelete"].includes(action)) return "delete" as const;
+  return action;
+}
+
+function buildApiOperations(actions: ModuleConfig["actions"], apiPath: string) {
+  const routes: Record<
+    ModuleConfig["actions"][number],
+    Array<{ method: "DELETE" | "GET" | "POST" | "PUT"; suffix: string }>
+  > = {
+    query: [{ method: "GET", suffix: "" }],
+    create: [{ method: "POST", suffix: "" }],
+    update: [{ method: "PUT", suffix: "/{id}" }],
+    delete: [{ method: "DELETE", suffix: "/{id}" }],
+    batchDelete: [{ method: "POST", suffix: "/batch-delete" }],
+    restore: [
+      { method: "PUT", suffix: "/restore/{id}" },
+      { method: "POST", suffix: "/batch-restore" },
+    ],
+    forceDelete: [
+      { method: "DELETE", suffix: "/force/{id}" },
+      { method: "POST", suffix: "/batch-force" },
+    ],
+    status: [{ method: "PUT", suffix: "/status/{id}" }],
+  };
+  return actions.flatMap((action) =>
+    routes[action].map((route) => ({ method: route.method, path: `${apiPath}${route.suffix}` })),
+  );
+}
+
 async function resolveSeedBaseId(configured?: number) {
   if (configured) return configured;
   const seedPath = join(repoRoot, "src/server/db/seed/default-data.ts");
@@ -529,8 +460,12 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
   const frontendSegments = pathSegments(frontendPath);
   const backendBasePath =
     parsed.backendBasePath ??
-    normalizePath(frontendSegments[0] === parsed.domain ? frontendSegments.slice(1).join("/") : kebabName);
-  const fields = (parsed.fields ?? defaultFields).map((field) => normalizeField(fieldSchema.parse(field)));
+    normalizePath(
+      frontendSegments[0] === parsed.domain ? frontendSegments.slice(1).join("/") : kebabName,
+    );
+  const fields = (parsed.fields ?? defaultFields).map((field) =>
+    normalizeField(fieldSchema.parse(field)),
+  );
   const schemaName = parsed.schemaName ?? `sys${pascalName}`;
   const permission = parsed.permission ?? `${parsed.domain}.${words.join(".")}`;
   const featureDir = parsed.featureDir ?? kebabName;
@@ -539,6 +474,8 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
   const seedBaseId = await resolveSeedBaseId(parsed.seedBaseId);
   const table = parsed.table ?? `sys_${snakeName}`;
   const apiPath = parsed.apiPath ?? `/api/${parsed.domain}${backendBasePath}`;
+  const apiOperations = buildApiOperations(parsed.actions, apiPath);
+  const permissionActions = [...new Set(parsed.actions.map(permissionActionForCrud))];
   const defaultSort =
     parsed.defaultSort ??
     (fields.find((field) => field.name === "sort")
@@ -587,10 +524,7 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
 
   const optionConstants = fields
     .filter((field) => field.options?.length)
-    .map(
-      (field) =>
-        `const ${field.name}Options = ${JSON.stringify(field.options, null, 2)};`,
-    );
+    .map((field) => `const ${field.name}Options = ${JSON.stringify(field.options, null, 2)};`);
 
   const listSelectLines = [
     `      id: ${schemaName}.id,`,
@@ -644,7 +578,8 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
       type: field.type,
     };
     if (field.dbType !== inferDbType(fieldSchema.parse(output))) output.dbType = field.dbType;
-    if (field.valueType !== inferValueType(fieldSchema.parse(output))) output.valueType = field.valueType;
+    if (field.valueType !== inferValueType(fieldSchema.parse(output)))
+      output.valueType = field.valueType;
     if (field.column !== camelToSnake(field.name)) output.column = field.column;
     if (field.required) output.required = true;
     if (field.nullable !== (!field.required && field.defaultValue === undefined)) {
@@ -669,6 +604,7 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
     return output;
   });
   const generatedConfig = {
+    contractVersion: parsed.contractVersion,
     name: parsed.name,
     title: parsed.title,
     description: parsed.description,
@@ -720,7 +656,11 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
     fields,
     imports: {
       pgCore: Array.from(pgCore).sort(),
-      schemaHelpers: ["timestamps", parsed.softDelete ? "softDelete" : "", parsed.audit ? "auditUsers" : ""].filter(Boolean),
+      schemaHelpers: [
+        "timestamps",
+        parsed.softDelete ? "softDelete" : "",
+        parsed.audit ? "auditUsers" : "",
+      ].filter(Boolean),
     },
     uniqueIndexes,
     regularIndexes,
@@ -730,11 +670,12 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
     quickSearchFields,
     sortableFields,
     optionConstants,
-    actionRuleEntries: parsed.actions.map((action, index) => ({
+    actionRuleEntries: permissionActions.map((action, index) => ({
       action,
       title: buildActionTitle(action, parsed.title),
       order: index + 1,
     })),
+    apiOperations,
     targetPaths: {
       schema: "src/server/db/schema/index.ts",
       migration: "src/server/db/migrations.ts",
@@ -744,11 +685,13 @@ async function normalizeModule(rawConfig: unknown): Promise<NormalizedModule> {
       appPage: appPath,
       routeManifest: "src/router/route-manifest.ts",
       seedRule: "src/server/db/seed/default-data.ts",
+      apiTestCases: "tests/coverage/generated-module-test-cases.ts",
+      pageTestCases: "tests/coverage/generated-module-test-cases.ts",
       test: `tests/api/${kebabName}.test.ts`,
     },
     generatedConfig,
     blocks: {
-      actionRules: parsed.actions
+      actionRules: permissionActions
         .map((action) => `    ["${action}", "${buildActionTitle(action, parsed.title)}"],`)
         .join("\n"),
       listSelect: listSelectLines.join("\n"),
@@ -775,6 +718,8 @@ function toTemplateTargets(moduleDraft: NormalizedModule): TemplateTarget[] {
     { template: "seed-rule.ts.eta", output: "snippets/seed-rule.entry.ts" },
     { template: "route-manifest.ts.eta", output: "snippets/route-manifest.entry.ts" },
     { template: "system-route.ts.eta", output: "snippets/system-route.entry.ts" },
+    { template: "api-test-cases.ts.eta", output: "snippets/api-test-cases.entry.ts" },
+    { template: "page-test-cases.ts.eta", output: "snippets/page-test-cases.entry.ts" },
     { template: "route.ts.eta", output: moduleDraft.targetPaths.route },
     { template: "page.tsx.eta", output: moduleDraft.targetPaths.feature },
     { template: "app-page.tsx.eta", output: moduleDraft.targetPaths.appPage },
@@ -787,7 +732,9 @@ async function readJson(path: string) {
   try {
     return JSON.parse(content) as unknown;
   } catch (error) {
-    throw new Error(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -831,7 +778,9 @@ export async function generateModuleDraft(input: {
   const moduleOutputRoot = join(resolve(input.outDir ?? defaultOutputRoot), moduleDraft.kebabName);
   if (await pathExists(moduleOutputRoot)) {
     if (!input.force) {
-      throw new Error(`output already exists: ${moduleOutputRoot}. Re-run with --force to replace it.`);
+      throw new Error(
+        `output already exists: ${moduleOutputRoot}. Re-run with --force to replace it.`,
+      );
     }
     await rm(moduleOutputRoot, { recursive: true, force: true });
   }
@@ -857,11 +806,7 @@ export async function generateModuleDraft(input: {
   };
 }
 
-async function generateModule(input: {
-  configPath: string;
-  outDir: string;
-  force: boolean;
-}) {
+async function generateModule(input: { configPath: string; outDir: string; force: boolean }) {
   const rawConfig = await readJson(input.configPath);
   const result = await generateModuleDraft({
     rawConfig,

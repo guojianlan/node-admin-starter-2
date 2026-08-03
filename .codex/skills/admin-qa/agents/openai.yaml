@@ -1,0 +1,4 @@
+interface:
+  display_name: "Admin QA"
+  short_description: "Verify Admin Base modules and framework changes"
+  default_prompt: "Use $admin-qa to verify this Admin Base change with the required tests and governance checks."

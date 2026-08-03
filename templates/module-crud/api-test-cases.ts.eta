@@ -1,0 +1,3 @@
+<% for (const operation of module.apiOperations) { %>
+  { method: "<%= operation.method %>", path: "<%= operation.path %>" },
+<% } %>

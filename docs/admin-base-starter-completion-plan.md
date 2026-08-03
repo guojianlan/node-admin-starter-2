@@ -1,5 +1,11 @@
 # Admin Base 起手式完成方案
 
+> 历史计划说明：本文记录 2026-06-22 时的范围决策，其中“代码生成器、AI、SMS 暂缓”等结论
+> 已被后续实现取代。当前完成度以
+> [`admin-base-framework-completion-status.md`](admin-base-framework-completion-status.md) 为准，新增模块
+> 使用 [`business-module-template.md`](business-module-template.md) 和
+> [`ai-development-guide.md`](ai-development-guide.md)。
+
 > 创建日期：2026-06-22  
 > 目标：把当前 Admin Base 从“基础后台已经可用”推进到“可以作为长期业务项目起手式”的完成状态。  
 > 适用范围：后续实现、验收、任务拆分均以本文为主；长期背景参考 `docs/admin-base-technical-design.md`，PG/CRUD 迁移细节参考 `docs/admin-base-migration-optimization-plan.md`。

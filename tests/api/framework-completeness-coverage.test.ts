@@ -663,6 +663,7 @@ describe("framework completeness coverage", () => {
       "src/server/db/seed/default-data.ts",
       "src/server/routes/system/index.ts",
       "src/router/route-manifest.ts",
+      "tests/coverage/generated-module-test-cases.ts",
     ].map((item) => path.join(process.cwd(), item));
     const generatedSourceFiles = [
       "src/server/routes/system/qa-note.ts",
@@ -681,6 +682,29 @@ describe("framework completeness coverage", () => {
     expect(example.status).toBe(200);
     expect(exampleBody.data?.name).toBe("sms-config");
 
+    const capabilities = await app.request("/api/system/module/generator/capabilities", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const capabilitiesBody = await readJson<{
+      contractVersion: number;
+      schemaPath: string;
+      publish: { supportedDomains: string[]; isolatedPreflight: boolean };
+    }>(capabilities);
+    expect(capabilities.status).toBe(200);
+    expect(capabilitiesBody.data).toMatchObject({
+      contractVersion: 1,
+      schemaPath: "schemas/admin-module.schema.json",
+      publish: { supportedDomains: ["system"], isolatedPreflight: true },
+    });
+
+    const schema = await app.request("/api/system/module/generator/schema", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const schemaBody = await readJson<{ $id: string; required: string[] }>(schema);
+    expect(schema.status).toBe(200);
+    expect(schemaBody.data?.$id).toContain("admin-module.schema.json");
+    expect(schemaBody.data?.required).toEqual(expect.arrayContaining(["name", "title"]));
+
     try {
       const generate = await app.request("/api/system/module/generator/generate", {
         method: "POST",
@@ -697,9 +721,31 @@ describe("framework completeness coverage", () => {
             seedBaseId: 900,
             icon: "code",
             fields: [
-              { name: "name", label: "名称", type: "text", required: true, search: true, quickSearch: true },
-              { name: "code", label: "编码", type: "text", required: true, unique: true, search: true },
-              { name: "status", label: "状态", type: "integer", valueType: "select", required: true, default: 1, search: true },
+              {
+                name: "name",
+                label: "名称",
+                type: "text",
+                required: true,
+                search: true,
+                quickSearch: true,
+              },
+              {
+                name: "code",
+                label: "编码",
+                type: "text",
+                required: true,
+                unique: true,
+                search: true,
+              },
+              {
+                name: "status",
+                label: "状态",
+                type: "integer",
+                valueType: "select",
+                required: true,
+                default: 1,
+                search: true,
+              },
               { name: "remark", label: "备注", type: "textarea", table: false },
             ],
           },
@@ -729,25 +775,55 @@ describe("framework completeness coverage", () => {
         headers: { authorization: `Bearer ${token}` },
       });
       const draftsBody = await readJson<Array<{ name: string; status: string }>>(drafts);
-      expect(draftsBody.data).toContainEqual(expect.objectContaining({ name: "qa-note", status: "draft" }));
+      expect(draftsBody.data).toContainEqual(
+        expect.objectContaining({ name: "qa-note", status: "draft" }),
+      );
+
+      const diff = await app.request("/api/system/module/generator/drafts/qa-note/diff", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const diffBody = await readJson<{
+        ready: boolean;
+        planHash: string;
+        changes: Array<{ path: string; status: string }>;
+      }>(diff);
+      expect(diff.status).toBe(200);
+      expect(diffBody.data?.ready).toBe(true);
+      expect(diffBody.data?.planHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(diffBody.data?.changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "src/server/routes/system/qa-note.ts",
+            status: "create",
+          }),
+          expect.objectContaining({
+            path: "tests/coverage/generated-module-test-cases.ts",
+            status: "modify",
+          }),
+        ]),
+      );
 
       const publish = await app.request("/api/system/module/generator/publish", {
         method: "POST",
         headers: authHeaders(token),
-        body: JSON.stringify({ name: "qa-note" }),
+        body: JSON.stringify({ name: "qa-note", planHash: diffBody.data?.planHash }),
       });
-      expect(publish.status).toBe(200);
-      const routeManifest = await fs.readFile(path.join(process.cwd(), "src/router/route-manifest.ts"), "utf8");
+      const publishBody = await readJson(publish);
+      expect(publish.status, publishBody.msg).toBe(200);
+      const routeManifest = await fs.readFile(
+        path.join(process.cwd(), "src/router/route-manifest.ts"),
+        "utf8",
+      );
       expect(routeManifest).toContain('key: "system.qa.note"');
       expect(routeManifest).toContain(
         "  component: QaNotePage,\n},\n// admin-base-generator:end qa-note",
       );
-      expect(await fs.readFile(path.join(process.cwd(), "src/server/db/schema/index.ts"), "utf8")).toContain(
-        "export const sysQaNote",
-      );
-      expect(await fs.readFile(path.join(process.cwd(), "src/server/routes/system/index.ts"), "utf8")).toContain(
-        "qaNoteRoutes",
-      );
+      expect(
+        await fs.readFile(path.join(process.cwd(), "src/server/db/schema/index.ts"), "utf8"),
+      ).toContain("export const sysQaNote");
+      expect(
+        await fs.readFile(path.join(process.cwd(), "src/server/routes/system/index.ts"), "utf8"),
+      ).toContain("qaNoteRoutes");
       for (const file of generatedSourceFiles) {
         expect(await fs.stat(file)).toBeTruthy();
       }
@@ -755,7 +831,8 @@ describe("framework completeness coverage", () => {
       const draftsAfterPublish = await app.request("/api/system/module/generator/drafts", {
         headers: { authorization: `Bearer ${token}` },
       });
-      const draftsAfterPublishBody = await readJson<Array<{ name: string; status: string }>>(draftsAfterPublish);
+      const draftsAfterPublishBody =
+        await readJson<Array<{ name: string; status: string }>>(draftsAfterPublish);
       expect(draftsAfterPublishBody.data).toContainEqual(
         expect.objectContaining({ name: "qa-note", status: "published" }),
       );
@@ -763,12 +840,152 @@ describe("framework completeness coverage", () => {
         success: true,
         status: 200,
       });
+
+      const generatedRoute = path.join(process.cwd(), "src/server/routes/system/qa-note.ts");
+      const publishedRouteContent = await fs.readFile(generatedRoute, "utf8");
+      await fs.writeFile(generatedRoute, `${publishedRouteContent}\n// manual change\n`);
+      const protectedRollback = await app.request("/api/system/module/generator/rollback", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "qa-note" }),
+      });
+      const protectedRollbackBody = await readJson(protectedRollback);
+      expect(protectedRollback.status).toBe(500);
+      expect(protectedRollbackBody.msg).toContain("发布后文件已被修改");
+      await fs.writeFile(generatedRoute, publishedRouteContent);
+
+      const rollback = await app.request("/api/system/module/generator/rollback", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: "qa-note" }),
+      });
+      const rollbackBody = await readJson<{ rolledBack: string[]; databaseNotice: string }>(
+        rollback,
+      );
+      expect(rollback.status).toBe(200);
+      expect(rollbackBody.data?.rolledBack).toContain("src/server/routes/system/qa-note.ts");
+      expect(rollbackBody.data?.databaseNotice).toContain("migration");
+      expect(
+        await fs.readFile(path.join(process.cwd(), "src/router/route-manifest.ts"), "utf8"),
+      ).not.toContain("admin-base-generator:start qa-note");
+      await expect(fs.stat(generatedRoute)).rejects.toThrow();
+      expect(await latestOperation("system.moduleGenerator", "rollback")).toMatchObject({
+        success: true,
+        status: 200,
+      });
     } finally {
       for (const [file, content] of backups) await fs.writeFile(file, content);
       for (const file of generatedSourceFiles) await fs.rm(file, { force: true });
-      await fs.rm(path.join(process.cwd(), "src/app/(admin)/system/qa"), { recursive: true, force: true });
-      await fs.rm(path.join(process.cwd(), "src/features/system/qa-note"), { recursive: true, force: true });
+      await fs.rm(path.join(process.cwd(), "src/app/(admin)/system/qa"), {
+        recursive: true,
+        force: true,
+      });
+      await fs.rm(path.join(process.cwd(), "src/features/system/qa-note"), {
+        recursive: true,
+        force: true,
+      });
       await fs.rm(generatedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale publish plans and keeps failed preflight changes out of real source", async () => {
+    const { token } = await login();
+    const moduleName = "qa-preflight";
+    const generatedRoot = path.join(process.cwd(), `generated/module-drafts/${moduleName}`);
+    const draftRoute = path.join(generatedRoot, `src/server/routes/system/${moduleName}.ts`);
+    const realRoute = path.join(process.cwd(), `src/server/routes/system/${moduleName}.ts`);
+    const manifestPath = path.join(process.cwd(), "src/router/route-manifest.ts");
+    const manifestBefore = await fs.readFile(manifestPath, "utf8");
+    await fs.rm(generatedRoot, { recursive: true, force: true });
+
+    try {
+      const generate = await app.request("/api/system/module/generator/generate", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          force: true,
+          config: {
+            name: moduleName,
+            title: "预检保护",
+            frontendPath: "/system/qa/preflight",
+            seedBaseId: 940,
+            fields: [{ name: "name", label: "名称", required: true }],
+          },
+        }),
+      });
+      expect(generate.status).toBe(200);
+
+      const firstDiff = await app.request(
+        `/api/system/module/generator/drafts/${moduleName}/diff`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      const firstDiffBody = await readJson<{ planHash: string }>(firstDiff);
+      expect(firstDiff.status).toBe(200);
+
+      const originalDraftRoute = await fs.readFile(draftRoute, "utf8");
+      await fs.writeFile(draftRoute, `${originalDraftRoute}\n// draft changed after review\n`);
+      const stalePublish = await app.request("/api/system/module/generator/publish", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: moduleName, planHash: firstDiffBody.data?.planHash }),
+      });
+      const stalePublishBody = await readJson(stalePublish);
+      expect(stalePublish.status).toBe(500);
+      expect(stalePublishBody.msg).toContain("重新检查发布差异");
+      await expect(fs.stat(realRoute)).rejects.toThrow();
+      expect(await fs.readFile(manifestPath, "utf8")).toBe(manifestBefore);
+
+      await fs.writeFile(
+        draftRoute,
+        `${originalDraftRoute}\nconst packageBPreflightTypeError: string = 123;\n`,
+      );
+      const invalidDiff = await app.request(
+        `/api/system/module/generator/drafts/${moduleName}/diff`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      const invalidDiffBody = await readJson<{ planHash: string }>(invalidDiff);
+      expect(invalidDiff.status).toBe(200);
+
+      const failedPublish = await app.request("/api/system/module/generator/publish", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ name: moduleName, planHash: invalidDiffBody.data?.planHash }),
+      });
+      const failedPublishBody = await readJson(failedPublish);
+      expect(failedPublish.status).toBe(500);
+      expect(failedPublishBody.msg).toContain("发布预检失败");
+      await expect(fs.stat(realRoute)).rejects.toThrow();
+      expect(await fs.readFile(manifestPath, "utf8")).toBe(manifestBefore);
+
+      const recordsRoot = path.join(generatedRoot, ".admin-base/publish");
+      const publishIds = (await fs.readdir(recordsRoot)).sort().reverse();
+      const failedRecord = JSON.parse(
+        await fs.readFile(path.join(recordsRoot, publishIds[0], "record.json"), "utf8"),
+      ) as {
+        status: string;
+        appliedPaths: string[];
+        validation: { command: string; passed: boolean; output: string } | null;
+      };
+      expect(failedRecord).toMatchObject({
+        status: "failed",
+        appliedPaths: [],
+        validation: { command: "pnpm typecheck", passed: false },
+      });
+      expect(failedRecord.validation?.output).toContain("qa-preflight.ts");
+      expect(failedRecord.validation?.output).toContain("TS2322");
+
+      await fs.rm(path.join(generatedRoot, "snippets/api-test-cases.entry.ts"));
+      const oldDraft = await app.request(`/api/system/module/generator/drafts/${moduleName}/diff`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const oldDraftBody = await readJson(oldDraft);
+      expect(oldDraft.status).toBe(500);
+      expect(oldDraftBody.msg).toContain("草稿版本过旧或不完整");
+      expect(oldDraftBody.msg).toContain("api-test-cases.entry.ts");
+    } finally {
+      await fs.rm(realRoute, { force: true });
+      await fs.rm(generatedRoot, { recursive: true, force: true });
+      await fs.writeFile(manifestPath, manifestBefore);
     }
   });
 
@@ -790,12 +1007,12 @@ describe("framework completeness coverage", () => {
             domain: "system",
             permission: "system.qa.userConflict",
             frontendPath: "/system/user",
+            backendBasePath: "/user",
+            table: "sys_user",
             parentId: 180,
             parentKey: "system.settingsGroup",
             seedBaseId: 930,
-            fields: [
-              { name: "name", label: "名称", type: "text", required: true },
-            ],
+            fields: [{ name: "name", label: "名称", type: "text", required: true }],
           },
         }),
       });
@@ -809,6 +1026,8 @@ describe("framework completeness coverage", () => {
       const publishBody = await readJson(publish);
       expect(publish.status).toBe(500);
       expect(publishBody.msg).toContain("页面路由已存在");
+      expect(publishBody.msg).toContain("数据库表已存在：sys_user");
+      expect(publishBody.msg).toContain("后端 CRUD 路径已存在：/user");
       expect(await fs.readFile(manifestPath, "utf8")).toBe(manifestBefore);
 
       const previousNodeEnv = process.env.NODE_ENV;

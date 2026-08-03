@@ -70,146 +70,520 @@
     { "name": "doctor" }
   ],
   "paths": {
-    "/health": { "get": { "tags": ["doctor"], "summary": "Basic health check", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/ready": { "get": { "tags": ["doctor"], "summary": "Public readiness check", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/login/options": { "get": { "tags": ["auth"], "summary": "Login options, captcha policy, and public OAuth providers", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/login/captcha": { "get": { "tags": ["auth"], "summary": "Captcha SVG", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/login": { "post": { "tags": ["auth"], "summary": "Password login", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" }, "400": { "$ref": "#/components/responses/OK" } } } },
-    "/system/logout": { "post": { "tags": ["auth"], "summary": "Logout current token", "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/info": { "get": { "tags": ["auth"], "summary": "Current user, permissions, menus, data scope, and mustChangePassword", "responses": { "200": { "$ref": "#/components/responses/OK" }, "401": { "$ref": "#/components/responses/Unauthorized" } } } },
-    "/system/menu": { "get": { "tags": ["auth"], "summary": "Current user menu tree", "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/password-reset/request": { "post": { "tags": ["auth"], "summary": "Request password reset mail", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
-    "/system/password-reset/confirm": { "post": { "tags": ["auth"], "summary": "Confirm password reset", "security": [], "responses": { "200": { "$ref": "#/components/responses/OK" } } } },
+    "/health": {
+      "get": {
+        "tags": ["doctor"],
+        "summary": "Basic health check",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": ["doctor"],
+        "summary": "Public readiness check",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/login/options": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Login options, captcha policy, and public OAuth providers",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/login/captcha": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Captcha SVG",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/login": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Password login",
+        "security": [],
+        "responses": {
+          "200": { "$ref": "#/components/responses/OK" },
+          "400": { "$ref": "#/components/responses/OK" }
+        }
+      }
+    },
+    "/system/logout": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Logout current token",
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/info": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Current user, permissions, menus, data scope, and mustChangePassword",
+        "responses": {
+          "200": { "$ref": "#/components/responses/OK" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/system/menu": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Current user menu tree",
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/password-reset/request": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Request password reset mail",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
+    "/system/password-reset/confirm": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Confirm password reset",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/OK" } }
+      }
+    },
 
-    "/system/user": { "get": { "tags": ["system"], "summary": "User page query" }, "post": { "tags": ["system"], "summary": "Create user" } },
-    "/system/user/{id}": { "put": { "tags": ["system"], "summary": "Update user" }, "delete": { "tags": ["system"], "summary": "Delete user" } },
-    "/system/user/password": { "put": { "tags": ["system"], "summary": "Admin reset user password" } },
-    "/system/role": { "get": { "tags": ["system"], "summary": "Role page query" }, "post": { "tags": ["system"], "summary": "Create role" } },
-    "/system/role/{id}": { "put": { "tags": ["system"], "summary": "Update role" }, "delete": { "tags": ["system"], "summary": "Delete role" } },
+    "/system/user": {
+      "get": { "tags": ["system"], "summary": "User page query" },
+      "post": { "tags": ["system"], "summary": "Create user" }
+    },
+    "/system/user/{id}": {
+      "put": { "tags": ["system"], "summary": "Update user" },
+      "delete": { "tags": ["system"], "summary": "Delete user" }
+    },
+    "/system/user/password": {
+      "put": { "tags": ["system"], "summary": "Admin reset user password" }
+    },
+    "/system/role": {
+      "get": { "tags": ["system"], "summary": "Role page query" },
+      "post": { "tags": ["system"], "summary": "Create role" }
+    },
+    "/system/role/{id}": {
+      "put": { "tags": ["system"], "summary": "Update role" },
+      "delete": { "tags": ["system"], "summary": "Delete role" }
+    },
     "/system/role/{id}/rules": { "get": { "tags": ["system"], "summary": "Role permissions" } },
     "/system/role/rules": { "put": { "tags": ["system"], "summary": "Assign role permissions" } },
-    "/system/role/copy/{id}": { "post": { "tags": ["system"], "summary": "Copy role with optional permissions and data scope" } },
-    "/system/rule": { "get": { "tags": ["system"], "summary": "Rule page query" }, "post": { "tags": ["system"], "summary": "Create rule" } },
+    "/system/role/copy/{id}": {
+      "post": {
+        "tags": ["system"],
+        "summary": "Copy role with optional permissions and data scope"
+      }
+    },
+    "/system/rule": {
+      "get": { "tags": ["system"], "summary": "Rule page query" },
+      "post": { "tags": ["system"], "summary": "Create rule" }
+    },
     "/system/rule/status/{id}": { "put": { "tags": ["system"], "summary": "Toggle rule status" } },
-    "/system/rule/hidden/{id}": { "put": { "tags": ["system"], "summary": "Toggle rule visibility" } },
-    "/system/dept": { "get": { "tags": ["system"], "summary": "Department page query" }, "post": { "tags": ["system"], "summary": "Create department" } },
-    "/system/dict/list": { "get": { "tags": ["system"], "summary": "Dictionary group page query" }, "post": { "tags": ["system"], "summary": "Create dictionary group" } },
-    "/system/dict/item": { "get": { "tags": ["system"], "summary": "Dictionary item page query" }, "post": { "tags": ["system"], "summary": "Create dictionary item" } },
-    "/system/config/group": { "get": { "tags": ["settings"], "summary": "Config group page query" } },
-    "/system/config/items": { "get": { "tags": ["settings"], "summary": "Config item page query" }, "post": { "tags": ["settings"], "summary": "Create config item" } },
-    "/system/config/items/save": { "put": { "tags": ["settings"], "summary": "Save config item values" } },
-    "/system/settings/config/save": { "put": { "tags": ["settings"], "summary": "Save aggregated settings into sys_config_items" } },
+    "/system/rule/hidden/{id}": {
+      "put": { "tags": ["system"], "summary": "Toggle rule visibility" }
+    },
+    "/system/dept": {
+      "get": { "tags": ["system"], "summary": "Department page query" },
+      "post": { "tags": ["system"], "summary": "Create department" }
+    },
+    "/system/dict/list": {
+      "get": { "tags": ["system"], "summary": "Dictionary group page query" },
+      "post": { "tags": ["system"], "summary": "Create dictionary group" }
+    },
+    "/system/dict/item": {
+      "get": { "tags": ["system"], "summary": "Dictionary item page query" },
+      "post": { "tags": ["system"], "summary": "Create dictionary item" }
+    },
+    "/system/config/group": {
+      "get": { "tags": ["settings"], "summary": "Config group page query" }
+    },
+    "/system/config/items": {
+      "get": { "tags": ["settings"], "summary": "Config item page query" },
+      "post": { "tags": ["settings"], "summary": "Create config item" }
+    },
+    "/system/config/items/save": {
+      "put": { "tags": ["settings"], "summary": "Save config item values" }
+    },
+    "/system/settings/config/save": {
+      "put": { "tags": ["settings"], "summary": "Save aggregated settings into sys_config_items" }
+    },
 
-    "/system/storage": { "get": { "tags": ["settings"], "summary": "Storage resource page query" }, "post": { "tags": ["settings"], "summary": "Create storage resource" } },
-    "/system/storage/{id}": { "put": { "tags": ["settings"], "summary": "Update storage resource" }, "delete": { "tags": ["settings"], "summary": "Delete storage resource" } },
-    "/system/storage/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle storage status" } },
-    "/system/storage/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default storage" } },
-    "/system/storage/test": { "post": { "tags": ["settings"], "summary": "Test storage connection" } },
-    "/system/mail/account": { "get": { "tags": ["settings"], "summary": "Mail account page query" }, "post": { "tags": ["settings"], "summary": "Create mail account" } },
-    "/system/mail/account/{id}": { "put": { "tags": ["settings"], "summary": "Update mail account" }, "delete": { "tags": ["settings"], "summary": "Delete mail account" } },
-    "/system/mail/account/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle mail account status" } },
-    "/system/mail/account/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default mail account" } },
+    "/system/storage": {
+      "get": { "tags": ["settings"], "summary": "Storage resource page query" },
+      "post": { "tags": ["settings"], "summary": "Create storage resource" }
+    },
+    "/system/storage/{id}": {
+      "put": { "tags": ["settings"], "summary": "Update storage resource" },
+      "delete": { "tags": ["settings"], "summary": "Delete storage resource" }
+    },
+    "/system/storage/status/{id}": {
+      "put": { "tags": ["settings"], "summary": "Toggle storage status" }
+    },
+    "/system/storage/default/{id}": {
+      "put": { "tags": ["settings"], "summary": "Set default storage" }
+    },
+    "/system/storage/test": {
+      "post": { "tags": ["settings"], "summary": "Test storage connection" }
+    },
+    "/system/mail/account": {
+      "get": { "tags": ["settings"], "summary": "Mail account page query" },
+      "post": { "tags": ["settings"], "summary": "Create mail account" }
+    },
+    "/system/mail/account/{id}": {
+      "put": { "tags": ["settings"], "summary": "Update mail account" },
+      "delete": { "tags": ["settings"], "summary": "Delete mail account" }
+    },
+    "/system/mail/account/status/{id}": {
+      "put": { "tags": ["settings"], "summary": "Toggle mail account status" }
+    },
+    "/system/mail/account/default/{id}": {
+      "put": { "tags": ["settings"], "summary": "Set default mail account" }
+    },
     "/system/mail/account/test": { "post": { "tags": ["settings"], "summary": "Send test mail" } },
-    "/system/sms/provider": { "get": { "tags": ["settings"], "summary": "SMS provider page query" }, "post": { "tags": ["settings"], "summary": "Create SMS provider" } },
-    "/system/sms/provider/{id}": { "put": { "tags": ["settings"], "summary": "Update SMS provider" }, "delete": { "tags": ["settings"], "summary": "Delete SMS provider" } },
-    "/system/sms/provider/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle SMS provider status" } },
-    "/system/sms/provider/default/{id}": { "put": { "tags": ["settings"], "summary": "Set default SMS provider" } },
-    "/system/sms/provider/test": { "post": { "tags": ["settings"], "summary": "Send test SMS through webhook provider" } },
-    "/system/sms/template": { "get": { "tags": ["settings"], "summary": "SMS template page query" }, "post": { "tags": ["settings"], "summary": "Create SMS template" } },
-    "/system/sms/template/{id}": { "put": { "tags": ["settings"], "summary": "Update SMS template" }, "delete": { "tags": ["settings"], "summary": "Delete SMS template" } },
-    "/system/sms/template/status/{id}": { "put": { "tags": ["settings"], "summary": "Toggle SMS template status" } },
-    "/system/sms/template/test": { "post": { "tags": ["settings"], "summary": "Render variables and send test SMS through bound provider" } },
-    "/system/ai/provider": { "get": { "tags": ["ai"], "summary": "AI provider page query" }, "post": { "tags": ["ai"], "summary": "Create AI provider" } },
-    "/system/ai/provider/{id}": { "put": { "tags": ["ai"], "summary": "Update AI provider" }, "delete": { "tags": ["ai"], "summary": "Delete AI provider" } },
-    "/system/ai/provider/status/{id}": { "put": { "tags": ["ai"], "summary": "Toggle AI provider status" } },
-    "/system/ai/provider/default/{id}": { "put": { "tags": ["ai"], "summary": "Set default AI provider" } },
-    "/system/ai/provider/test": { "post": { "tags": ["ai"], "summary": "Test AI provider endpoint" } },
-    "/system/ai/provider/test/stream": { "post": { "tags": ["ai"], "summary": "Stream AI provider chat test through AI SDK" } },
-    "/system/ai/model": { "get": { "tags": ["ai"], "summary": "AI model page query" }, "post": { "tags": ["ai"], "summary": "Create AI model" } },
-    "/system/ai/model/{id}": { "put": { "tags": ["ai"], "summary": "Update AI model" }, "delete": { "tags": ["ai"], "summary": "Delete AI model" } },
-    "/system/ai/model/status/{id}": { "put": { "tags": ["ai"], "summary": "Toggle AI model status" } },
-    "/system/ai/model/default/{id}": { "put": { "tags": ["ai"], "summary": "Set default AI model for chat, structured, or embedding usage" } },
+    "/system/sms/provider": {
+      "get": { "tags": ["settings"], "summary": "SMS provider page query" },
+      "post": { "tags": ["settings"], "summary": "Create SMS provider" }
+    },
+    "/system/sms/provider/{id}": {
+      "put": { "tags": ["settings"], "summary": "Update SMS provider" },
+      "delete": { "tags": ["settings"], "summary": "Delete SMS provider" }
+    },
+    "/system/sms/provider/status/{id}": {
+      "put": { "tags": ["settings"], "summary": "Toggle SMS provider status" }
+    },
+    "/system/sms/provider/default/{id}": {
+      "put": { "tags": ["settings"], "summary": "Set default SMS provider" }
+    },
+    "/system/sms/provider/test": {
+      "post": { "tags": ["settings"], "summary": "Send test SMS through webhook provider" }
+    },
+    "/system/sms/template": {
+      "get": { "tags": ["settings"], "summary": "SMS template page query" },
+      "post": { "tags": ["settings"], "summary": "Create SMS template" }
+    },
+    "/system/sms/template/{id}": {
+      "put": { "tags": ["settings"], "summary": "Update SMS template" },
+      "delete": { "tags": ["settings"], "summary": "Delete SMS template" }
+    },
+    "/system/sms/template/status/{id}": {
+      "put": { "tags": ["settings"], "summary": "Toggle SMS template status" }
+    },
+    "/system/sms/template/test": {
+      "post": {
+        "tags": ["settings"],
+        "summary": "Render variables and send test SMS through bound provider"
+      }
+    },
+    "/system/ai/provider": {
+      "get": { "tags": ["ai"], "summary": "AI provider page query" },
+      "post": { "tags": ["ai"], "summary": "Create AI provider" }
+    },
+    "/system/ai/provider/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update AI provider" },
+      "delete": { "tags": ["ai"], "summary": "Delete AI provider" }
+    },
+    "/system/ai/provider/status/{id}": {
+      "put": { "tags": ["ai"], "summary": "Toggle AI provider status" }
+    },
+    "/system/ai/provider/default/{id}": {
+      "put": { "tags": ["ai"], "summary": "Set default AI provider" }
+    },
+    "/system/ai/provider/test": {
+      "post": { "tags": ["ai"], "summary": "Test AI provider endpoint" }
+    },
+    "/system/ai/provider/test/stream": {
+      "post": { "tags": ["ai"], "summary": "Stream AI provider chat test through AI SDK" }
+    },
+    "/system/ai/model": {
+      "get": { "tags": ["ai"], "summary": "AI model page query" },
+      "post": { "tags": ["ai"], "summary": "Create AI model" }
+    },
+    "/system/ai/model/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update AI model" },
+      "delete": { "tags": ["ai"], "summary": "Delete AI model" }
+    },
+    "/system/ai/model/status/{id}": {
+      "put": { "tags": ["ai"], "summary": "Toggle AI model status" }
+    },
+    "/system/ai/model/default/{id}": {
+      "put": {
+        "tags": ["ai"],
+        "summary": "Set default AI model for chat, structured, or embedding usage"
+      }
+    },
     "/system/ai/model/test": { "post": { "tags": ["ai"], "summary": "Test configured AI model" } },
-    "/system/ai/model/test/stream": { "post": { "tags": ["ai"], "summary": "Stream configured AI chat model through AI SDK" } },
-    "/system/ai/runtime-config/{usage}": { "get": { "tags": ["ai"], "summary": "Read sanitized default AI runtime config" } },
-    "/system/ai/playground/runtime-config/{usage}": { "get": { "tags": ["ai"], "summary": "Read sanitized AI Playground runtime config" } },
-    "/system/ai/playground/chat": { "post": { "tags": ["ai"], "summary": "Generate text with the default AI runtime" } },
-    "/system/ai/playground/chat/stream": { "post": { "tags": ["ai"], "summary": "Stream text with AI Playground SSE events" } },
-    "/system/ai/chat/runtime-config": { "get": { "tags": ["ai"], "summary": "Read sanitized AI Chat runtime config" } },
-    "/system/ai/chat/options": { "get": { "tags": ["ai"], "summary": "List models and Agents available to AI Chat" } },
-    "/system/ai/chat/sessions": { "get": { "tags": ["ai"], "summary": "AI Chat session page query" }, "post": { "tags": ["ai"], "summary": "Create AI Chat session" } },
-    "/system/ai/chat/sessions/{id}": { "put": { "tags": ["ai"], "summary": "Update AI Chat session runtime settings" }, "delete": { "tags": ["ai"], "summary": "Delete AI Chat session" } },
-    "/system/ai/chat/sessions/{id}/messages": { "get": { "tags": ["ai"], "summary": "List AI Chat messages" } },
-    "/system/ai/chat/sessions/{id}/messages/stream": { "post": { "tags": ["ai"], "summary": "Append or resume a turn and stream model or Agent output" } },
-    "/system/ai/chat/sessions/{id}/messages/{messageId}/regenerate": { "post": { "tags": ["ai"], "summary": "Regenerate latest Assistant message" } },
-    "/system/ai/chat/sessions/{id}/export": { "get": { "tags": ["ai"], "summary": "Export AI Chat as Markdown or JSON" } },
-    "/system/ai/chat/sessions/{id}/approvals": { "get": { "tags": ["ai"], "summary": "List tool approvals for AI Chat" } },
-    "/system/ai/agent": { "get": { "tags": ["ai"], "summary": "List Agents" }, "post": { "tags": ["ai"], "summary": "Create Agent" } },
-    "/system/ai/agent/{id}": { "put": { "tags": ["ai"], "summary": "Update Agent" }, "delete": { "tags": ["ai"], "summary": "Delete Agent" } },
-    "/system/ai/agent/options": { "get": { "tags": ["ai"], "summary": "List Agent models and tools" } },
-    "/system/ai/tool": { "get": { "tags": ["ai"], "summary": "List AI tools" }, "post": { "tags": ["ai"], "summary": "Create AI tool" } },
-    "/system/ai/tool/{id}": { "put": { "tags": ["ai"], "summary": "Update AI tool" }, "delete": { "tags": ["ai"], "summary": "Delete AI tool" } },
+    "/system/ai/model/test/stream": {
+      "post": { "tags": ["ai"], "summary": "Stream configured AI chat model through AI SDK" }
+    },
+    "/system/ai/runtime-config/{usage}": {
+      "get": { "tags": ["ai"], "summary": "Read sanitized default AI runtime config" }
+    },
+    "/system/ai/playground/runtime-config/{usage}": {
+      "get": { "tags": ["ai"], "summary": "Read sanitized AI Playground runtime config" }
+    },
+    "/system/ai/playground/chat": {
+      "post": { "tags": ["ai"], "summary": "Generate text with the default AI runtime" }
+    },
+    "/system/ai/playground/chat/stream": {
+      "post": { "tags": ["ai"], "summary": "Stream text with AI Playground SSE events" }
+    },
+    "/system/ai/chat/runtime-config": {
+      "get": { "tags": ["ai"], "summary": "Read sanitized AI Chat runtime config" }
+    },
+    "/system/ai/chat/options": {
+      "get": { "tags": ["ai"], "summary": "List models and Agents available to AI Chat" }
+    },
+    "/system/ai/chat/sessions": {
+      "get": { "tags": ["ai"], "summary": "AI Chat session page query" },
+      "post": { "tags": ["ai"], "summary": "Create AI Chat session" }
+    },
+    "/system/ai/chat/sessions/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update AI Chat session runtime settings" },
+      "delete": { "tags": ["ai"], "summary": "Delete AI Chat session" }
+    },
+    "/system/ai/chat/sessions/{id}/messages": {
+      "get": { "tags": ["ai"], "summary": "List AI Chat messages" }
+    },
+    "/system/ai/chat/sessions/{id}/messages/stream": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Append or resume a turn and stream model or Agent output"
+      }
+    },
+    "/system/ai/chat/sessions/{id}/messages/{messageId}/regenerate": {
+      "post": { "tags": ["ai"], "summary": "Regenerate latest Assistant message" }
+    },
+    "/system/ai/chat/sessions/{id}/export": {
+      "get": { "tags": ["ai"], "summary": "Export AI Chat as Markdown or JSON" }
+    },
+    "/system/ai/chat/sessions/{id}/approvals": {
+      "get": { "tags": ["ai"], "summary": "List tool approvals for AI Chat" }
+    },
+    "/system/ai/agent": {
+      "get": { "tags": ["ai"], "summary": "List Agents" },
+      "post": { "tags": ["ai"], "summary": "Create Agent" }
+    },
+    "/system/ai/agent/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update Agent" },
+      "delete": { "tags": ["ai"], "summary": "Delete Agent" }
+    },
+    "/system/ai/agent/options": {
+      "get": { "tags": ["ai"], "summary": "List Agent models and tools" }
+    },
+    "/system/ai/tool": {
+      "get": { "tags": ["ai"], "summary": "List AI tools" },
+      "post": { "tags": ["ai"], "summary": "Create AI tool" }
+    },
+    "/system/ai/tool/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update AI tool" },
+      "delete": { "tags": ["ai"], "summary": "Delete AI tool" }
+    },
     "/system/ai/agent/runs": { "get": { "tags": ["ai"], "summary": "List Agent runs" } },
-    "/system/ai/agent/runs/{id}/steps": { "get": { "tags": ["ai"], "summary": "List Agent run steps" } },
-    "/system/ai/approval/{id}/decision": { "post": { "tags": ["ai"], "summary": "Approve or deny tool execution" } },
-    "/system/module/generator/example": { "get": { "tags": ["system"], "summary": "Get CRUD module generator example config" } },
-    "/system/module/generator/drafts": { "get": { "tags": ["system"], "summary": "List generated module drafts and publish status" } },
-    "/system/module/generator/generate": { "post": { "tags": ["system"], "summary": "Generate reviewable CRUD module draft under generated/module-drafts" } },
-    "/system/module/generator/publish": { "post": { "tags": ["system"], "summary": "Publish a generated module draft into project source" } },
+    "/system/ai/agent/runs/{id}/steps": {
+      "get": { "tags": ["ai"], "summary": "List Agent run steps" }
+    },
+    "/system/ai/approval/{id}/decision": {
+      "post": { "tags": ["ai"], "summary": "Approve or deny tool execution" }
+    },
+    "/system/module/generator/example": {
+      "get": { "tags": ["system"], "summary": "Get CRUD module generator example config" }
+    },
+    "/system/module/generator/drafts": {
+      "get": { "tags": ["system"], "summary": "List generated module drafts and publish status" }
+    },
+    "/system/module/generator/capabilities": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Get shared generator capabilities and ownership contract"
+      }
+    },
+    "/system/module/generator/schema": {
+      "get": { "tags": ["system"], "summary": "Get shared Admin Module JSON Schema" }
+    },
+    "/system/module/generator/drafts/{name}/diff": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Preview publish plan, conflicts, hashes, and per-file changes"
+      }
+    },
+    "/system/module/generator/generate": {
+      "post": {
+        "tags": ["system"],
+        "summary": "Generate reviewable CRUD module draft under generated/module-drafts"
+      }
+    },
+    "/system/module/generator/publish": {
+      "post": {
+        "tags": ["system"],
+        "summary": "Preflight and publish a reviewed module plan into project source"
+      }
+    },
+    "/system/module/generator/rollback": {
+      "post": {
+        "tags": ["system"],
+        "summary": "Guarded source rollback for a recorded module publish"
+      }
+    },
 
-    "/system/oauth/provider": { "get": { "tags": ["oauth"], "summary": "OAuth provider page query" }, "post": { "tags": ["oauth"], "summary": "Create OAuth provider" } },
-    "/system/oauth/provider/{id}": { "put": { "tags": ["oauth"], "summary": "Update OAuth provider" }, "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" } },
-    "/system/oauth/provider/status/{id}": { "put": { "tags": ["oauth"], "summary": "Toggle OAuth provider status" } },
-    "/system/oauth/provider/test": { "post": { "tags": ["oauth"], "summary": "Test OAuth provider configuration" } },
-    "/system/oauth/{provider}/redirect": { "get": { "tags": ["oauth"], "summary": "Start OAuth login", "security": [], "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "302": { "description": "Redirect" } } } },
-    "/system/oauth/{provider}/callback": { "get": { "tags": ["oauth"], "summary": "OAuth callback", "security": [], "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "302": { "description": "Redirect" } } } },
+    "/system/oauth/provider": {
+      "get": { "tags": ["oauth"], "summary": "OAuth provider page query" },
+      "post": { "tags": ["oauth"], "summary": "Create OAuth provider" }
+    },
+    "/system/oauth/provider/{id}": {
+      "put": { "tags": ["oauth"], "summary": "Update OAuth provider" },
+      "delete": { "tags": ["oauth"], "summary": "Delete OAuth provider" }
+    },
+    "/system/oauth/provider/status/{id}": {
+      "put": { "tags": ["oauth"], "summary": "Toggle OAuth provider status" }
+    },
+    "/system/oauth/provider/test": {
+      "post": { "tags": ["oauth"], "summary": "Test OAuth provider configuration" }
+    },
+    "/system/oauth/{provider}/redirect": {
+      "get": {
+        "tags": ["oauth"],
+        "summary": "Start OAuth login",
+        "security": [],
+        "parameters": [
+          { "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "Redirect" } }
+      }
+    },
+    "/system/oauth/{provider}/callback": {
+      "get": {
+        "tags": ["oauth"],
+        "summary": "OAuth callback",
+        "security": [],
+        "parameters": [
+          { "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "Redirect" } }
+      }
+    },
 
-    "/system/profile": { "get": { "tags": ["profile"], "summary": "Current profile" }, "put": { "tags": ["profile"], "summary": "Update current profile" } },
-    "/system/profile/password": { "put": { "tags": ["profile"], "summary": "Change current password" } },
+    "/system/profile": {
+      "get": { "tags": ["profile"], "summary": "Current profile" },
+      "put": { "tags": ["profile"], "summary": "Update current profile" }
+    },
+    "/system/profile/password": {
+      "put": { "tags": ["profile"], "summary": "Change current password" }
+    },
     "/system/profile/avatar": { "post": { "tags": ["profile"], "summary": "Upload avatar" } },
-    "/system/profile/login-records": { "get": { "tags": ["profile"], "summary": "My login records" } },
-    "/system/profile/oauth/accounts": { "get": { "tags": ["profile"], "summary": "My OAuth accounts" } },
-    "/system/profile/oauth/{provider}/bind": { "post": { "tags": ["profile"], "summary": "Bind OAuth account" } },
-    "/system/profile/oauth/{provider}/unbind": { "delete": { "tags": ["profile"], "summary": "Unbind OAuth account" } },
+    "/system/profile/login-records": {
+      "get": { "tags": ["profile"], "summary": "My login records" }
+    },
+    "/system/profile/oauth/accounts": {
+      "get": { "tags": ["profile"], "summary": "My OAuth accounts" }
+    },
+    "/system/profile/oauth/{provider}/bind": {
+      "post": { "tags": ["profile"], "summary": "Bind OAuth account" }
+    },
+    "/system/profile/oauth/{provider}/unbind": {
+      "delete": { "tags": ["profile"], "summary": "Unbind OAuth account" }
+    },
 
-    "/system/notice": { "get": { "tags": ["notice"], "summary": "Notice page query" }, "post": { "tags": ["notice"], "summary": "Create notice" } },
-    "/system/notice/{id}": { "put": { "tags": ["notice"], "summary": "Update notice" }, "delete": { "tags": ["notice"], "summary": "Delete notice" } },
+    "/system/notice": {
+      "get": { "tags": ["notice"], "summary": "Notice page query" },
+      "post": { "tags": ["notice"], "summary": "Create notice" }
+    },
+    "/system/notice/{id}": {
+      "put": { "tags": ["notice"], "summary": "Update notice" },
+      "delete": { "tags": ["notice"], "summary": "Delete notice" }
+    },
     "/system/notice/publish/{id}": { "put": { "tags": ["notice"], "summary": "Publish notice" } },
     "/system/notice/revoke/{id}": { "put": { "tags": ["notice"], "summary": "Revoke notice" } },
-    "/system/notice/{id}/read-stats": { "get": { "tags": ["notice"], "summary": "Notice read stats" } },
-    "/system/notice/{id}/read-users": { "get": { "tags": ["notice"], "summary": "Notice read detail page query" } },
+    "/system/notice/{id}/read-stats": {
+      "get": { "tags": ["notice"], "summary": "Notice read stats" }
+    },
+    "/system/notice/{id}/read-users": {
+      "get": { "tags": ["notice"], "summary": "Notice read detail page query" }
+    },
     "/system/notice/my": { "get": { "tags": ["notice"], "summary": "My visible notices" } },
-    "/system/notice/my/unread-count": { "get": { "tags": ["notice"], "summary": "My unread notice count" } },
-    "/system/notice/my/{id}/read": { "post": { "tags": ["notice"], "summary": "Mark one notice read" } },
-    "/system/notice/my/read-all": { "post": { "tags": ["notice"], "summary": "Mark all visible notices read" } },
+    "/system/notice/my/unread-count": {
+      "get": { "tags": ["notice"], "summary": "My unread notice count" }
+    },
+    "/system/notice/my/{id}/read": {
+      "post": { "tags": ["notice"], "summary": "Mark one notice read" }
+    },
+    "/system/notice/my/read-all": {
+      "post": { "tags": ["notice"], "summary": "Mark all visible notices read" }
+    },
 
-    "/system/file/list/upload": { "post": { "tags": ["file"], "summary": "Normal upload with policy validation" } },
-    "/system/file/list/download/{id}": { "get": { "tags": ["file"], "summary": "Download file with safe headers" } },
-    "/system/file/list/preview/{id}": { "get": { "tags": ["file"], "summary": "Preview file when policy allows" } },
+    "/system/file/list/upload": {
+      "post": { "tags": ["file"], "summary": "Normal upload with policy validation" }
+    },
+    "/system/file/list/download/{id}": {
+      "get": { "tags": ["file"], "summary": "Download file with safe headers" }
+    },
+    "/system/file/list/preview/{id}": {
+      "get": { "tags": ["file"], "summary": "Preview file when policy allows" }
+    },
     "/system/file/list/trash": { "get": { "tags": ["file"], "summary": "File trash page query" } },
     "/system/file/list/rename/{id}": { "put": { "tags": ["file"], "summary": "Rename file" } },
     "/system/file/list/move": { "put": { "tags": ["file"], "summary": "Move files" } },
     "/system/file/list/copy": { "post": { "tags": ["file"], "summary": "Copy files" } },
     "/system/file/list/clean-trash": { "delete": { "tags": ["file"], "summary": "Clean trash" } },
-    "/system/file/chunk/init": { "post": { "tags": ["file"], "summary": "Initialize chunk upload" } },
-    "/system/file/chunk/part": { "post": { "tags": ["file"], "summary": "Upload chunk part with optional sha256" } },
-    "/system/file/chunk/complete": { "post": { "tags": ["file"], "summary": "Complete chunk upload" } },
-    "/system/file/chunk/{uploadId}": { "delete": { "tags": ["file"], "summary": "Cancel chunk upload" } },
-    "/system/file/chunk/clean-expired": { "delete": { "tags": ["file"], "summary": "Clean expired chunk sessions" } },
-    "/system/file/reference": { "post": { "tags": ["file"], "summary": "Add file reference" }, "delete": { "tags": ["file"], "summary": "Remove file reference" } },
-    "/system/file/{id}/references": { "get": { "tags": ["file"], "summary": "List file references" } },
+    "/system/file/chunk/init": {
+      "post": { "tags": ["file"], "summary": "Initialize chunk upload" }
+    },
+    "/system/file/chunk/part": {
+      "post": { "tags": ["file"], "summary": "Upload chunk part with optional sha256" }
+    },
+    "/system/file/chunk/complete": {
+      "post": { "tags": ["file"], "summary": "Complete chunk upload" }
+    },
+    "/system/file/chunk/{uploadId}": {
+      "delete": { "tags": ["file"], "summary": "Cancel chunk upload" }
+    },
+    "/system/file/chunk/clean-expired": {
+      "delete": { "tags": ["file"], "summary": "Clean expired chunk sessions" }
+    },
+    "/system/file/reference": {
+      "post": { "tags": ["file"], "summary": "Add file reference" },
+      "delete": { "tags": ["file"], "summary": "Remove file reference" }
+    },
+    "/system/file/{id}/references": {
+      "get": { "tags": ["file"], "summary": "List file references" }
+    },
 
     "/system/login/log": { "get": { "tags": ["audit"], "summary": "Login log page query" } },
     "/system/login/log/clean": { "delete": { "tags": ["audit"], "summary": "Clean login logs" } },
     "/system/online/user": { "get": { "tags": ["audit"], "summary": "Online user sessions" } },
-    "/system/online/user/{id}": { "delete": { "tags": ["audit"], "summary": "Force one token offline" } },
-    "/system/online/user/clean-expired": { "delete": { "tags": ["audit"], "summary": "Clean expired tokens" } },
-    "/system/operation/log": { "get": { "tags": ["audit"], "summary": "Operation log page query with riskLevel, requestId, ip, module, action, success, and time filters" } },
-    "/system/operation/log/stats": { "get": { "tags": ["audit"], "summary": "Operation log stats" } },
-    "/system/operation/log/export": { "get": { "tags": ["audit"], "summary": "Export operation logs as CSV using current filters" } },
-    "/system/operation/log/clean": { "delete": { "tags": ["audit"], "summary": "Clean operation logs by filters" } },
+    "/system/online/user/{id}": {
+      "delete": { "tags": ["audit"], "summary": "Force one token offline" }
+    },
+    "/system/online/user/clean-expired": {
+      "delete": { "tags": ["audit"], "summary": "Clean expired tokens" }
+    },
+    "/system/operation/log": {
+      "get": {
+        "tags": ["audit"],
+        "summary": "Operation log page query with riskLevel, requestId, ip, module, action, success, and time filters"
+      }
+    },
+    "/system/operation/log/stats": {
+      "get": { "tags": ["audit"], "summary": "Operation log stats" }
+    },
+    "/system/operation/log/export": {
+      "get": { "tags": ["audit"], "summary": "Export operation logs as CSV using current filters" }
+    },
+    "/system/operation/log/clean": {
+      "delete": { "tags": ["audit"], "summary": "Clean operation logs by filters" }
+    },
 
-    "/system/dashboard/summary": { "get": { "tags": ["dashboard"], "summary": "Dashboard system status summary" } },
-    "/system/doctor": { "get": { "tags": ["doctor"], "summary": "Authenticated production diagnostics" } }
+    "/system/dashboard/summary": {
+      "get": { "tags": ["dashboard"], "summary": "Dashboard system status summary" }
+    },
+    "/system/doctor": {
+      "get": { "tags": ["doctor"], "summary": "Authenticated production diagnostics" }
+    }
   }
 }

@@ -1,4 +1,5 @@
 import type { PageTestCase } from "./types";
+import { generatedModulePageTestCases } from "./generated-module-test-cases";
 
 type PageDefinition = {
   path: string;
@@ -82,7 +83,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "用户管理",
     content: "用户分页、部门树、角色、状态和搜索条件",
     primaryAction: "新增、编辑、删除、重置密码、分配角色和切换部门筛选",
-    desktop: "部门树与主表格撑满可用高度；用户名、昵称、部门、角色、状态和操作列宽合理，表头/分页固定且底边框完整",
+    desktop:
+      "部门树与主表格撑满可用高度；用户名、昵称、部门、角色、状态和操作列宽合理，表头/分页固定且底边框完整",
     coverage: "mixed",
   }),
   pageCase({
@@ -98,7 +100,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "菜单权限",
     content: "菜单、路由、目录和动作权限树",
     primaryAction: "新增、编辑、显隐、启停和删除权限节点",
-    desktop: "树形表格撑满内容区，不设置无理由的较小 max-height；层级缩进、展开控件、固定操作列和底边框清晰",
+    desktop:
+      "树形表格撑满内容区，不设置无理由的较小 max-height；层级缩进、展开控件、固定操作列和底边框清晰",
     coverage: "mixed",
   }),
   pageCase({
@@ -135,7 +138,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "系统设置",
     content: "基础、安全、登录、Token、上传、存储、邮件和登录方式设置",
     primaryAction: "按分区独立保存策略并执行资源管理或连接测试",
-    desktop: "分组导航、表单标题、说明、控件和保存区对齐；长设置页定位稳定，开关使用 Switch 而非文字按钮",
+    desktop:
+      "分组导航、表单标题、说明、控件和保存区对齐；长设置页定位稳定，开关使用 Switch 而非文字按钮",
     empty: "配置项未初始化时明确指出缺失键和初始化方式，不静默隐藏整个分区",
   }),
   pageCase({
@@ -143,7 +147,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "文件管理",
     content: "文件夹、文件列表、上传进度、回收站和文件引用",
     primaryAction: "普通/分片上传、移动、复制、重命名、下载、恢复和清理",
-    desktop: "目录树、文件表格和上传队列使用稳定高度；名称列优先，大小/类型/状态/操作固定，进度不会推动布局",
+    desktop:
+      "目录树、文件表格和上传队列使用稳定高度；名称列优先，大小/类型/状态/操作固定，进度不会推动布局",
     coverage: "mixed",
   }),
   pageCase({
@@ -151,7 +156,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "存储配置",
     content: "本地/S3 存储、默认状态、启停和连接状态",
     primaryAction: "新增、编辑、测试连接、切换默认和启停存储",
-    desktop: "资源类型、默认、状态和测试结果可扫描；密钥只显示已配置状态，危险操作与普通编辑有层级区分",
+    desktop:
+      "资源类型、默认、状态和测试结果可扫描；密钥只显示已配置状态，危险操作与普通编辑有层级区分",
   }),
   pageCase({
     path: "/system/mail/account",
@@ -165,7 +171,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "第三方登录",
     content: "OAuth Provider、端点、Client ID、Scope、映射和自动创建策略",
     primaryAction: "新增、编辑、测试、启停和删除 Provider",
-    desktop: "Provider 名称与 key 优先展示，端点等长文本放详情；密钥仅显示配置状态，模板选择与自定义字段分层",
+    desktop:
+      "Provider 名称与 key 优先展示，端点等长文本放详情；密钥仅显示配置状态，模板选择与自定义字段分层",
   }),
   pageCase({
     path: "/system/sms/provider",
@@ -208,14 +215,16 @@ export const pageTestCases: PageTestCase[] = [
     area: "操作审计",
     content: "用户、模块、动作、风险、requestId、IP、状态、耗时和详情",
     primaryAction: "组合筛选、查看 JSON/变更摘要、复制追踪、导出和清理",
-    desktop: "风险、动作、用户、状态和时间为主列；requestId 可复制，JSON 详情在抽屉内格式化，固定操作列不遮挡内容",
+    desktop:
+      "风险、动作、用户、状态和时间为主列；requestId 可复制，JSON 详情在抽屉内格式化，固定操作列不遮挡内容",
   }),
   pageCase({
     path: "/system/ai/provider",
     area: "AI Provider",
     content: "AI SDK Provider 类型、Base URL、API Key 状态、默认和启停状态",
     primaryAction: "新增、编辑、测试流式回答、切默认和启停 Provider",
-    desktop: "Provider 类型、名称、默认和状态可扫描；测试使用独立弹窗，流式 Markdown 区域宽度和停止操作稳定",
+    desktop:
+      "Provider 类型、名称、默认和状态可扫描；测试使用独立弹窗，流式 Markdown 区域宽度和停止操作稳定",
     coverage: "mixed",
   }),
   pageCase({
@@ -223,7 +232,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "AI 模型",
     content: "模型 ID、Provider、用途、上下文、输出上限、默认和状态",
     primaryAction: "新增、编辑、测试模型、切默认和启停模型",
-    desktop: "模型 ID 和用途为主信息，上下文/输出上限数字对齐；测试弹窗区分 Prompt、流输出、用量和结束原因",
+    desktop:
+      "模型 ID 和用途为主信息，上下文/输出上限数字对齐；测试弹窗区分 Prompt、流输出、用量和结束原因",
     coverage: "mixed",
   }),
   pageCase({
@@ -231,7 +241,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "AI Playground",
     content: "Provider、模型、Prompt、System Prompt、输出限制和流式结果",
     primaryAction: "发送、停止、调整参数并查看 Markdown、用量和结束原因",
-    desktop: "参数区与结果区比例合理；输入、发送/停止、流式正文和用量不重叠，长内容在结果区内部滚动",
+    desktop:
+      "参数区与结果区比例合理；输入、发送/停止、流式正文和用量不重叠，长内容在结果区内部滚动",
     empty: "未配置可用模型时显示前往 Provider/模型管理的明确入口",
     coverage: "mixed",
   }),
@@ -240,7 +251,8 @@ export const pageTestCases: PageTestCase[] = [
     area: "AI Chat",
     content: "会话、消息、模型、Agent、System Prompt、Run/Step、审批和使用量",
     primaryAction: "创建/切换会话、发送/停止/重新生成、选择 Agent、审批工具和导出",
-    desktop: "会话栏、消息滚动区、固定输入区和运行检查器高度闭合；用户/AI 消息左右语义明确，Streamdown 正文占满可读宽度",
+    desktop:
+      "会话栏、消息滚动区、固定输入区和运行检查器高度闭合；用户/AI 消息左右语义明确，Streamdown 正文占满可读宽度",
     empty: "无会话时提供直接创建或发送入口；无模型时显示配置入口而不是空白聊天框",
     coverage: "mixed",
   }),
@@ -249,17 +261,20 @@ export const pageTestCases: PageTestCase[] = [
     area: "AI Agent",
     content: "Agent、Tool、模型、System Prompt、审批策略和调试 Run/Step",
     primaryAction: "创建/编辑 Agent 和 Tool、启停并运行调试",
-    desktop: "Agent 列表、配置表单和调试轨迹职责清楚；工具与审批要求使用标签/分组，运行时间线不与表单混杂",
+    desktop:
+      "Agent 列表、配置表单和调试轨迹职责清楚；工具与审批要求使用标签/分组，运行时间线不与表单混杂",
     empty: "无 Agent 时提供创建入口和必要字段，不只展示不可操作的通用助手文案",
     coverage: "mixed",
   }),
   pageCase({
     path: "/system/module/generator",
     area: "模块生成器",
-    content: "模块定义、字段、草稿、生成文件、校验和发布状态",
-    primaryAction: "生成草稿、检查差异并发布到真实项目",
-    desktop: "定义表单、文件预览、草稿/已发布状态和发布风险分区明确；代码预览等宽字体可滚动且不撑破页面",
+    content: "共享模块契约、字段、草稿、发布差异、隔离预检、发布记录和源码回滚状态",
+    primaryAction: "生成草稿、检查逐文件差异、隔离预检、发布到真实项目并按快照回滚源码",
+    desktop:
+      "定义表单、文件预览、草稿/已发布状态和发布风险分区明确；发布前后源码并排可滚动且不撑破页面",
     empty: "没有草稿时展示创建入口；缺少开发环境能力时说明不可发布原因",
     permission: "仅开发/测试环境和有权限用户可用，生产环境发布动作必须拒绝",
   }),
+  ...generatedModulePageTestCases,
 ];

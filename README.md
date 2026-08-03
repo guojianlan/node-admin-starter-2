@@ -8,6 +8,11 @@ Node.js 技术栈的基础后台框架，参考 `xin-admin/xin-admin-laravel` �
 
 当前技术栈、模块边界和运行架构见 [`docs/admin-base-architecture.md`](docs/admin-base-architecture.md)。
 
+AI 辅助开发的仓库约束、模块决策、生成/审核流程和安全边界见
+[`AGENTS.md`](AGENTS.md) 与 [`docs/ai-development-guide.md`](docs/ai-development-guide.md)。项目级 Codex
+Skills 位于 [`.codex/skills`](.codex/skills)，模块生成输入契约见
+[`schemas/admin-module.schema.json`](schemas/admin-module.schema.json)。
+
 测试资产分为三层：业务场景见 [`docs/admin-base-functional-test-cases.md`](docs/admin-base-functional-test-cases.md)，逐接口成功/失败契约见 [`docs/admin-base-api-test-cases.md`](docs/admin-base-api-test-cases.md)，逐页面数据/交互/视觉验收见 [`docs/admin-base-page-test-cases.md`](docs/admin-base-page-test-cases.md)。`pnpm test:check-cases` 会阻止新增接口或页面时遗漏测试用例。
 
 生产级对齐路线和与 XinAdmin / ContiNew 的差距见 [`docs/admin-base-production-readiness-plan.md`](docs/admin-base-production-readiness-plan.md)。
@@ -86,6 +91,8 @@ ADMIN_BASE_ALLOW_DB_RESET=true ADMIN_BASE_RESET_DATABASE_NAME=admin_base pnpm db
 pnpm run doctor          # 环境和基础数据自检；pnpm doctor 是 pnpm 内置命令，不会执行项目脚本
 pnpm admin:doctor        # 同上，提供一个不与 pnpm 内置命令冲突的别名
 pnpm admin:check-routes  # 检查 route manifest 与数据库菜单/权限是否一致
+pnpm admin:verify --quick # 类型、测试清单和路由权限快速验证
+pnpm admin:verify --full  # 类型、lint、测试、权限检查和生产构建
 pnpm lint                # ESLint
 pnpm typecheck           # TypeScript
 pnpm test                # API/Service 单测
@@ -94,6 +101,9 @@ pnpm test:docs           # 从机器可读清单重新生成测试文档
 pnpm e2e                 # Playwright E2E，固定使用 *_test 数据库和 3101 端口
 pnpm build               # 生产构建
 ```
+
+`pnpm typecheck` 使用独立的 `tsconfig.typecheck.json`，不会读取运行中的 Next dev server 持续改写的
+`.next/dev/types`；生产路由与 Next 生成类型仍由 `pnpm build` 验证。
 
 ## 目录约定
 

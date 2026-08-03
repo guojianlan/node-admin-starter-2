@@ -1,5 +1,9 @@
 # Admin Base 快速开发框架差距与实施计划
 
+> 历史计划说明：本文创建于 2026-06-22，保留用于追踪起手式演进，不再代表当前完成度。
+> 当前能力以 [`admin-base-framework-completion-status.md`](admin-base-framework-completion-status.md)
+> 为准；AI 驱动开发约定以 [`ai-development-guide.md`](ai-development-guide.md) 为准。
+
 > 创建日期：2026-06-22  
 > 目标：把当前 Admin Base 从“后台能力可用”推进到“新项目只配置少数项即可启动和二次开发”的快速开发框架。  
 > 当前分支：`codex/admin-base-migration-plan`

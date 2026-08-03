@@ -3,3 +3,9 @@ CREATE TABLE IF NOT EXISTS <%= module.table %> (
 );
 
 <%= module.blocks.migrationIndexes %>
+
+DROP TRIGGER IF EXISTS trg_<%= module.table %>_updated_at ON <%= module.table %>;
+CREATE TRIGGER trg_<%= module.table %>_updated_at
+BEFORE UPDATE ON <%= module.table %>
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
