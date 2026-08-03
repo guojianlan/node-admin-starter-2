@@ -277,10 +277,7 @@ export const sysOauthAccount = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("sys_oauth_account_provider_user_unique").on(
-      table.provider,
-      table.providerUserId,
-    ),
+    uniqueIndex("sys_oauth_account_provider_user_unique").on(table.provider, table.providerUserId),
     uniqueIndex("sys_oauth_account_user_provider_unique").on(table.userId, table.provider),
     index("sys_oauth_account_user_id_idx").on(table.userId),
   ],
@@ -374,7 +371,9 @@ export const sysNotice = pgTable(
     type: text("type", { enum: ["notice", "announcement"] })
       .notNull()
       .default("notice"),
-    scope: text("scope", { enum: ["all", "users", "roles", "depts"] }).notNull().default("all"),
+    scope: text("scope", { enum: ["all", "users", "roles", "depts"] })
+      .notNull()
+      .default("all"),
     targetUserIdsJson: text("target_user_ids_json"),
     targetRoleIdsJson: text("target_role_ids_json"),
     targetDeptIdsJson: text("target_dept_ids_json"),
@@ -1032,7 +1031,13 @@ export const sysAiToolApproval = pgTable(
     toolCallId: text("tool_call_id").notNull(),
     inputJson: text("input_json"),
     outputJson: text("output_json"),
-    status: text("status", { enum: ["pending", "approved", "denied", "executed", "failed"] })
+    planHash: text("plan_hash"),
+    affectedFilesJson: text("affected_files_json"),
+    validationJson: text("validation_json"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    status: text("status", {
+      enum: ["pending", "approved", "denied", "expired", "executed", "failed"],
+    })
       .notNull()
       .default("pending"),
     reason: text("reason"),
@@ -1045,6 +1050,7 @@ export const sysAiToolApproval = pgTable(
     uniqueIndex("sys_ai_tool_approval_run_tool_call_unique").on(table.runId, table.toolCallId),
     index("sys_ai_tool_approval_session_status_idx").on(table.sessionId, table.status),
     index("sys_ai_tool_approval_user_status_idx").on(table.userId, table.status),
+    index("sys_ai_tool_approval_expires_at_idx").on(table.expiresAt),
   ],
 );
 

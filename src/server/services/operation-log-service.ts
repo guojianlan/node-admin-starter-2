@@ -3,7 +3,7 @@ import type { HonoVariables } from "@/server/context";
 import { sqlite, type DbClient } from "@/server/db";
 import { logger } from "@/server/logger";
 
-type OperationLogInput = {
+export type OperationLogInput = {
   userId?: number | null;
   username?: string | null;
   module: string;
@@ -17,6 +17,45 @@ type OperationLogInput = {
   durationMs?: number | null;
   details?: Record<string, unknown> | null;
 };
+
+export async function recordBackgroundOperationLog(
+  input: OperationLogInput & { method?: string; path?: string },
+  dbClient: DbClient = sqlite,
+) {
+  const detailsJson = input.details
+    ? JSON.stringify(sanitizeOperationLogDetails(input.details))
+    : null;
+  try {
+    await dbClient
+      .prepare(
+        `INSERT INTO sys_operation_log
+          (user_id, username, module, action, resource, resource_id, method, path, ip, user_agent,
+           request_id, status, success, risk_level, message, duration_ms, details_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.userId ?? null,
+        input.username ?? null,
+        input.module,
+        input.action,
+        input.resource ?? null,
+        input.resourceId == null ? null : String(input.resourceId),
+        input.method ?? "AGENT",
+        input.path ?? "/internal/ai-agent/tool",
+        input.status ?? 200,
+        input.success ?? true,
+        inferRiskLevel(input),
+        input.message ?? null,
+        input.durationMs == null ? null : Math.round(input.durationMs),
+        detailsJson,
+      );
+  } catch (error) {
+    logger.warn(
+      { err: error, module: input.module, action: input.action },
+      "failed to record background operation log",
+    );
+  }
+}
 
 function getClientIp(c: Context<{ Variables: HonoVariables }>) {
   const forwardedFor = c.req.header("x-forwarded-for");
@@ -60,11 +99,7 @@ export function sanitizeOperationLogDetails(value: unknown, key = ""): unknown {
 function inferRiskLevel(input: OperationLogInput): "low" | "medium" | "high" | "critical" {
   if (input.riskLevel) return input.riskLevel;
   const action = input.action.toLowerCase();
-  if (
-    action.includes("clean") ||
-    action.includes("forcedelete") ||
-    action.includes("destroy")
-  ) {
+  if (action.includes("clean") || action.includes("forcedelete") || action.includes("destroy")) {
     return "critical";
   }
   if (

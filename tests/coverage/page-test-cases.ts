@@ -259,10 +259,10 @@ export const pageTestCases: PageTestCase[] = [
   pageCase({
     path: "/system/ai/agent",
     area: "AI Agent",
-    content: "Agent、Tool、模型、System Prompt、审批策略和调试 Run/Step",
-    primaryAction: "创建/编辑 Agent 和 Tool、启停并运行调试",
+    content: "Agent、Tool、模型、System Prompt、模块开发工具、审批证据和调试 Run/Step/Approval",
+    primaryAction: "创建/编辑 Agent 和 Tool、运行模块设计/草稿/差异/验证，并审批或拒绝发布与回滚",
     desktop:
-      "Agent 列表、配置表单和调试轨迹职责清楚；工具与审批要求使用标签/分组，运行时间线不与表单混杂",
+      "Agent 列表、配置表单和调试轨迹职责清楚；审批展示计划哈希、影响文件、验证输出和有效期，运行时间线不与表单混杂",
     empty: "无 Agent 时提供创建入口和必要字段，不只展示不可操作的通用助手文案",
     coverage: "mixed",
   }),

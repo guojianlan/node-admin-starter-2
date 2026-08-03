@@ -9,10 +9,14 @@ import {
   listAiTools,
   type AiToolRow,
 } from "./ai-agent-service";
+import { getModuleAgentInputSchema, isModuleAgentHandlerKey } from "./ai-module-agent-service";
 import type { AiRuntimeMessage } from "./ai-runtime-service";
 import { createAiRuntime } from "./ai-runtime-service";
 
 function inputSchemaFor(toolRow: AiToolRow) {
+  if (isModuleAgentHandlerKey(toolRow.handlerKey)) {
+    return getModuleAgentInputSchema(toolRow.handlerKey);
+  }
   if (toolRow.handlerKey === "calculator") {
     return z.object({ expression: z.string().min(1).describe("要计算的四则运算表达式") });
   }
@@ -27,6 +31,9 @@ function toModelMessages(messages: AiRuntimeMessage[]): ModelMessage[] {
 }
 
 function approvalRequired(toolRow: AiToolRow) {
+  if (toolRow.handlerKey === "module_publish" || toolRow.handlerKey === "module_rollback") {
+    return true;
+  }
   if (toolRow.approvalMode === "always") return true;
   if (toolRow.approvalMode === "never") return false;
   return toolRow.approvalRequired;
@@ -139,7 +146,9 @@ export async function createAiAgentStream(input: {
       endpointHint: runtime.sdkRuntime.endpointHint,
       normalizeUsage: (usage: unknown): Record<string, unknown> =>
         usage && typeof usage === "object" && !Array.isArray(usage)
-          ? Object.fromEntries(Object.entries(usage as Record<string, unknown>).filter(([, value]) => value != null))
+          ? Object.fromEntries(
+              Object.entries(usage as Record<string, unknown>).filter(([, value]) => value != null),
+            )
           : {},
       resolveDurationMs: () => Math.round(performance.now() - startedAt),
     },

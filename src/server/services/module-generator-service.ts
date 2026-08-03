@@ -86,6 +86,15 @@ type PublishRecord = {
 
 type PublishValidation = NonNullable<PublishRecord["validation"]>;
 
+export type ModuleDraftValidationRecord = {
+  version: 1;
+  moduleName: string;
+  planHash: string;
+  validatedAt: string;
+  affectedFiles: string[];
+  validation: PublishValidation;
+};
+
 class ModulePublishPreflightError extends Error {
   constructor(
     message: string,
@@ -165,6 +174,86 @@ export function parseModuleGeneratorConfig(value: string | Record<string, unknow
     }
   }
   return parseAdminModuleConfig(rawConfig);
+}
+
+function parseGeneratedFiles(stdout: string) {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => resolve(moduleGeneratorRepoRoot, line.slice(2)));
+}
+
+function parseGeneratedOutputRoot(stdout: string) {
+  const line = stdout.split(/\r?\n/).find((item) => item.includes(" module draft at "));
+  const relativePath = line?.split(" module draft at ")[1]?.trim();
+  if (!relativePath) throw new Error("生成器未返回输出目录");
+  return resolve(moduleGeneratorRepoRoot, relativePath);
+}
+
+function assertInsideRoot(root: string, candidate: string, label: string) {
+  const relativePath = relative(root, candidate);
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`${label}越界`);
+  }
+}
+
+export async function generateModuleDraft(input: {
+  config: string | Record<string, unknown>;
+  force?: boolean;
+}) {
+  assertModuleGeneratorAllowed();
+  const normalizedConfig = parseModuleGeneratorConfig(input.config);
+  const inputPath = resolve(moduleGeneratorInputRoot, `module-${randomUUID()}.json`);
+  try {
+    await mkdir(dirname(inputPath), { recursive: true });
+    await writeFile(inputPath, JSON.stringify(normalizedConfig, null, 2));
+    const args = [
+      moduleGeneratorScriptPath,
+      "--config",
+      inputPath,
+      "--out-dir",
+      moduleGeneratorOutputRoot,
+      ...(input.force ? ["--force"] : []),
+    ];
+    const { stdout } = await execFileAsync(moduleGeneratorTsxBin, args, {
+      cwd: moduleGeneratorRepoRoot,
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    const outputRoot = parseGeneratedOutputRoot(stdout);
+    assertInsideRoot(moduleGeneratorOutputRoot, outputRoot, "生成目录");
+    const config = await readGeneratedModuleConfig(outputRoot);
+    const files = await Promise.all(
+      parseGeneratedFiles(stdout).map(async (file) => {
+        const absolutePath = resolve(file);
+        assertInsideRoot(outputRoot, absolutePath, "生成文件");
+        const content = await readFile(absolutePath, "utf8");
+        return {
+          path: toProjectPath(relative(moduleGeneratorRepoRoot, absolutePath)),
+          size: Buffer.byteLength(content, "utf8"),
+          content:
+            content.length > 120_000 ? `${content.slice(0, 120_000)}\n/* truncated */` : content,
+        };
+      }),
+    );
+    return {
+      module: {
+        name: config.name,
+        title: config.title,
+        kebabName: config.name,
+        schemaName: config.schemaName,
+        permission: config.permission,
+        frontendPath: config.frontendPath,
+        apiPath: config.apiPath,
+      },
+      outputRoot: toProjectPath(relative(moduleGeneratorRepoRoot, outputRoot)),
+      drafts: await listModuleDrafts(),
+      files,
+    };
+  } finally {
+    await rm(inputPath, { force: true });
+  }
 }
 
 export function assertModuleGeneratorAllowed() {
@@ -839,6 +928,91 @@ async function runModulePublishPreflight(plan: ModulePublishPlan) {
   } finally {
     await rm(stageRoot, { recursive: true, force: true });
   }
+}
+
+function validationRecordPath(outputRoot: string, planHash: string) {
+  if (!/^[a-f0-9]{64}$/.test(planHash)) throw new Error("发布计划哈希无效");
+  return resolve(outputRoot, ".admin-base/validation", `${planHash}.json`);
+}
+
+async function readModuleValidationRecord(name: string, planHash: string) {
+  const outputRoot = resolveDraftRoot(name);
+  const path = validationRecordPath(outputRoot, planHash);
+  if (!(await pathExists(path))) return null;
+  const record = JSON.parse(await readFile(path, "utf8")) as ModuleDraftValidationRecord;
+  if (record.moduleName !== name || record.planHash !== planHash) {
+    throw new Error("模块验证记录与当前发布计划不匹配");
+  }
+  return record;
+}
+
+export async function validateModuleDraft(name: string, expectedPlanHash: string) {
+  assertModuleGeneratorAllowed();
+  const plan = await buildModulePublishPlan(name);
+  if (!plan.ready) throw new Error(`发布计划存在冲突：${plan.issues.join("；")}`);
+  if (plan.planHash !== expectedPlanHash) {
+    throw new Error("草稿或项目源码已变化，请重新检查发布差异");
+  }
+  if (!plan.changes.some((change) => ["create", "modify"].includes(change.status))) {
+    throw new Error("当前草稿没有需要验证的变更");
+  }
+  const validation = await runModulePublishPreflight(plan);
+  const record: ModuleDraftValidationRecord = {
+    version: 1,
+    moduleName: name,
+    planHash: plan.planHash,
+    validatedAt: new Date().toISOString(),
+    affectedFiles: plan.changes
+      .filter((change) => ["create", "modify"].includes(change.status))
+      .map((change) => change.path),
+    validation,
+  };
+  const path = validationRecordPath(resolveDraftRoot(name), plan.planHash);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`);
+  return record;
+}
+
+export async function getModulePublishApprovalMetadata(name: string, expectedPlanHash: string) {
+  assertModuleGeneratorAllowed();
+  const plan = await buildModulePublishPlan(name);
+  if (!plan.ready) throw new Error(`发布计划存在冲突：${plan.issues.join("；")}`);
+  if (plan.planHash !== expectedPlanHash) {
+    throw new Error("草稿或项目源码已变化，请重新检查发布差异");
+  }
+  const validationRecord = await readModuleValidationRecord(name, expectedPlanHash);
+  if (!validationRecord?.validation.passed) {
+    throw new Error("发布前必须先执行 module_validate，并通过当前计划的隔离验证");
+  }
+  const affectedFiles = plan.changes
+    .filter((change) => ["create", "modify"].includes(change.status))
+    .map((change) => change.path);
+  if (JSON.stringify(affectedFiles) !== JSON.stringify(validationRecord.affectedFiles)) {
+    throw new Error("验证后的文件集合已变化，请重新检查差异并验证");
+  }
+  return {
+    planHash: plan.planHash,
+    affectedFiles,
+    validation: validationRecord.validation,
+    validatedAt: validationRecord.validatedAt,
+  };
+}
+
+export async function getModuleRollbackApprovalMetadata(name: string, publishId?: string) {
+  assertModuleGeneratorAllowed();
+  const outputRoot = resolveDraftRoot(name);
+  const record = publishId
+    ? await readPublishRecord(outputRoot, publishId)
+    : await readLatestPublishRecord(outputRoot);
+  if (!record || record.status !== "published") throw new Error("没有可回滚的已发布记录");
+  if (record.moduleName !== name) throw new Error("发布记录与模块不匹配");
+  return {
+    planHash: record.planHash,
+    publishId: record.publishId,
+    affectedFiles: record.appliedPaths,
+    validation: record.validation,
+    publishedAt: record.publishedAt,
+  };
 }
 
 async function assertPlanStillCurrent(plan: ModulePublishPlan) {

@@ -16,8 +16,9 @@ Admin Base separates three responsibilities:
 | Coding agent | Inspect the repository, design the module contract, implement extensions, verify the result | Invent a parallel architecture or bypass permission and audit rules        |
 | Generator    | Render deterministic standard CRUD files from structured input                              | Decide ambiguous business rules or silently overwrite handwritten code     |
 
-The in-product AI Agent is a runtime business Agent. It is not a coding Agent and must not receive
-arbitrary filesystem, shell, database, or Git access.
+The general in-product AI Agent remains a runtime business Agent. The system also includes one
+constrained module-development Agent. It can reach only the generator operations documented in
+section 12 and never receives arbitrary filesystem, shell, database, or Git access.
 
 ## 2. Request To Delivery Lifecycle
 
@@ -182,20 +183,42 @@ When generation or verification fails:
 
 ## 12. Safe In-Product Development Agent
 
-A future development Agent may call only constrained framework tools:
+The built-in `module-development-agent` is available from `/system/ai/agent` and AI Chat after a
+tool-calling model has been configured. It can call only these system-owned framework tools:
 
 ```text
 module_design
 module_generate_draft
 module_preview_diff
 module_validate
-module_publish
-module_rollback
+module_publish       # always requires Approval
+module_rollback      # always requires Approval
 ```
 
-`module_publish` must require Approval, restrict output paths, reject unresolved conflicts, persist
-the diff and verification results, and emit an operation log. Arbitrary shell/filesystem tools are
-outside the runtime Agent trust boundary.
+The intended flow is:
+
+1. Describe the CRUD module, for example CMS configuration fields and permissions.
+2. `module_design` returns a strict `admin-module.schema.json` contract only.
+3. Review the field, route, permission, action, soft-delete, and audit decisions.
+4. `module_generate_draft` writes an inactive draft under `generated/module-drafts`.
+5. `module_preview_diff` returns per-file changes, conflicts, and an immutable `planHash` without
+   mutating project source.
+6. `module_validate` applies that exact plan to an isolated project copy and stores the validation
+   evidence outside the real source tree.
+7. `module_publish` creates an Approval containing approver, expiry, plan hash, affected files, and
+   validation output. Approval rechecks permission, plan freshness, conflicts, isolated preflight,
+   source lock, backup, and journal before mutation.
+8. `module_rollback` also requires Approval and refuses to overwrite any file changed after publish.
+
+Rejected, expired, replayed, stale-plan, conflict, and production-environment requests do not mutate
+project source. Every material tool success or failure writes `sys_operation_log`. The tool registry
+requires exact system-owned tool code/handler pairs; administrators cannot create an alias that
+inherits module source access. `module_publish` and `module_rollback` enforce
+`system.moduleGenerator.publish` inside the service even after the general Agent approval check.
+
+The Agent does not run migrations after publication. Generated migration source is part of the
+reviewed result and is executed later through the normal deployment migration process. Source
+rollback never reverses an already executed database migration.
 
 ## 13. Example Requests
 

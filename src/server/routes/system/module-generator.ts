@@ -1,8 +1,4 @@
-import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
@@ -12,16 +8,11 @@ import { authRequired } from "@/server/middleware/auth";
 import {
   assertModuleGeneratorAllowed,
   buildModulePublishPlan,
+  generateModuleDraft,
   listModuleDrafts,
   moduleGeneratorExampleConfigPath,
-  moduleGeneratorInputRoot,
-  moduleGeneratorOutputRoot,
-  moduleGeneratorRepoRoot,
-  moduleGeneratorScriptPath,
-  moduleGeneratorTsxBin,
   parseModuleGeneratorConfig,
   publishModuleDraft,
-  readGeneratedModuleConfig,
   rollbackModulePublish,
   toPublicModulePublishPlan,
 } from "@/server/services/module-generator-service";
@@ -30,8 +21,6 @@ import {
   adminModuleGeneratorCapabilities,
   adminModuleJsonSchema,
 } from "@/shared/module-generator-contract";
-
-const execFileAsync = promisify(execFile);
 
 const generateSchema = z
   .object({
@@ -59,28 +48,6 @@ const rollbackSchema = z
       .optional(),
   })
   .strict();
-
-function parseGeneratedFiles(stdout: string) {
-  return stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => resolve(moduleGeneratorRepoRoot, line.slice(2)));
-}
-
-function parseOutputRoot(stdout: string) {
-  const line = stdout.split(/\r?\n/).find((item) => item.includes(" module draft at "));
-  const relativePath = line?.split(" module draft at ")[1]?.trim();
-  if (!relativePath) throw new Error("生成器未返回输出目录");
-  return resolve(moduleGeneratorRepoRoot, relativePath);
-}
-
-function assertInsideRoot(root: string, candidate: string, label: string) {
-  const relativePath = relative(root, candidate);
-  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
-    throw new Error(`${label}越界`);
-  }
-}
 
 export const moduleGeneratorRoutes = new Hono<{ Variables: HonoVariables }>();
 
@@ -145,65 +112,9 @@ moduleGeneratorRoutes.post(
         resource: "/module/generator",
         details: { force: payload.force, moduleName: normalizedConfig.name },
       },
-      async () => {
-        const inputPath = resolve(moduleGeneratorInputRoot, `module-${randomUUID()}.json`);
-        try {
-          await mkdir(dirname(inputPath), { recursive: true });
-          await writeFile(inputPath, JSON.stringify(normalizedConfig, null, 2));
-          const args = [
-            moduleGeneratorScriptPath,
-            "--config",
-            inputPath,
-            "--out-dir",
-            moduleGeneratorOutputRoot,
-            ...(payload.force ? ["--force"] : []),
-          ];
-          const { stdout } = await execFileAsync(moduleGeneratorTsxBin, args, {
-            cwd: moduleGeneratorRepoRoot,
-            maxBuffer: 2 * 1024 * 1024,
-            timeout: 30_000,
-          });
-          return {
-            outputRoot: parseOutputRoot(stdout),
-            files: parseGeneratedFiles(stdout),
-          };
-        } finally {
-          await rm(inputPath, { force: true });
-        }
-      },
+      async () => generateModuleDraft({ config: normalizedConfig, force: payload.force }),
     );
-    const outputRoot = resolve(result.outputRoot);
-    assertInsideRoot(moduleGeneratorOutputRoot, outputRoot, "生成目录");
-    const config = await readGeneratedModuleConfig(outputRoot);
-    const files = await Promise.all(
-      result.files.map(async (file) => {
-        const absolutePath = resolve(file);
-        assertInsideRoot(outputRoot, absolutePath, "生成文件");
-        const content = await readFile(absolutePath, "utf8");
-        return {
-          path: relative(moduleGeneratorRepoRoot, absolutePath),
-          size: Buffer.byteLength(content, "utf8"),
-          content:
-            content.length > 120_000 ? `${content.slice(0, 120_000)}\n/* truncated */` : content,
-        };
-      }),
-    );
-    return c.json(
-      success({
-        module: {
-          name: config.name,
-          title: config.title,
-          kebabName: config.name,
-          schemaName: config.schemaName,
-          permission: config.permission,
-          frontendPath: config.frontendPath,
-          apiPath: config.apiPath,
-        },
-        outputRoot: relative(moduleGeneratorRepoRoot, outputRoot),
-        drafts: await listModuleDrafts(),
-        files,
-      }),
-    );
+    return c.json(success(result));
   },
 );
 

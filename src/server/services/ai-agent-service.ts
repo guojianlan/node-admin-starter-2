@@ -1,4 +1,10 @@
 import { sqlite, type DbClient } from "@/server/db";
+import {
+  executeModuleAgentTool,
+  isModuleAgentHandlerKey,
+  moduleAgentRiskLevels,
+  prepareModuleAgentApproval,
+} from "./ai-module-agent-service";
 
 export type AiAgentRow = {
   id: number;
@@ -166,6 +172,15 @@ export async function saveAiTool(input: {
     if (existing.isSystem && (existing.code !== input.code || existing.handlerKey !== input.handlerKey)) {
       throw new Error("系统内置工具不允许修改编码或处理器");
     }
+    if (isModuleAgentHandlerKey(existing.handlerKey)) {
+      const approvalRequired = ["module_publish", "module_rollback"].includes(existing.handlerKey);
+      if (
+        input.riskLevel !== moduleAgentRiskLevels[existing.handlerKey] ||
+        Boolean(input.approvalRequired) !== approvalRequired
+      ) {
+        throw new Error("模块开发工具的风险等级和审批策略由系统固定");
+      }
+    }
     await dbClient
       .prepare(
         `UPDATE sys_ai_tool SET name = ?, code = ?, description = ?, handler_key = ?,
@@ -254,13 +269,30 @@ export async function appendAgentRunStep(input: { runId: number; stepNo: number;
 
 export async function createToolApproval(input: { runId: number; stepId: number; sessionId: number; userId: number; tool?: AiToolRow; toolName: string; toolCallId: string; toolInput: unknown; dbClient?: DbClient }) {
   const dbClient = input.dbClient ?? sqlite;
+  const toolInput = (input.toolInput ?? {}) as Record<string, unknown>;
+  const moduleApproval =
+    input.tool && isModuleAgentHandlerKey(input.tool.handlerKey)
+      ? await prepareModuleAgentApproval(input.tool, toolInput, {
+          userId: input.userId,
+          dbClient,
+        })
+      : null;
+  const expiresAt = moduleApproval?.expiresAt ?? new Date(Date.now() + 30 * 60 * 1000).toISOString();
   const result = await dbClient.prepare(
     `INSERT INTO sys_ai_tool_approval
-      (run_id, step_id, session_id, user_id, tool_id, tool_name, tool_call_id, input_json, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      (run_id, step_id, session_id, user_id, tool_id, tool_name, tool_call_id, input_json,
+       plan_hash, affected_files_json, validation_json, expires_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
      ON CONFLICT DO NOTHING
      RETURNING id`,
-  ).run(input.runId, input.stepId, input.sessionId, input.userId, input.tool?.id ?? null, input.toolName, input.toolCallId, JSON.stringify(input.toolInput ?? {}));
+  ).run(
+    input.runId, input.stepId, input.sessionId, input.userId, input.tool?.id ?? null,
+    input.toolName, input.toolCallId, JSON.stringify(toolInput),
+    moduleApproval?.planHash ?? null,
+    moduleApproval ? JSON.stringify(moduleApproval.affectedFiles) : null,
+    moduleApproval?.validation ? JSON.stringify(moduleApproval.validation) : null,
+    expiresAt,
+  );
   if (result.lastInsertRowid) return Number(result.lastInsertRowid);
   const existing = await dbClient.prepare(
     "SELECT id FROM sys_ai_tool_approval WHERE run_id = ? AND tool_call_id = ?",
@@ -277,7 +309,10 @@ export async function listSessionApprovals(input: { sessionId: number; userId: n
       t.description AS "toolDescription", t.handler_key AS "handlerKey",
       COALESCE(t.risk_level, 'medium') AS "riskLevel",
       a.tool_call_id AS "toolCallId", a.input_json AS "inputJson", a.output_json AS "outputJson",
-      a.status, a.reason, a.decided_at AS "decidedAt", a.created_at AS "createdAt"
+      a.plan_hash AS "planHash", a.affected_files_json AS "affectedFilesJson",
+      a.validation_json AS "validationJson", a.expires_at AS "expiresAt",
+      a.status, a.reason, a.decided_by AS "decidedBy", a.decided_at AS "decidedAt",
+      a.executed_at AS "executedAt", a.created_at AS "createdAt"
      FROM sys_ai_tool_approval a
      LEFT JOIN sys_ai_tool t ON t.id = a.tool_id
      WHERE a.session_id = ? AND a.user_id = ? ORDER BY a.id DESC`,
@@ -397,9 +432,16 @@ async function userHasAbility(userId: number | undefined, ability: string, dbCli
 export async function executeAgentTool(
   tool: AiToolRow,
   input: Record<string, unknown>,
-  options: { dbClient?: DbClient; userId?: number } = {},
+  options: { dbClient?: DbClient; userId?: number; approvedModuleMutation?: boolean } = {},
 ) {
   const dbClient = options.dbClient ?? sqlite;
+  if (isModuleAgentHandlerKey(tool.handlerKey)) {
+    return executeModuleAgentTool(tool, input, {
+      dbClient,
+      userId: options.userId,
+      approvedMutation: options.approvedModuleMutation,
+    });
+  }
   if (tool.handlerKey === "current_time") {
     return { now: new Date().toISOString(), timezone: "Asia/Shanghai" };
   }
@@ -461,16 +503,46 @@ export async function decideToolApproval(input: { id: number; userId: number; ap
   const dbClient = input.dbClient ?? sqlite;
   const approval = (await dbClient.prepare(
     `SELECT a.*, t.handler_key AS "handlerKey", t.code, t.description, t.risk_level AS "riskLevel",
-      t.approval_required AS "approvalRequired", t.status AS "toolStatus", t.name
+      t.approval_required AS "approvalRequired", t.status AS "toolStatus",
+      t.is_system AS "isSystem", t.name
      FROM sys_ai_tool_approval a LEFT JOIN sys_ai_tool t ON t.id = a.tool_id
      WHERE a.id = ? AND a.user_id = ? AND a.status = 'pending'`,
   ).get(input.id, input.userId)) as (Record<string, unknown> & { input_json?: string; handlerKey?: string; name?: string }) | undefined;
   if (!approval) throw new Error("待审批记录不存在或已经处理");
+  const expiresAt = approval.expires_at ? new Date(String(approval.expires_at)).getTime() : 0;
+  if (expiresAt && expiresAt <= Date.now()) {
+    await dbClient.prepare(
+      "UPDATE sys_ai_tool_approval SET status = 'expired', reason = ?, decided_by = ?, decided_at = now(), updated_at = now() WHERE id = ? AND status = 'pending'",
+    ).run("审批已过期，未执行工具", input.userId, input.id);
+    if (approval.step_id) {
+      await dbClient.prepare(
+        "UPDATE sys_ai_agent_run_step SET status = 'denied', error_message = ?, finished_at = now(), updated_at = now() WHERE id = ?",
+      ).run("审批已过期，未执行工具", Number(approval.step_id));
+    }
+    await dbClient.prepare(
+      "UPDATE sys_ai_agent_run SET status = 'stopped', error_message = ?, finished_at = now(), updated_at = now() WHERE id = ?",
+    ).run("审批已过期，未执行工具", Number(approval.run_id));
+    await dbClient.prepare(
+      `INSERT INTO sys_ai_chat_message (session_id, user_id, role, content, status)
+       VALUES (?, ?, 'system', ?, 'completed')`,
+    ).run(Number(approval.session_id), input.userId, `[工具审批已过期] ${String(approval.tool_name)}`);
+    await refreshApprovalSession({
+      sessionId: Number(approval.session_id),
+      userId: input.userId,
+      dbClient,
+    });
+    return { status: "expired", output: null, sessionId: Number(approval.session_id) };
+  }
   if (!input.approved) {
     await dbClient.prepare("UPDATE sys_ai_tool_approval SET status = 'denied', reason = ?, decided_by = ?, decided_at = now(), updated_at = now() WHERE id = ?")
       .run(input.reason ?? null, input.userId, input.id);
     await dbClient.prepare("UPDATE sys_ai_agent_run SET status = 'stopped', finished_at = now(), updated_at = now() WHERE id = ?")
       .run(Number(approval.run_id));
+    if (approval.step_id) {
+      await dbClient.prepare(
+        "UPDATE sys_ai_agent_run_step SET status = 'denied', error_message = ?, finished_at = now(), updated_at = now() WHERE id = ?",
+      ).run(input.reason || "用户拒绝执行", Number(approval.step_id));
+    }
     await dbClient.prepare(
       `INSERT INTO sys_ai_chat_message (session_id, user_id, role, content, status)
        VALUES (?, ?, 'system', ?, 'completed')`,
@@ -487,16 +559,25 @@ export async function decideToolApproval(input: { id: number; userId: number; ap
     code: String(approval.code || ""), description: String(approval.description || ""),
     handlerKey: String(approval.handlerKey || ""), inputSchemaJson: null, configJson: null,
     riskLevel: String(approval.riskLevel || "medium") as AiToolRow["riskLevel"],
-    approvalRequired: Boolean(approval.approvalRequired), status: Number(approval.toolStatus || 1), sort: 0, isSystem: false,
+    approvalRequired: Boolean(approval.approvalRequired), status: Number(approval.toolStatus ?? 0), sort: 0,
+    isSystem: Boolean(approval.isSystem),
   };
   try {
     if (!approval.tool_id || Number(approval.toolStatus) !== 1 || !tool.handlerKey) {
       throw new Error("工具已停用或不存在，不能继续执行");
     }
     const toolInput = approval.input_json ? JSON.parse(String(approval.input_json)) as Record<string, unknown> : {};
+    if (
+      isModuleAgentHandlerKey(tool.handlerKey) &&
+      approval.plan_hash &&
+      String(toolInput.planHash || "") !== String(approval.plan_hash)
+    ) {
+      throw new Error("审批记录的发布计划哈希与工具参数不一致");
+    }
     const output = await executeAgentTool(tool, toolInput, {
       dbClient,
       userId: input.userId,
+      approvedModuleMutation: true,
     });
     await dbClient.prepare(
       "UPDATE sys_ai_tool_approval SET status = 'executed', output_json = ?, reason = ?, decided_by = ?, decided_at = now(), executed_at = now(), updated_at = now() WHERE id = ?",

@@ -145,7 +145,11 @@ type ToolApproval = {
   riskLevel: "low" | "medium" | "high" | "critical";
   inputJson?: string | null;
   outputJson?: string | null;
-  status: "pending" | "approved" | "denied" | "executed" | "failed";
+  planHash?: string | null;
+  affectedFilesJson?: string | null;
+  validationJson?: string | null;
+  expiresAt?: string | null;
+  status: "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
   reason?: string | null;
   createdAt: string;
 };
@@ -402,9 +406,23 @@ function RunInspector({
               <div><dt>工具</dt><dd>{approval.toolDisplayName || approval.toolName}</dd></div>
               <div><dt>影响</dt><dd>{approval.toolDescription || "执行 Agent 请求的服务端工具"}</dd></div>
               <div><dt>范围</dt><dd>当前管理员可访问数据</dd></div>
+              {approval.planHash ? <div><dt>计划</dt><dd><Typography.Text code copyable>{approval.planHash}</Typography.Text></dd></div> : null}
+              {approval.expiresAt ? <div><dt>有效期</dt><dd>{formatTime(approval.expiresAt)}</dd></div> : null}
             </dl>
             <Typography.Text type="secondary">参数</Typography.Text>
             <pre className="ai-chat-approval-input">{formatJsonText(approval.inputJson)}</pre>
+            {approval.affectedFilesJson ? (
+              <details className="ai-chat-approval-raw">
+                <summary><CodeOutlined /> 受影响文件</summary>
+                <pre>{formatJsonText(approval.affectedFilesJson)}</pre>
+              </details>
+            ) : null}
+            {approval.validationJson ? (
+              <details className="ai-chat-approval-raw">
+                <summary><SafetyCertificateOutlined /> 隔离验证结果</summary>
+                <pre>{formatJsonText(approval.validationJson)}</pre>
+              </details>
+            ) : null}
             <Space orientation="vertical" size={8} style={{ width: "100%" }}>
               <Button type="primary" block loading={deciding} onClick={() => onDecision(approval.id, true)}>
                 批准并继续

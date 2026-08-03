@@ -191,7 +191,13 @@ Supported provider types include OpenAI, Anthropic, Google Gemini, OpenAI-compat
 
 Runtime calls use the configured default model for `chat` or `structured` and return provider/model metadata without secrets. Playground calls write operation logs under `system.aiPlayground`; AI Chat calls write operation logs under `system.aiChat`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
 
-AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. Assistant messages transition through `streaming`, `completed`, `stopped`, or `failed`; stale streaming records are recovered as failed. Context governance reserves output tokens, keeps a recent-message window, and stores a deterministic summary of compacted history. Agent execution persists `sys_ai_agent_run`, `sys_ai_agent_run_step`, and `sys_ai_tool_approval` records. Server-side tools are selected from a fixed handler registry; configuration cannot inject executable code.
+AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. Assistant messages transition through `streaming`, `completed`, `stopped`, or `failed`; stale streaming records are recovered as failed. Context governance reserves output tokens, keeps a recent-message window, and stores a deterministic summary of compacted history. Agent execution persists `sys_ai_agent_run`, `sys_ai_agent_run_step`, and `sys_ai_tool_approval` records. Approval records can include `planHash`, affected files, validation output, expiry, approver, decision time, and execution time. Expired, denied, or replayed approvals do not execute their tool. Server-side tools are selected from a fixed handler registry; configuration cannot inject executable code.
+
+The built-in module-development Agent exposes only `module_design`, `module_generate_draft`,
+`module_preview_diff`, `module_validate`, `module_publish`, and `module_rollback` through the existing
+AI Chat/Agent streaming and approval APIs. It does not expose shell, raw filesystem, or Git APIs.
+`module_publish` and `module_rollback` always require a human approval and the
+`system.moduleGenerator.publish` permission.
 
 ## OAuth
 
@@ -362,6 +368,12 @@ custom UI, and declares the delete-family ability aliases. Module input is stric
 non-kebab module names, duplicate fields/columns, missing `query`, invalid status fields, and restore
 without soft delete are rejected by both CLI and Web callers. Drafts missing current contract
 snippets must be regenerated before diff or publish.
+
+The Agent validation path additionally stores the exact plan hash, affected files, and isolated
+validation output. An Agent publication approval cannot be created until the current plan has passed
+`module_validate`; a stale plan or changed file set invalidates that evidence. Production rejects
+Agent design/generation/diff/validation/publication/rollback execution as a development-only
+capability.
 
 Generation and publish are rejected in production. Generate writes to `generated/module-drafts` and does not go live. Publish applies the reviewed draft to real source files and should be followed by `typecheck`, `lint`, `test`, `admin:check-routes`, and `build`.
 

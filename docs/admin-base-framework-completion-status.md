@@ -65,6 +65,9 @@ The backend framework can now support a long-running business project baseline:
   Module publishing now requires a per-file diff and plan hash, runs verification in an isolated
   source copy, records backups and hashes, and supports guarded source rollback without overwriting
   later manual edits.
+- The built-in module-development Agent reuses the same contract and publication services through
+  six system-owned tools. Runs, steps, approvals, plan hashes, affected files, validation evidence,
+  expiry, execution, and operation logs are visible through the existing Agent debugging workflow.
 
 ## AI-First Framework Packages
 
@@ -72,11 +75,18 @@ The backend framework can now support a long-running business project baseline:
 | ----------------------------------------------------- | -----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Package A: agent-ready development contract           |   100% | Repository `AGENTS.md`, AI development lifecycle, project-owned `admin-module`/`admin-ui`/`admin-qa` skills, risk-based `admin:verify` command, and module handoff guidance are implemented.                                                                                                                   |
 | Package B: governed module generation and publication |   100% | CLI/Web/Coding Agent share one strict schema; the generator declares supported capabilities; publication has per-file diffs, identity/conflict checks, immutable plan hashes, isolated preflight, serialized source mutation, publish journals/backups, partial-failure recovery, and guarded source rollback. |
+| Package C: constrained in-product development Agent   |   100% | `module_design`, draft, diff, validation, publication, and rollback tools reuse Package B services; system identity, permissions, production rejection, Approval, expiry, replay protection, Run/Step visibility, and operation logs are enforced.                                                             |
 
 Package B ownership is explicit: a draft is generator-owned, while published files become normal
 repository-owned source. Regeneration is diff-only and cannot overwrite a handwritten target.
 Rollback verifies published after-hashes before restoring files and does not attempt to reverse an
 already executed database migration.
+
+Package C keeps the runtime trust boundary narrow. The development Agent has no arbitrary shell,
+filesystem, Git, SQL, route, or tool-name input. Draft and diff operations do not activate source;
+publish and rollback require a non-expired human Approval plus
+`system.moduleGenerator.publish`. Approval evidence stores the exact plan hash, affected files, and
+validation output, and publication still re-runs Package B preflight and stale-plan checks.
 
 Package B automated acceptance on 2026-08-03:
 
@@ -92,6 +102,19 @@ The Package B browser visual pass remains a manual acceptance boundary by projec
 not weaken source publication safety: API workflows, generated source, failed preflight isolation,
 stale-plan rejection, rollback protection, route generation, type validation, and production build
 are automated.
+
+Package C automated acceptance on 2026-08-03:
+
+- `pnpm typecheck` and `pnpm lint` passed.
+- `pnpm test` passed 313/313 tests in 15 test files.
+- The 10 focused development-Agent tests cover all six tools, real draft/diff/isolated validation,
+  system-tool identity, permissions, production rejection, approval evidence, denial, expiry,
+  replay protection, stale plans, conflicts, and operation logs.
+- `pnpm test:check-cases` passed 224/224 API operations and 28/28 pages.
+- `pnpm admin:check-routes` passed route, manifest, seed, and permission consistency checks.
+- `pnpm build` passed the Next.js production build and generated all 30 application pages.
+- Browser visual QA remains deferred to the project owner's manual test, as requested for this
+  package.
 
 ## Deferred Scope
 

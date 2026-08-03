@@ -1544,6 +1544,95 @@ CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_tool_approval_run_tool_call_unique
   ON sys_ai_tool_approval(run_id, tool_call_id);
 `,
   },
+  {
+    id: "0027_constrained_module_development_agent",
+    sql: `
+ALTER TABLE sys_ai_tool_approval ADD COLUMN IF NOT EXISTS plan_hash TEXT;
+ALTER TABLE sys_ai_tool_approval ADD COLUMN IF NOT EXISTS affected_files_json TEXT;
+ALTER TABLE sys_ai_tool_approval ADD COLUMN IF NOT EXISTS validation_json TEXT;
+ALTER TABLE sys_ai_tool_approval ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+UPDATE sys_ai_tool_approval
+SET expires_at = created_at + interval '30 minutes'
+WHERE expires_at IS NULL AND status = 'pending';
+CREATE INDEX IF NOT EXISTS sys_ai_tool_approval_expires_at_idx ON sys_ai_tool_approval(expires_at);
+
+INSERT INTO sys_ai_agent
+  (name, code, description, instructions, model_id, temperature_milli, max_output_tokens,
+   max_steps, status, sort, is_system)
+VALUES
+  ('模块开发助手', 'module-development-agent',
+   '通过受控工具设计、生成、检查、验证、发布和回滚 Admin Base CRUD 模块',
+   '你是 Admin Base 模块开发助手。你只能使用系统提供的 module_design、module_generate_draft、module_preview_diff、module_validate、module_publish、module_rollback 工具完成模块交付。先根据用户需求调用 module_design 输出严格的模块契约，并请用户确认字段、权限和路由；确认后生成草稿，再检查逐文件差异，使用返回的 planHash 做隔离验证。只有验证通过后才能请求发布。module_publish 和 module_rollback 必须等待人工审批。不得要求或尝试 shell、任意文件系统、原始 Git 或未注册工具访问。发布完成后汇总页面、API、权限、文件和验证结果。',
+   NULL, 200, 16384, 12, 1, 2, true)
+ON CONFLICT DO NOTHING;
+
+UPDATE sys_ai_agent
+SET name = '模块开发助手',
+    description = '通过受控工具设计、生成、检查、验证、发布和回滚 Admin Base CRUD 模块',
+    instructions = '你是 Admin Base 模块开发助手。你只能使用系统提供的 module_design、module_generate_draft、module_preview_diff、module_validate、module_publish、module_rollback 工具完成模块交付。先根据用户需求调用 module_design 输出严格的模块契约，并请用户确认字段、权限和路由；确认后生成草稿，再检查逐文件差异，使用返回的 planHash 做隔离验证。只有验证通过后才能请求发布。module_publish 和 module_rollback 必须等待人工审批。不得要求或尝试 shell、任意文件系统、原始 Git 或未注册工具访问。发布完成后汇总页面、API、权限、文件和验证结果。',
+    max_steps = 12,
+    status = 1,
+    sort = 2,
+    is_system = true,
+    updated_at = now()
+WHERE code = 'module-development-agent' AND deleted_at IS NULL;
+
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('设计模块契约', 'module_design',
+   '把模块需求转换为 admin-module.schema.json 约束下的结构化契约；只返回契约 JSON',
+   'module_design', '{"contract":"admin-module.schema.json"}', 'low', false, 1, 10, true),
+  ('生成模块草稿', 'module_generate_draft',
+   '使用已确认的模块契约生成未上线草稿，不激活页面或 API',
+   'module_generate_draft', '{"contract":"admin-module.schema.json","force":"boolean"}', 'medium', false, 1, 11, true),
+  ('预览发布差异', 'module_preview_diff',
+   '读取模块草稿并生成逐文件发布差异、冲突和 planHash，不修改项目源码',
+   'module_preview_diff', '{"name":"kebab-case"}', 'low', false, 1, 12, true),
+  ('验证模块草稿', 'module_validate',
+   '使用当前 planHash 在隔离目录执行模块验证，不修改项目源码',
+   'module_validate', '{"name":"kebab-case","planHash":"sha256"}', 'medium', false, 1, 13, true),
+  ('发布模块', 'module_publish',
+   '发布已通过当前 planHash 隔离验证的模块；执行前必须人工审批',
+   'module_publish', '{"name":"kebab-case","planHash":"sha256"}', 'high', true, 1, 14, true),
+  ('回滚模块源码', 'module_rollback',
+   '回滚生成器最近一次受保护的源码发布；数据库 migration 不会逆向删除；执行前必须人工审批',
+   'module_rollback', '{"name":"kebab-case","publishId":"optional"}', 'critical', true, 1, 15, true)
+ON CONFLICT DO NOTHING;
+
+UPDATE sys_ai_tool
+SET handler_key = code,
+    approval_required = code IN ('module_publish', 'module_rollback'),
+    risk_level = CASE
+      WHEN code = 'module_rollback' THEN 'critical'
+      WHEN code = 'module_publish' THEN 'high'
+      WHEN code IN ('module_generate_draft', 'module_validate') THEN 'medium'
+      ELSE 'low'
+    END,
+    status = 1,
+    is_system = true,
+    updated_at = now()
+WHERE code IN (
+  'module_design', 'module_generate_draft', 'module_preview_diff',
+  'module_validate', 'module_publish', 'module_rollback'
+) AND deleted_at IS NULL;
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id,
+  CASE WHEN tool.handler_key IN ('module_publish', 'module_rollback') THEN 'always' ELSE 'never' END
+FROM sys_ai_agent agent
+CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'module-development-agent'
+  AND agent.deleted_at IS NULL
+  AND tool.code IN (
+    'module_design', 'module_generate_draft', 'module_preview_diff',
+    'module_validate', 'module_publish', 'module_rollback'
+  )
+  AND tool.deleted_at IS NULL
+ON CONFLICT (agent_id, tool_id) DO UPDATE SET approval_mode = EXCLUDED.approval_mode;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

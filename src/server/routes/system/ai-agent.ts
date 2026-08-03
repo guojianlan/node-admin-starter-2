@@ -15,6 +15,7 @@ import {
   saveAiTool,
   softDeleteAiResource,
 } from "@/server/services/ai-agent-service";
+import { moduleAgentHandlerKeys } from "@/server/services/ai-module-agent-service";
 import { getAiRuntimeConfig } from "@/server/services/ai-provider-service";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 
@@ -44,9 +45,15 @@ const agentSchema = z.object({
 
 const toolSchema = z.object({
   name: z.string().min(1).max(100),
-  code: z.string().regex(/^[a-z][a-z0-9-]*$/).max(100),
+  code: z.string().regex(/^[a-z][a-z0-9_-]*$/).max(100),
   description: z.string().min(1).max(500),
-  handlerKey: z.enum(["current_time", "calculator", "system_status", "operation_log_summary"]),
+  handlerKey: z.enum([
+    "current_time",
+    "calculator",
+    "system_status",
+    "operation_log_summary",
+    ...moduleAgentHandlerKeys,
+  ]),
   inputSchemaJson: jsonTextSchema.optional().nullable(),
   configJson: jsonTextSchema.optional().nullable(),
   riskLevel: z.enum(["low", "medium", "high", "critical"]).default("low"),
@@ -196,5 +203,11 @@ aiAgentRoutes.post("/ai/approval/:id/decision", authRequired(), ability("system.
   }, async () => {
     result = await decideToolApproval({ id, userId: user.id, approved: payload.approved, reason: payload.reason });
   });
-  return c.json(success(result, payload.approved ? "已批准并执行" : "已拒绝"));
+  const decisionStatus = (result as { status?: string } | null)?.status;
+  const message = decisionStatus === "expired"
+    ? "审批已过期，工具未执行"
+    : payload.approved
+      ? "已批准并执行"
+      : "已拒绝";
+  return c.json(success(result, message));
 });

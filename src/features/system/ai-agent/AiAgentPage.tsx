@@ -124,7 +124,11 @@ type ToolApproval = {
   riskLevel: "low" | "medium" | "high" | "critical";
   inputJson?: string | null;
   outputJson?: string | null;
-  status: "pending" | "approved" | "denied" | "executed" | "failed";
+  planHash?: string | null;
+  affectedFilesJson?: string | null;
+  validationJson?: string | null;
+  expiresAt?: string | null;
+  status: "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
   reason?: string | null;
 };
 
@@ -626,7 +630,7 @@ export function AiAgentPage() {
         <Form form={toolForm} layout="vertical" className="admin-entity-form-grid">
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="code" label="编码" rules={[{ required: true }]}><Input disabled={Boolean(editingTool?.isSystem)} /></Form.Item>
-          <Form.Item name="handlerKey" label="服务端处理器" rules={[{ required: true }]}><Select disabled={Boolean(editingTool?.isSystem)} options={["current_time", "calculator", "system_status", "operation_log_summary"].map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="handlerKey" label="服务端处理器" rules={[{ required: true }]}><Select disabled={Boolean(editingTool?.isSystem)} options={["current_time", "calculator", "system_status", "operation_log_summary", "module_design", "module_generate_draft", "module_preview_diff", "module_validate", "module_publish", "module_rollback"].map((value) => ({ value, label: value }))} /></Form.Item>
           <Form.Item name="riskLevel" label="风险等级"><Select options={Object.keys(riskColors).map((value) => ({ value, label: value }))} /></Form.Item>
           <Form.Item name="approvalRequired" label="需要人工审批" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item name="status" label="启用" valuePropName="checked" getValueFromEvent={(checked) => checked ? 1 : 0} getValueProps={(value) => ({ checked: value === 1 })}><Switch /></Form.Item>
@@ -736,6 +740,28 @@ export function AiAgentPage() {
                       ) : null}
                       <Typography.Text type="secondary">即将执行的参数</Typography.Text>
                       <JsonPreview value={approval.inputJson} />
+                      {approval.planHash ? (
+                        <Typography.Text copyable code>
+                          planHash: {approval.planHash}
+                        </Typography.Text>
+                      ) : null}
+                      {approval.affectedFilesJson ? (
+                        <>
+                          <Typography.Text type="secondary">受影响文件</Typography.Text>
+                          <JsonPreview value={approval.affectedFilesJson} />
+                        </>
+                      ) : null}
+                      {approval.validationJson ? (
+                        <>
+                          <Typography.Text type="secondary">隔离验证结果</Typography.Text>
+                          <JsonPreview value={approval.validationJson} />
+                        </>
+                      ) : null}
+                      {approval.expiresAt ? (
+                        <Typography.Text type="secondary">
+                          审批有效期至 {new Date(approval.expiresAt).toLocaleString()}
+                        </Typography.Text>
+                      ) : null}
                       <Space>
                         <Button
                           type="primary"
