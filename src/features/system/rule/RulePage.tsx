@@ -46,6 +46,7 @@ import { request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { renderMenuIcon } from "@/ui/shell/icon-map";
 import { feedback } from "@/ui/feedback/feedback";
+import { PageScaffold } from "@/ui/page/PageScaffold";
 import { EmptyState } from "@/ui/states/EmptyState";
 
 dayjs.extend(relativeTime);
@@ -603,7 +604,8 @@ export function RulePage() {
   }, [baseColumns, visibleColumnKeys]);
 
   return (
-    <div className="admin-card rule-page-card">
+    <PageScaffold title="权限管理" hideHeader className="rule-page">
+      <div className="admin-card rule-page-card admin-fill-workspace">
       <div className="rule-page-header">
         <h1 className="rule-page-title">权限管理</h1>
         <div className="rule-page-tools">
@@ -654,7 +656,7 @@ export function RulePage() {
       </div>
 
       <Table<RuleRecord>
-        className="rule-tree-table admin-table-surface"
+        className="rule-tree-table admin-table-surface admin-fill-table"
         rowKey="id"
         columns={columns}
         dataSource={filteredRows}
@@ -665,7 +667,7 @@ export function RulePage() {
         locale={{ emptyText: <EmptyState /> }}
         scroll={{
           x: 1144,
-          y: "var(--admin-rule-table-body-block-size)",
+          y: "100%",
         }}
         expandable={{
           expandedRowKeys,
@@ -835,6 +837,7 @@ export function RulePage() {
           </Form.Item>
         </Form>
       </Drawer>
-    </div>
+      </div>
+    </PageScaffold>
   );
 }

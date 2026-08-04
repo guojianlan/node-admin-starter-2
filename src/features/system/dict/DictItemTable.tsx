@@ -130,7 +130,7 @@ export function DictItemTable({ dict, showTitle = true, urlStatePrefix }: DictIt
       cardClassName="system-dict-detail-card"
       createTitle="新增字典项"
       updateTitle="编辑字典项"
-      tableMode="embedded"
+      tableMode="bounded"
       showSearchForm={false}
       toolbarTitle={
         showTitle ? (

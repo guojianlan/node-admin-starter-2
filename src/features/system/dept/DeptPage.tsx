@@ -281,7 +281,6 @@ export function DeptPage() {
               </Space>
             }
             loading={deptTreeQuery.isLoading}
-            styles={{ body: { minHeight: "70vh" } }}
           >
             {checkedKeys.length > 0 ? (
               <Alert
@@ -343,7 +342,6 @@ export function DeptPage() {
               setTabKey(key);
               setDeptUserPage((value) => ({ page: 1, pageSize: value.pageSize }));
             }}
-            styles={{ body: { minHeight: "70vh" } }}
           >
             {tabKey === "info" ? (
               <Form
@@ -378,7 +376,9 @@ export function DeptPage() {
                 <Form.Item name="status" label="状态" rules={[{ required: true }]}>
                   <Select options={statusOptions} />
                 </Form.Item>
-                <Form.Item wrapperCol={{ xs: { offset: 0, span: 24 }, sm: { offset: 5, span: 16 } }}>
+                <Form.Item
+                  wrapperCol={{ xs: { offset: 0, span: 24 }, sm: { offset: 5, span: 16 } }}
+                >
                   <Button
                     type="primary"
                     htmlType="submit"
@@ -391,7 +391,7 @@ export function DeptPage() {
               </Form>
             ) : (
               <Table<DeptUserRecord>
-                className="admin-table-surface"
+                className="admin-table-surface admin-fill-table"
                 rowKey="id"
                 dataSource={deptUsers}
                 bordered
@@ -408,7 +408,7 @@ export function DeptPage() {
                     setDeptUserPage({ page, pageSize });
                   },
                 }}
-                scroll={{ x: 600, y: 420 }}
+                scroll={{ x: 600, y: "100%" }}
               />
             )}
           </Card>

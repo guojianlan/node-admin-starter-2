@@ -19,6 +19,7 @@ import {
   Card,
   Col,
   Form,
+  Grid,
   Input,
   InputNumber,
   Row,
@@ -270,6 +271,7 @@ function ConfigSectionForm({
 
   return (
     <Card
+      className="settings-section-card"
       title={
         <Space>
           {section.icon}
@@ -399,7 +401,7 @@ function ResourceSettings({
   });
 
   return (
-    <Row gutter={[16, 16]}>
+    <Row className="settings-resource-grid settings-resource-scroll" gutter={[16, 16]}>
       <Col xs={24} lg={8}>
         <Card
           title={
@@ -610,6 +612,7 @@ function LoginMethods({
   }));
   return (
     <Card
+      className="settings-section-card"
       title={
         <Space>
           <LoginOutlined />
@@ -661,6 +664,7 @@ function LoginMethods({
 }
 
 export function SettingsPage() {
+  const screens = Grid.useBreakpoint();
   const hasAccess = useAuthStore((state) => state.hasAccess);
   const canQueryStorage = hasAccess("system.storage.query");
   const canQueryMail = hasAccess("system.mail.query");
@@ -751,15 +755,21 @@ export function SettingsPage() {
     (canQueryOAuth && oauthProviderQuery.isLoading);
 
   return (
-    <PageScaffold title="系统设置" description="聚合基础参数、安全策略、登录策略、上传策略和资源配置">
-      <Spin spinning={loading}>
-        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+    <PageScaffold
+      title="系统设置"
+      description="聚合基础参数、安全策略、登录策略、上传策略和资源配置"
+      className="settings-page"
+    >
+      <Spin className="settings-loading" spinning={loading}>
+        <div className="settings-workspace admin-fill-workspace">
           <Alert
             showIcon
             type="info"
             title="系统设置是业务化入口；配置项管理、存储、邮件仍保持独立模型和独立权限。"
           />
           <Tabs
+            className="admin-fill-tabs settings-tabs"
+            tabPlacement={screens.sm ? "start" : "top"}
             items={[
               ...sections.map((section) => ({
                 key: section.key,
@@ -812,7 +822,7 @@ export function SettingsPage() {
               },
             ]}
           />
-        </Space>
+        </div>
       </Spin>
     </PageScaffold>
   );

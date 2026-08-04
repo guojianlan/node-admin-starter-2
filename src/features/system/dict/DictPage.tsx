@@ -175,10 +175,12 @@ export function DictPage() {
             columns={columns}
             searchPlacement="card"
             searchCardClassName="system-dict-search-card"
+            showSearchButton
+            defaultSearchOpen={false}
             cardClassName="system-dict-master-card"
             createTitle="新增字典"
             updateTitle="编辑字典"
-            tableMode="embedded"
+            tableMode="bounded"
             actionBarRender={() => (
               <Button
                 className="system-dict-cache-button"

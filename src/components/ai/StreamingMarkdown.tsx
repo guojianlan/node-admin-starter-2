@@ -50,18 +50,20 @@ const components: Components = {
 
 export const StreamingMarkdown = memo(function StreamingMarkdown({
   content,
+  className,
   placeholder = "等待模型返回内容...",
   minHeight = 160,
   maxHeight = 320,
 }: {
   content: string;
+  className?: string;
   placeholder?: string;
   minHeight?: number;
   maxHeight?: number | null;
 }) {
   return (
     <div
-      className="streaming-markdown"
+      className={["streaming-markdown", className].filter(Boolean).join(" ")}
       style={{
         minHeight,
         maxHeight: maxHeight ?? undefined,

@@ -30,7 +30,7 @@ function pageCase(definition: PageDefinition): PageTestCase {
         "无页面权限时菜单不可见且直接访问被拒绝；无动作权限时对应按钮不可见或禁用",
     },
     visual: {
-      desktop: definition.desktop,
+      desktop: `${definition.desktop}；主工作区填满 Shell 分配的可用高度，页面头部保持稳定，表格、Tabs、树或专用画布在内容区内部滚动，底部不出现因自然高度收缩造成的无意义空白`,
       narrow: "窄屏下无控件重叠和横向页面溢出；复杂表格允许容器内横向滚动，关键操作仍可触达",
       light: "浅色主题下背景、边框、正文、次要文字、选中态和危险操作达到清晰层级与可读对比",
       dark: "暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识",
@@ -139,7 +139,7 @@ export const pageTestCases: PageTestCase[] = [
     content: "基础、安全、登录、Token、上传、存储、邮件和登录方式设置",
     primaryAction: "按分区独立保存策略并执行资源管理或连接测试",
     desktop:
-      "分组导航、表单标题、说明、控件和保存区对齐；长设置页定位稳定，开关使用 Switch 而非文字按钮",
+      "分组导航、表单标题、说明、控件和保存区对齐；设置卡片边界完整，头部和保存动作固定，长表单在卡片正文内部滚动；开关使用 Switch 而非文字按钮",
     empty: "配置项未初始化时明确指出缺失键和初始化方式，不静默隐藏整个分区",
   }),
   pageCase({

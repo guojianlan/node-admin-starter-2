@@ -18,7 +18,7 @@ export function DictItemPage() {
   if (!dictId) {
     return (
       <PageScaffold title="字典项管理" description="请选择字典后再管理字典项">
-        <div className="system-empty-tip">未选择字典</div>
+        <div className="admin-card system-empty-tip admin-fill-workspace">未选择字典</div>
       </PageScaffold>
     );
   }

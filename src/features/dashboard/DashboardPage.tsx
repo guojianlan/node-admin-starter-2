@@ -16,6 +16,7 @@ import dayjs from "dayjs";
 import { Alert, Badge, Card, Col, Empty, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
 import { request } from "@/lib/request";
 import { useNavigationAdapter } from "@/platform/navigation";
+import { PageScaffold } from "@/ui/page/PageScaffold";
 
 type DashboardSummary = {
   visibility: {
@@ -77,8 +78,13 @@ export function DashboardPage() {
   const data = summaryQuery.data;
 
   return (
-    <Spin spinning={summaryQuery.isLoading}>
-      <div className="xin-dashboard">
+    <PageScaffold
+      title="系统状态"
+      description="集中查看登录、会话、审计、文件和基础资源运行状态"
+      className="dashboard-page"
+    >
+      <Spin className="dashboard-loading" spinning={summaryQuery.isLoading}>
+        <div className="xin-dashboard admin-fill-workspace">
         {summaryQuery.isError ? (
           <Alert type="error" showIcon title="系统状态加载失败" style={{ marginBottom: 16 }} />
         ) : null}
@@ -236,7 +242,8 @@ export function DashboardPage() {
             </Card>
           </Col> : null}
         </Row>
-      </div>
-    </Spin>
+        </div>
+      </Spin>
+    </PageScaffold>
   );
 }

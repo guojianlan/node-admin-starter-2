@@ -460,6 +460,7 @@ export function AiAgentPage() {
     <PageScaffold
       title="AI Agent"
       description="把模型、指令、工具、运行步骤和人工审批组织成可审计的业务 Agent"
+      className="ai-agent-page"
       actions={
         <Button
           icon={<ReloadOutlined />}
@@ -473,8 +474,9 @@ export function AiAgentPage() {
         </Button>
       }
     >
-      <Card className="admin-card ai-agent-workbench" variant="borderless">
+      <Card className="admin-card ai-agent-workbench admin-fill-workspace" variant="borderless">
         <Tabs
+          className="admin-fill-tabs ai-agent-tabs"
           items={[
             {
               key: "agents",
@@ -490,7 +492,7 @@ export function AiAgentPage() {
                     </Button>
                   </div>
                   <Table
-                    className="admin-table-surface"
+                    className="admin-table-surface admin-fill-table"
                     rowKey="id"
                     loading={agentsQuery.isLoading}
                     dataSource={agents}
@@ -547,7 +549,7 @@ export function AiAgentPage() {
                         ),
                       },
                     ]}
-                    scroll={{ x: 980 }}
+                    scroll={{ x: 980, y: "100%" }}
                   />
                 </>
               ),
@@ -564,7 +566,7 @@ export function AiAgentPage() {
                     </Button>
                   </div>
                   <Table
-                    className="admin-table-surface"
+                    className="admin-table-surface admin-fill-table"
                     rowKey="id"
                     loading={optionsQuery.isLoading}
                     dataSource={tools}
@@ -577,7 +579,7 @@ export function AiAgentPage() {
                       { title: "状态", dataIndex: "status", width: 90, render: (value) => <Tag color={value === 1 ? "green" : "default"}>{value === 1 ? "启用" : "停用"}</Tag> },
                       { title: "操作", width: 140, fixed: "right", render: (_, row) => <Space><Button type="text" icon={<EditOutlined />} onClick={() => openTool(row)} /><Popconfirm title="确认删除该工具？" onConfirm={() => void remove("tool", row.id)} disabled={row.isSystem}><Button type="text" danger icon={<DeleteOutlined />} disabled={row.isSystem} /></Popconfirm></Space> },
                     ]}
-                    scroll={{ x: 760 }}
+                    scroll={{ x: 760, y: "100%" }}
                   />
                 </>
               ),
@@ -587,12 +589,12 @@ export function AiAgentPage() {
               label: "Runs",
               children: (
                 <Table
-                  className="admin-table-surface"
+                  className="admin-table-surface admin-fill-table"
                   rowKey="id"
                   loading={runsQuery.isLoading}
                   dataSource={runsQuery.data ?? []}
                   pagination={{ pageSize: 20 }}
-                  scroll={{ x: 920, y: 480 }}
+                  scroll={{ x: 920, y: "100%" }}
                   onRow={(row) => ({ onClick: () => setActiveRun(row), style: { cursor: "pointer" } })}
                   columns={[
                     { title: "Run", dataIndex: "id", width: 90, render: (value) => `#${value}` },

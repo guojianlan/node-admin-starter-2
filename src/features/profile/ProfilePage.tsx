@@ -227,7 +227,7 @@ export function ProfilePage() {
   }
 
   return (
-    <PageScaffold title={t("profile")} description={t("profileSubtitle")}>
+    <PageScaffold title={t("profile")} description={t("profileSubtitle")} className="profile-page">
       <div className="profile-workspace">
         <section className="profile-hero">
           <div className="profile-identity">
@@ -297,6 +297,7 @@ export function ProfilePage() {
 
         <section className="profile-panel">
             <Tabs
+              className="admin-fill-tabs profile-tabs"
               items={[
                 {
                   key: "base",
@@ -411,7 +412,7 @@ export function ProfilePage() {
                   key: "oauth",
                   label: "第三方账号",
                   children: (
-                    <Space orientation="vertical" style={{ width: "100%" }} size={16}>
+                    <Space className="profile-tab-workspace" orientation="vertical" style={{ width: "100%" }} size={16}>
                       <Space wrap>
                         {(loginOptionsQuery.data?.oauthProviders ?? []).map((provider) => {
                           const bound = (oauthAccountsQuery.data ?? []).some(
@@ -435,7 +436,7 @@ export function ProfilePage() {
                         )}
                       </Space>
                       <Table<OAuthAccount>
-                        className="admin-table-surface"
+                        className="admin-table-surface admin-fill-table"
                         rowKey={(record) => `${record.provider}:${record.providerUserId}`}
                         size="small"
                         loading={oauthAccountsQuery.isFetching}
@@ -486,7 +487,7 @@ export function ProfilePage() {
                             ),
                           },
                         ]}
-                        scroll={{ x: 860 }}
+                        scroll={{ x: 860, y: "100%" }}
                       />
                     </Space>
                   ),
@@ -495,7 +496,7 @@ export function ProfilePage() {
                   key: "login",
                   label: t("loginRecords"),
                   children: (
-                    <Space orientation="vertical" style={{ width: "100%" }}>
+                    <Space className="profile-tab-workspace profile-login-records" orientation="vertical" style={{ width: "100%" }}>
                       <Button
                         icon={<ReloadOutlined />}
                         onClick={() => void loginRecordsQuery.refetch()}
@@ -503,13 +504,13 @@ export function ProfilePage() {
                         {t("refresh")}
                       </Button>
                       <Table<LoginRecord>
-                        className="admin-table-surface"
+                        className="admin-table-surface admin-fill-table"
                         rowKey="id"
                         size="small"
                         loading={loginRecordsQuery.isFetching}
                         dataSource={loginRecordsQuery.data?.data ?? []}
                         pagination={false}
-                        scroll={{ x: 760, y: 420 }}
+                        scroll={{ x: 760, y: "100%" }}
                         columns={[
                           {
                             title: t("result"),

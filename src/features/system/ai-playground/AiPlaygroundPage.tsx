@@ -112,7 +112,9 @@ function finishColor(finishReason?: string) {
 
 export function AiPlaygroundPage() {
   const [usage, setUsage] = useState<AiRuntimeUsage>("chat");
-  const [input, setInput] = useState("请用三句话说明 Admin Base 的 AI Runtime 应该怎么接入业务模块。");
+  const [input, setInput] = useState(
+    "请用三句话说明 Admin Base 的 AI Runtime 应该怎么接入业务模块。",
+  );
   const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
   const [timeoutMs, setTimeoutMs] = useState(60000);
   const [output, setOutput] = useState("");
@@ -235,16 +237,14 @@ export function AiPlaygroundPage() {
     <PageScaffold
       title="AI Playground"
       description="使用当前默认 Provider 和模型验证 AI Runtime，供业务模块与 Agent 接入前调试"
+      className="ai-playground-page"
     >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
-        <Card className="admin-card" variant="borderless" title="调用参数">
+      <div className="ai-playground-workbench admin-fill-workspace">
+        <Card
+          className="admin-card ai-playground-parameter-card"
+          variant="borderless"
+          title="调用参数"
+        >
           <Space orientation="vertical" size={14} style={{ width: "100%" }}>
             <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">业务用途</Typography.Text>
@@ -334,8 +334,12 @@ export function AiPlaygroundPage() {
           </Space>
         </Card>
 
-        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
-          <Card className="admin-card" variant="borderless" title="当前运行时">
+        <div className="ai-playground-result-column">
+          <Card
+            className="admin-card ai-playground-runtime-card"
+            variant="borderless"
+            title="当前运行时"
+          >
             {runtimeQuery.isLoading ? (
               <Spin />
             ) : runtimeQuery.error || !activeConfig ? (
@@ -390,29 +394,30 @@ export function AiPlaygroundPage() {
           </Card>
 
           <Card
-            className="admin-card"
+            className="admin-card ai-playground-output-card"
             variant="borderless"
             title="模型输出"
             extra={
               <Space size={8} wrap>
                 {busy ? <Tag color="processing">运行中</Tag> : null}
                 {finish?.finishReason ? (
-                  <Tag color={finishColor(finish.finishReason)}>
-                    finish: {finish.finishReason}
-                  </Tag>
+                  <Tag color={finishColor(finish.finishReason)}>finish: {finish.finishReason}</Tag>
                 ) : null}
                 {finish?.durationMs ? <Tag>{finish.durationMs} ms</Tag> : null}
               </Space>
             }
           >
-            <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+            <div className="ai-playground-output-stack">
               {streamError ? <Alert showIcon type="error" title={streamError} /> : null}
-              <StreamingMarkdown
-                content={output}
-                minHeight={300}
-                maxHeight={560}
-                placeholder="运行后在这里查看 AI 输出。"
-              />
+              <div className="ai-playground-stream-slot">
+                <StreamingMarkdown
+                  className="ai-playground-stream"
+                  content={output}
+                  minHeight={0}
+                  maxHeight={null}
+                  placeholder="运行后在这里查看 AI 输出。"
+                />
+              </div>
               {finish ? (
                 <Alert
                   showIcon
@@ -423,18 +428,15 @@ export function AiPlaygroundPage() {
                       : "模型调用完成"
                   }
                   description={
-                    <Typography.Paragraph
-                      code
-                      style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}
-                    >
+                    <Typography.Paragraph code style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
                       {usageText(finish.usage)}
                     </Typography.Paragraph>
                   }
                 />
               ) : null}
-            </Space>
+            </div>
           </Card>
-        </Space>
+        </div>
       </div>
     </PageScaffold>
   );

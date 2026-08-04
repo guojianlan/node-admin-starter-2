@@ -420,7 +420,9 @@ export function RolePage() {
             columns={roleColumns}
             createTitle="新增角色"
             updateTitle="编辑角色"
-            tableMode="embedded"
+            tableMode="bounded"
+            showSearchButton
+            defaultSearchOpen={false}
             actionColumnWidth={164}
             canUpdate={(record) => !record.isSystem}
             canDelete={(record) => !record.isSystem}
@@ -477,7 +479,6 @@ export function RolePage() {
             ]}
             activeTabKey={activeTab}
             onTabChange={setActiveTab}
-            styles={{ body: { minHeight: "70vh" } }}
           >
             {selectedRole ? (
               activeTab === "users" ? (
@@ -487,7 +488,7 @@ export function RolePage() {
                     <strong>{roleUsersTotal}</strong>
                   </div>
                   <Table<RoleUserRecord>
-                    className="admin-table-surface"
+                    className="admin-table-surface admin-fill-table"
                     rowKey="id"
                     loading={roleUsersQuery.isLoading || roleUsersQuery.isFetching}
                     dataSource={roleUsers}
@@ -502,7 +503,7 @@ export function RolePage() {
                       showTotal: (total) => `共 ${total} 条`,
                       onChange: (page, pageSize) => setRoleUserPage({ page, pageSize }),
                     }}
-                    scroll={{ x: 600, y: 420 }}
+                    scroll={{ x: 600, y: "100%" }}
                   />
                 </>
               ) : (

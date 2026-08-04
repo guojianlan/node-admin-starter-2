@@ -201,8 +201,12 @@ export function ModuleGeneratorPage() {
   );
 
   return (
-    <PageScaffold title="模块生成器" description="从配置生成普通 CRUD 模块草稿">
-      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+    <PageScaffold
+      title="模块生成器"
+      description="从配置生成普通 CRUD 模块草稿"
+      className="module-generator-page"
+    >
+      <div className="module-generator-workspace admin-fill-workspace">
         <Alert
           showIcon
           type="warning"
@@ -273,14 +277,19 @@ export function ModuleGeneratorPage() {
             )}
           </Space>
         </Card>
-        <Card className="admin-card" title="模块状态" variant="borderless">
+        <Card
+          className="admin-card module-generator-status-card"
+          title="模块状态"
+          variant="borderless"
+        >
           <Table<ModuleDraft>
-            className="admin-table-surface"
+            className="admin-table-surface admin-fill-table"
             rowKey="name"
             size="small"
             loading={draftsQuery.isLoading}
             dataSource={draftsQuery.data ?? []}
             pagination={false}
+            scroll={{ x: 1080, y: "100%" }}
             columns={[
               {
                 title: "模块",
@@ -378,7 +387,7 @@ export function ModuleGeneratorPage() {
             ]}
           />
         </Card>
-      </Space>
+      </div>
 
       <Modal
         title="生成模块草稿"

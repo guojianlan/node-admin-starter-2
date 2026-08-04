@@ -41,6 +41,7 @@ type AdminDataTableProps<T extends object> = {
   enableActions?: boolean;
   showSearchButton?: boolean;
   showSearchForm?: boolean;
+  defaultSearchOpen?: boolean;
   showKeywordSearch?: boolean;
   showToolbarSettings?: boolean;
   cardClassName?: string;
@@ -112,6 +113,7 @@ export function AdminDataTable<T extends object>({
   enableActions = true,
   showSearchButton = false,
   showSearchForm = true,
+  defaultSearchOpen = true,
   showKeywordSearch = true,
   showToolbarSettings = true,
   cardClassName,
@@ -138,7 +140,7 @@ export function AdminDataTable<T extends object>({
   const [editingRecord, setEditingRecord] = useState<T | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "update">("create");
-  const [searchOpen, setSearchOpen] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(defaultSearchOpen);
   const [draftKeyword, setDraftKeyword] = useState<string | null>(null);
   const [density, setDensity] = useState<TableProps<T>["size"]>();
   const [bordered, setBordered] = useState(false);
@@ -429,6 +431,7 @@ export function AdminDataTable<T extends object>({
           ) : null}
           {showSearchButton ? (
             <Button
+              className="admin-search-toggle"
               type="primary"
               icon={<SearchOutlined />}
               onClick={() => setSearchOpen((value) => !value)}
