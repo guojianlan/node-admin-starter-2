@@ -7,6 +7,7 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { cleanExpiredTokens, revokeUserTokens } from "@/server/services/security-policy-service";
+import { resolveListOrder } from "@/server/services/list-query";
 
 type OnlineUserRecord = {
   id: number;
@@ -31,7 +32,9 @@ function buildWhere(params: URLSearchParams) {
   const values: Array<string | number> = [];
   const keyword = params.get("keyword")?.trim();
   if (keyword) {
-    clauses.push("(u.username ILIKE ? OR u.nickname ILIKE ? OR t.ip ILIKE ? OR t.user_agent ILIKE ?)");
+    clauses.push(
+      "(u.username ILIKE ? OR u.nickname ILIKE ? OR t.ip ILIKE ? OR t.user_agent ILIKE ?)",
+    );
     values.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
   for (const [field, column] of [
@@ -67,6 +70,17 @@ onlineUserRoutes.get(
     const pageSize = Math.min(pageParam(params.get("pageSize"), 20), 200);
     const offset = (page - 1) * pageSize;
     const { where, values } = buildWhere(params);
+    const orderSql = resolveListOrder({
+      params,
+      fieldMap: {
+        id: "t.id",
+        lastUsedAt: "COALESCE(t.last_used_at, t.created_at)",
+        expiresAt: "t.expires_at",
+        createdAt: "t.created_at",
+      },
+      sortableFields: ["id", "lastUsedAt", "expiresAt", "createdAt"],
+      defaultSort: { field: "lastUsedAt", order: "desc" },
+    }).sql;
 
     const totalRow = (await sqlite
       .prepare(
@@ -93,7 +107,7 @@ onlineUserRoutes.get(
          FROM sys_access_token t
          INNER JOIN sys_user u ON u.id = t.user_id
          WHERE ${where}
-         ORDER BY COALESCE(t.last_used_at, t.created_at) DESC, t.id DESC
+         ${orderSql}
          LIMIT ? OFFSET ?`,
       )
       .all(...values, pageSize, offset)) as OnlineUserRecord[];

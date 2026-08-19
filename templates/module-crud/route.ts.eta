@@ -16,6 +16,18 @@ const <%= module.crudName %> = createCrudRoutes({
   updateSchema: <%= module.camelName %>Schema.partial(),
   permissions: { prefix: "<%= module.permission %>" },
   actions: <%= JSON.stringify(module.actions) %>,
+<% const hasDeptScope = module.fields.some((field) => field.name === "deptId"); %>
+<% const hasOwnerScope = module.fields.some((field) => field.name === "ownerId"); %>
+<% if (hasDeptScope || hasOwnerScope) { %>
+  dataScope: {
+<% if (hasDeptScope) { %>
+    deptId: <%= module.schemaName %>.deptId,
+<% } %>
+<% if (hasOwnerScope) { %>
+    ownerId: <%= module.schemaName %>.ownerId,
+<% } %>
+  },
+<% } %>
   list: {
     select: {
 <%= module.blocks.listSelect %>

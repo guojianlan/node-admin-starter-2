@@ -224,6 +224,10 @@ export const exampleCrud = createCrudRoutes({
   updateSchema,
   permissions: { prefix: "system.example" },
   operationLog: { module: "system.example" },
+  dataScope: {
+    deptId: sysExample.deptId,
+    ownerId: sysExample.ownerId,
+  },
   list: {
     select: {...},
     searchable: { name: "like", code: "like", status: "=" },
@@ -233,6 +237,11 @@ export const exampleCrud = createCrudRoutes({
   },
 });
 ```
+
+`dataScope` applies to both list and mutation routes. Update, delete, batch delete, restore, force
+delete, and status changes first resolve the target through the current user's data scope. A target
+outside that scope is treated as missing and hooks are not executed. A batch containing any
+out-of-scope ID is rejected as a whole.
 
 Use explicit routes instead of CRUD factory for:
 
@@ -257,7 +266,52 @@ Apply data scope when a module has an owner, creator, department, or business vi
 
 For business modules, provide an extension point that maps the current user's data scope to the module's ownership columns, for example `deptId`, `ownerId`, or `createdBy`.
 
+The generator emits `dataScope` automatically when the module contract contains a `deptId` or
+`ownerId` field. A generated module without either field is intentionally not assumed to be
+department-scoped. Add an explicit ownership design before publishing it if ordinary users create
+its records.
+
+For declared `deptId` and `ownerId` columns, CRUD Factory also rejects create/update assignments
+outside the current user's resolved scope. Hooks may still overwrite omitted values with the
+current user's department and user ID before that validation runs. More complex delegation rules,
+such as which roles a department administrator may assign, remain explicit module policy and must
+not be inferred from list filtering.
+
 Data-scope changes must revoke affected token snapshots when those tokens contain stale abilities or data-scope claims.
+
+### Prompt Contract
+
+When requesting a module, always state one of these visibility models:
+
+```text
+global system data
+department-owned
+user-owned
+department-and-user-owned
+custom business scope
+```
+
+For example:
+
+```text
+Create an order module with $admin-module.
+Visibility model: department-and-user-owned.
+Store non-null deptId and ownerId. Fill both on the server from the authenticated user when creating
+a record. Current-department users cannot read or mutate other departments' orders; department-tree
+users include child departments; self users only see ownerId = current user. Reassignment must stay
+inside the operator's resolved scope. Cover list, detail, export, update, delete, batch operations,
+direct-ID attacks, operation logs, and data-scope tests.
+```
+
+If the module is intentionally shared, say so explicitly:
+
+```text
+Visibility model: global system data. Use dataScope: false because the records are shared system
+configuration, not department business data.
+```
+
+If a request describes user-generated records but omits visibility, stop the module design at that
+decision and surface it for confirmation. Do not publish a globally visible draft by default.
 
 ## Operation Log
 

@@ -41,7 +41,9 @@ export function MailAccountPage() {
   const [testTo, setTestTo] = useState("");
 
   const invalidateMail = () => {
-    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/mail/account"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin-data-table", "/api/system/mail/account"],
+    });
   };
 
   const statusMutation = useMutation({
@@ -57,7 +59,8 @@ export function MailAccountPage() {
   });
 
   const defaultMutation = useMutation({
-    mutationFn: (id: number) => request(`/api/system/mail/account/default/${id}`, { method: "PUT" }),
+    mutationFn: (id: number) =>
+      request(`/api/system/mail/account/default/${id}`, { method: "PUT" }),
     onSuccess: () => {
       feedback.success("设置成功");
       invalidateMail();
@@ -112,7 +115,9 @@ export function MailAccountPage() {
       hideInForm: true,
       hideInSearch: true,
       width: 92,
-      render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>,
+      render: (value) => (
+        <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
+      ),
     },
     { title: "发件名称", dataIndex: "fromName", hideInSearch: true, width: 120 },
     { title: "发件邮箱", dataIndex: "fromEmail", required: true, width: 180 },
@@ -148,12 +153,13 @@ export function MailAccountPage() {
   ];
 
   return (
-    <PageScaffold title="邮件配置" description="维护 SMTP 账号并执行测试发送">
+    <PageScaffold title="邮件配置" description="维护 SMTP 账号并执行测试发送" hideHeader>
       <AdminDataTable
         api="/api/system/mail/account"
         accessName="system.mail"
         rowKey="id"
         columns={columns}
+        toolbarTitle="邮件账号"
         createTitle="新增邮件账号"
         updateTitle="编辑邮件账号"
         actionColumnWidth={176}

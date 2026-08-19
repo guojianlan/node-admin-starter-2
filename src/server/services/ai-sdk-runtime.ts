@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel } from "ai";
+import type { EmbeddingModel, LanguageModel } from "ai";
 import { decryptSecret } from "@/server/services/secret";
 import type { AiModelRow } from "./ai-provider-service";
 
@@ -29,6 +29,11 @@ type AiSdkRuntime = {
   maxOutputTokens: number;
 };
 
+type AiSdkEmbeddingRuntime = {
+  model: EmbeddingModel;
+  endpointHint: string;
+};
+
 const openAiCompatibleProviderTypes = new Set([
   "openai-compatible",
   "deepseek",
@@ -40,6 +45,8 @@ const openAiCompatibleProviderTypes = new Set([
   "ollama",
   "custom",
 ]);
+
+export const aiOutputTokenSafetyLimit = 131072;
 
 function parseOptions(value?: string | null) {
   if (!value) return {};
@@ -133,7 +140,10 @@ export function buildAiSdkChatRuntime(
   const baseURL = normalizeBaseUrl(provider.baseUrl);
   const apiKey = getApiKey(provider);
   const headers = getHeaders(provider);
-  const maxOutputTokens = Math.min(Math.max(model.maxOutputTokens ?? 16384, 16), 32768);
+  const maxOutputTokens = Math.min(
+    Math.max(model.maxOutputTokens ?? 16384, 16),
+    aiOutputTokenSafetyLimit,
+  );
 
   if (provider.providerType === "openai") {
     const client = createOpenAI({
@@ -196,4 +206,40 @@ export function buildAiSdkChatRuntime(
     endpointHint: buildEndpointHint(provider, model.modelId),
     maxOutputTokens,
   };
+}
+
+export function buildAiSdkEmbeddingRuntime(
+  provider: AiProviderForSdk,
+  model: AiModelForSdk,
+): AiSdkEmbeddingRuntime {
+  if (model.modelType !== "embedding") throw new Error("只有 Embedding 模型支持向量调用");
+  if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
+  if (provider.providerType === "anthropic") throw new Error("Anthropic Provider 不支持 Embedding 模型");
+  const baseURL = normalizeBaseUrl(provider.baseUrl);
+  const apiKey = getApiKey(provider);
+  const headers = getHeaders(provider);
+  const endpointHint = provider.providerType === "google"
+    ? `${baseURL}/${model.modelId.startsWith("models/") ? model.modelId : `models/${model.modelId}`}:embedContent`
+    : `${baseURL}/embeddings`;
+
+  if (provider.providerType === "openai") {
+    const client = createOpenAI({ baseURL, apiKey, headers, organization: provider.organization ?? undefined, project: provider.project ?? undefined, name: provider.code });
+    return { model: client.embeddingModel(model.modelId), endpointHint };
+  }
+  if (provider.providerType === "google") {
+    const client = createGoogle({ baseURL, apiKey, headers, name: provider.code });
+    return { model: client.embeddingModel(model.modelId), endpointHint };
+  }
+  if (!openAiCompatibleProviderTypes.has(provider.providerType)) {
+    throw new Error(`暂不支持 ${provider.providerType} 的 Embedding Runtime`);
+  }
+  const client = createOpenAICompatible({
+    name: provider.code,
+    baseURL,
+    apiKey,
+    headers,
+    queryParams: getQueryParams(provider),
+    transformRequestBody: getOpenAiCompatibleBodyTransform(provider),
+  });
+  return { model: client.embeddingModel(model.modelId), endpointHint };
 }

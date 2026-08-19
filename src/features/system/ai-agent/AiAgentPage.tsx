@@ -1,11 +1,14 @@
 "use client";
 
 import {
+  ApartmentOutlined,
   BugOutlined,
+  CheckCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   MessageOutlined,
   PlusOutlined,
+  PlayCircleOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   SendOutlined,
@@ -37,6 +40,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
+import { AuthButton } from "@/components/auth-button/AuthButton";
 import { request, requestEventStream, type EventStreamMessage } from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
@@ -76,6 +80,7 @@ type ToolRow = {
 type AgentOptions = {
   models: Array<{ id: number; name: string; modelId: string; providerName: string }>;
   tools: ToolRow[];
+  handlers: Array<{ value: string; label: string; description: string; riskLevel: string }>;
 };
 
 type RunRow = {
@@ -130,6 +135,61 @@ type ToolApproval = {
   expiresAt?: string | null;
   status: "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
   reason?: string | null;
+};
+
+type WorkflowDefinition = {
+  code: string;
+  name: string;
+  description: string;
+  category: "diagnostic" | "business";
+  riskLevel: "low" | "medium" | "high" | "critical";
+};
+
+type WorkflowCheck = {
+  key: string;
+  label: string;
+  status: "pass" | "warning" | "fail";
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+type WorkflowOutput = {
+  status: "ready" | "warning" | "failed";
+  summary: { passed: number; warnings: number; failed: number };
+  orchestrator?: "legacy" | "mastra" | null;
+  runtime?: {
+    provider: { name: string; code: string };
+    model: { name: string; modelId: string };
+  } | null;
+  checks: WorkflowCheck[];
+};
+
+type WorkflowRunRow = {
+  id: number;
+  workflowCode: string;
+  orchestratorRunId: string;
+  status: string;
+  requestId?: string | null;
+  resourceId?: string | null;
+  input?: unknown;
+  output?: WorkflowOutput | null;
+  errorMessage?: string | null;
+  durationMs?: number | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+
+type WorkflowRunDetail = WorkflowRunRow & {
+  steps: Array<{
+    id: number;
+    stepNo: number;
+    stepCode: string;
+    status: string;
+    input?: unknown;
+    output?: unknown;
+    errorMessage?: string | null;
+    durationMs?: number | null;
+  }>;
 };
 
 const riskColors = { low: "green", medium: "gold", high: "orange", critical: "red" } as const;
@@ -196,6 +256,8 @@ export function AiAgentPage() {
   const [debugError, setDebugError] = useState("");
   const [debugStatus, setDebugStatus] = useState<DebugStatus>("idle");
   const [debugTrace, setDebugTrace] = useState<DebugTrace[]>([]);
+  const [workflowAgentId, setWorkflowAgentId] = useState<number | null>(null);
+  const [activeWorkflowRunId, setActiveWorkflowRunId] = useState<number | null>(null);
   const debugControllerRef = useRef<AbortController | null>(null);
   const debugTraceIdRef = useRef(0);
 
@@ -221,6 +283,20 @@ export function AiAgentPage() {
     enabled: Boolean(debugSessionId),
     queryFn: () =>
       request<ToolApproval[]>(`/api/system/ai/chat/sessions/${debugSessionId}/approvals`),
+  });
+  const workflowDefinitionsQuery = useQuery({
+    queryKey: ["system-ai-workflow-definitions"],
+    queryFn: () => request<WorkflowDefinition[]>("/api/system/ai/workflow/definitions"),
+  });
+  const workflowRunsQuery = useQuery({
+    queryKey: ["system-ai-workflow-runs"],
+    queryFn: () => request<WorkflowRunRow[]>("/api/system/ai/workflow/runs"),
+  });
+  const workflowRunDetailQuery = useQuery({
+    queryKey: ["system-ai-workflow-run", activeWorkflowRunId],
+    enabled: Boolean(activeWorkflowRunId),
+    queryFn: () =>
+      request<WorkflowRunDetail>(`/api/system/ai/workflow/runs/${activeWorkflowRunId}`),
   });
 
   const saveAgent = useMutation({
@@ -252,6 +328,21 @@ export function AiAgentPage() {
         queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] }),
+      ]);
+    },
+  });
+  const runWorkflow = useMutation({
+    mutationFn: (agentId: number) =>
+      request<WorkflowRunDetail>("/api/system/ai/workflow/ai-runtime-preflight/runs", {
+        method: "POST",
+        body: { agentId },
+      }),
+    onSuccess: async (run) => {
+      feedback.success("AI 运行环境预检完成");
+      setActiveWorkflowRunId(run.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-ai-workflow-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-workflow-run", run.id] }),
       ]);
     },
   });
@@ -302,7 +393,7 @@ export function AiAgentPage() {
       setDebugRunId(null);
       debugTraceIdRef.current = 0;
     } else {
-      setDebugOutput((previous) => previous ? `${previous}\n\n---\n\n` : "");
+      setDebugOutput((previous) => (previous ? `${previous}\n\n---\n\n` : ""));
     }
 
     try {
@@ -319,9 +410,10 @@ export function AiAgentPage() {
         onChunk: (chunk) => setDebugOutput((previous) => previous + chunk),
         onEvent: (message) => {
           addDebugTrace(message);
-          const data = message.data && typeof message.data === "object"
-            ? message.data as Record<string, unknown>
-            : null;
+          const data =
+            message.data && typeof message.data === "object"
+              ? (message.data as Record<string, unknown>)
+              : null;
           if (message.event === "meta" && typeof data?.runId === "number") {
             setDebugRunId(data.runId);
           }
@@ -427,7 +519,14 @@ export function AiAgentPage() {
     agentForm.setFieldsValue(
       row
         ? { ...row, temperature: row.temperatureMilli / 1000 }
-        : { temperature: 0.7, maxOutputTokens: 16384, maxSteps: 6, status: 1, sort: 0, toolIds: [] },
+        : {
+            temperature: 0.7,
+            maxOutputTokens: 16384,
+            maxSteps: 6,
+            status: 1,
+            sort: 0,
+            toolIds: [],
+          },
     );
     setAgentModal(true);
   }
@@ -435,7 +534,13 @@ export function AiAgentPage() {
   function openTool(row?: ToolRow) {
     setEditingTool(row ?? null);
     toolForm.setFieldsValue(
-      row ?? { handlerKey: "current_time", riskLevel: "low", approvalRequired: false, status: 1, sort: 0 },
+      row ?? {
+        handlerKey: "current_time",
+        riskLevel: "low",
+        approvalRequired: false,
+        status: 1,
+        sort: 0,
+      },
     );
     setToolModal(true);
   }
@@ -452,6 +557,14 @@ export function AiAgentPage() {
 
   const agents = agentsQuery.data ?? [];
   const tools = optionsQuery.data?.tools ?? [];
+  const selectedWorkflowAgentId =
+    workflowAgentId ??
+    agents.find((agent) => agent.code === "general-assistant")?.id ??
+    agents[0]?.id ??
+    null;
+  const preflightDefinition = (workflowDefinitionsQuery.data ?? []).find(
+    (definition) => definition.code === "ai-runtime-preflight",
+  );
   const pendingDebugApprovals = (debugApprovalsQuery.data ?? []).filter(
     (item) => item.status === "pending",
   );
@@ -459,16 +572,18 @@ export function AiAgentPage() {
   return (
     <PageScaffold
       title="AI Agent"
-      description="把模型、指令、工具、运行步骤和人工审批组织成可审计的业务 Agent"
+      description="把模型、指令和受控工具组合成可复用执行单元，并追踪 Run、Step 和 Approval"
       className="ai-agent-page"
       actions={
         <Button
           icon={<ReloadOutlined />}
-          onClick={() => void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
-            queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
-            queryClient.invalidateQueries({ queryKey: ["system-ai-agent-runs"] }),
-          ])}
+          onClick={() =>
+            void Promise.all([
+              queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
+              queryClient.invalidateQueries({ queryKey: ["system-ai-agent-options"] }),
+              queryClient.invalidateQueries({ queryKey: ["system-ai-agent-runs"] }),
+            ])
+          }
         >
           刷新
         </Button>
@@ -482,7 +597,7 @@ export function AiAgentPage() {
               key: "agents",
               label: "Agents",
               children: (
-                <>
+                <div className="ai-agent-tab-panel">
                   <div className="admin-toolbar">
                     <div className="admin-toolbar-left">
                       <Typography.Text type="secondary">{agents.length} 个 Agent</Typography.Text>
@@ -503,16 +618,40 @@ export function AiAgentPage() {
                         dataIndex: "name",
                         render: (_, row) => (
                           <Space orientation="vertical" size={1}>
-                            <Space><Typography.Text strong>{row.name}</Typography.Text>{row.isSystem ? <Tag>内置</Tag> : null}</Space>
-                            <Typography.Text type="secondary" code>{row.code}</Typography.Text>
-                            {row.description ? <Typography.Text type="secondary">{row.description}</Typography.Text> : null}
+                            <Space>
+                              <Typography.Text strong>{row.name}</Typography.Text>
+                              {row.isSystem ? <Tag>内置</Tag> : null}
+                            </Space>
+                            <Typography.Text type="secondary" code>
+                              {row.code}
+                            </Typography.Text>
+                            {row.description ? (
+                              <Typography.Text type="secondary">{row.description}</Typography.Text>
+                            ) : null}
                           </Space>
                         ),
                       },
-                      { title: "模型", dataIndex: "modelName", render: (value) => value || "系统默认" },
-                      { title: "工具", dataIndex: "toolIds", render: (ids: number[]) => <Tag icon={<ToolOutlined />}>{ids.length}</Tag> },
+                      {
+                        title: "模型",
+                        dataIndex: "modelName",
+                        render: (value) => value || "系统默认",
+                      },
+                      {
+                        title: "工具",
+                        dataIndex: "toolIds",
+                        render: (ids: number[]) => <Tag icon={<ToolOutlined />}>{ids.length}</Tag>,
+                      },
                       { title: "最大步骤", dataIndex: "maxSteps", width: 100 },
-                      { title: "状态", dataIndex: "status", width: 90, render: (value) => <Tag color={value === 1 ? "green" : "default"}>{value === 1 ? "启用" : "停用"}</Tag> },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        width: 90,
+                        render: (value) => (
+                          <Tag color={value === 1 ? "green" : "default"}>
+                            {value === 1 ? "启用" : "停用"}
+                          </Tag>
+                        ),
+                      },
                       {
                         title: "操作",
                         width: 260,
@@ -538,11 +677,26 @@ export function AiAgentPage() {
                               使用
                             </Button>
                             <Tooltip title="编辑 Agent">
-                              <Button type="text" icon={<EditOutlined />} onClick={() => openAgent(row)} />
+                              <Button
+                                type="text"
+                                icon={<EditOutlined />}
+                                onClick={() => openAgent(row)}
+                              />
                             </Tooltip>
-                            <Popconfirm title="确认删除该 Agent？" onConfirm={() => void remove("agent", row.id)} disabled={row.isSystem}>
-                              <Tooltip title={row.isSystem ? "内置 Agent 不允许删除" : "删除 Agent"}>
-                                <Button type="text" danger icon={<DeleteOutlined />} disabled={row.isSystem} />
+                            <Popconfirm
+                              title="确认删除该 Agent？"
+                              onConfirm={() => void remove("agent", row.id)}
+                              disabled={row.isSystem}
+                            >
+                              <Tooltip
+                                title={row.isSystem ? "内置 Agent 不允许删除" : "删除 Agent"}
+                              >
+                                <Button
+                                  type="text"
+                                  danger
+                                  icon={<DeleteOutlined />}
+                                  disabled={row.isSystem}
+                                />
                               </Tooltip>
                             </Popconfirm>
                           </Space>
@@ -551,16 +705,18 @@ export function AiAgentPage() {
                     ]}
                     scroll={{ x: 980, y: "100%" }}
                   />
-                </>
+                </div>
               ),
             },
             {
               key: "tools",
               label: "Tools",
               children: (
-                <>
+                <div className="ai-agent-tab-panel">
                   <div className="admin-toolbar">
-                    <Typography.Text type="secondary">工具执行器由服务端白名单注册，配置不能注入任意代码</Typography.Text>
+                    <Typography.Text type="secondary">
+                      工具执行器由服务端白名单注册，配置不能注入任意代码
+                    </Typography.Text>
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => openTool()}>
                       新建工具
                     </Button>
@@ -572,74 +728,416 @@ export function AiAgentPage() {
                     dataSource={tools}
                     pagination={false}
                     columns={[
-                      { title: "工具", dataIndex: "name", render: (_, row) => <Space orientation="vertical" size={1}><Typography.Text strong>{row.name}</Typography.Text><Typography.Text code type="secondary">{row.code}</Typography.Text></Space> },
-                      { title: "处理器", dataIndex: "handlerKey", render: (value) => <Typography.Text code>{value}</Typography.Text> },
-                      { title: "风险", dataIndex: "riskLevel", width: 90, render: (value: ToolRow["riskLevel"]) => <Tag color={riskColors[value]}>{value}</Tag> },
-                      { title: "审批", dataIndex: "approvalRequired", width: 90, render: (value) => value ? <Tag icon={<SafetyCertificateOutlined />} color="orange">需要</Tag> : <Tag>自动</Tag> },
-                      { title: "状态", dataIndex: "status", width: 90, render: (value) => <Tag color={value === 1 ? "green" : "default"}>{value === 1 ? "启用" : "停用"}</Tag> },
-                      { title: "操作", width: 140, fixed: "right", render: (_, row) => <Space><Button type="text" icon={<EditOutlined />} onClick={() => openTool(row)} /><Popconfirm title="确认删除该工具？" onConfirm={() => void remove("tool", row.id)} disabled={row.isSystem}><Button type="text" danger icon={<DeleteOutlined />} disabled={row.isSystem} /></Popconfirm></Space> },
+                      {
+                        title: "工具",
+                        dataIndex: "name",
+                        render: (_, row) => (
+                          <Space orientation="vertical" size={1}>
+                            <Typography.Text strong>{row.name}</Typography.Text>
+                            <Typography.Text code type="secondary">
+                              {row.code}
+                            </Typography.Text>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: "处理器",
+                        dataIndex: "handlerKey",
+                        render: (value) => <Typography.Text code>{value}</Typography.Text>,
+                      },
+                      {
+                        title: "风险",
+                        dataIndex: "riskLevel",
+                        width: 90,
+                        render: (value: ToolRow["riskLevel"]) => (
+                          <Tag color={riskColors[value]}>{value}</Tag>
+                        ),
+                      },
+                      {
+                        title: "审批",
+                        dataIndex: "approvalRequired",
+                        width: 90,
+                        render: (value) =>
+                          value ? (
+                            <Tag icon={<SafetyCertificateOutlined />} color="orange">
+                              需要
+                            </Tag>
+                          ) : (
+                            <Tag>自动</Tag>
+                          ),
+                      },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        width: 90,
+                        render: (value) => (
+                          <Tag color={value === 1 ? "green" : "default"}>
+                            {value === 1 ? "启用" : "停用"}
+                          </Tag>
+                        ),
+                      },
+                      {
+                        title: "操作",
+                        width: 140,
+                        fixed: "right",
+                        render: (_, row) => (
+                          <Space>
+                            <Button
+                              type="text"
+                              icon={<EditOutlined />}
+                              onClick={() => openTool(row)}
+                            />
+                            <Popconfirm
+                              title="确认删除该工具？"
+                              onConfirm={() => void remove("tool", row.id)}
+                              disabled={row.isSystem}
+                            >
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                disabled={row.isSystem}
+                              />
+                            </Popconfirm>
+                          </Space>
+                        ),
+                      },
                     ]}
                     scroll={{ x: 760, y: "100%" }}
                   />
-                </>
+                </div>
               ),
             },
             {
               key: "runs",
               label: "Runs",
               children: (
-                <Table
-                  className="admin-table-surface admin-fill-table"
-                  rowKey="id"
-                  loading={runsQuery.isLoading}
-                  dataSource={runsQuery.data ?? []}
-                  pagination={{ pageSize: 20 }}
-                  scroll={{ x: 920, y: "100%" }}
-                  onRow={(row) => ({ onClick: () => setActiveRun(row), style: { cursor: "pointer" } })}
-                  columns={[
-                    { title: "Run", dataIndex: "id", width: 90, render: (value) => `#${value}` },
-                    { title: "Agent", dataIndex: "agentName" },
-                    { title: "状态", dataIndex: "status", render: (value) => <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : value === "waiting_approval" ? "orange" : "blue"}>{value}</Tag> },
-                    { title: "步骤", dataIndex: "totalSteps", width: 90 },
-                    { title: "Tokens", render: (_, row) => `${row.inputTokens} / ${row.outputTokens}` },
-                    { title: "耗时", dataIndex: "durationMs", render: (value) => value ? `${value} ms` : "-" },
-                    { title: "开始时间", dataIndex: "startedAt", render: (value) => value ? new Date(value).toLocaleString() : "-" },
-                  ]}
-                />
+                <div className="ai-agent-tab-panel">
+                  <Table
+                    className="admin-table-surface admin-fill-table"
+                    rowKey="id"
+                    loading={runsQuery.isLoading}
+                    dataSource={runsQuery.data ?? []}
+                    pagination={{
+                      pageSize: 20,
+                      showSizeChanger: true,
+                      showTotal: (total) => `共 ${total} 条`,
+                    }}
+                    scroll={{ x: 920, y: "100%" }}
+                    onRow={(row) => ({
+                      onClick: () => setActiveRun(row),
+                      style: { cursor: "pointer" },
+                    })}
+                    columns={[
+                      { title: "Run", dataIndex: "id", width: 90, render: (value) => `#${value}` },
+                      { title: "Agent", dataIndex: "agentName" },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        render: (value) => (
+                          <Tag
+                            color={
+                              value === "completed"
+                                ? "green"
+                                : value === "failed"
+                                  ? "red"
+                                  : value === "waiting_approval"
+                                    ? "orange"
+                                    : "blue"
+                            }
+                          >
+                            {value}
+                          </Tag>
+                        ),
+                      },
+                      { title: "步骤", dataIndex: "totalSteps", width: 90 },
+                      {
+                        title: "Tokens",
+                        render: (_, row) => `${row.inputTokens} / ${row.outputTokens}`,
+                      },
+                      {
+                        title: "耗时",
+                        dataIndex: "durationMs",
+                        render: (value) => (value ? `${value} ms` : "-"),
+                      },
+                      {
+                        title: "开始时间",
+                        dataIndex: "startedAt",
+                        render: (value) => (value ? new Date(value).toLocaleString() : "-"),
+                      },
+                    ]}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: "workflows",
+              label: "Workflows",
+              children: (
+                <div className="ai-agent-tab-panel ai-agent-workflow-panel">
+                  <Alert
+                    showIcon
+                    type="info"
+                    title={preflightDefinition?.name || "AI 运行环境预检"}
+                    description={
+                      preflightDefinition?.description ||
+                      "检查 Agent、Provider、Model、Tool 和治理上下文，不调用外部模型，也不修改配置。"
+                    }
+                  />
+                  <div className="admin-toolbar">
+                    <Space wrap>
+                      <Tag icon={<ApartmentOutlined />} color="blue">
+                        Mastra Workflow
+                      </Tag>
+                      <Select
+                        value={selectedWorkflowAgentId ?? undefined}
+                        placeholder="选择需要预检的 Agent"
+                        style={{ minWidth: 320 }}
+                        onChange={(value) => setWorkflowAgentId(value)}
+                        options={agents.map((agent) => ({
+                          value: agent.id,
+                          label: `${agent.name} · ${agent.code}`,
+                        }))}
+                      />
+                    </Space>
+                    <AuthButton auth="system.aiAgent.executeWorkflow">
+                      <Button
+                        type="primary"
+                        icon={<PlayCircleOutlined />}
+                        loading={runWorkflow.isPending}
+                        disabled={!selectedWorkflowAgentId}
+                        onClick={() =>
+                          selectedWorkflowAgentId && runWorkflow.mutate(selectedWorkflowAgentId)
+                        }
+                      >
+                        运行预检
+                      </Button>
+                    </AuthButton>
+                  </div>
+                  <Table
+                    className="admin-table-surface admin-fill-table"
+                    rowKey="id"
+                    loading={workflowRunsQuery.isLoading}
+                    dataSource={workflowRunsQuery.data ?? []}
+                    pagination={{ pageSize: 20 }}
+                    scroll={{ x: 1080, y: "100%" }}
+                    onRow={(row) => ({
+                      onClick: () => setActiveWorkflowRunId(row.id),
+                      style: { cursor: "pointer" },
+                    })}
+                    columns={[
+                      {
+                        title: "Run",
+                        dataIndex: "id",
+                        width: 90,
+                        render: (value) => `#${value}`,
+                      },
+                      {
+                        title: "工作流",
+                        dataIndex: "workflowCode",
+                        render: (value) => (
+                          <Space orientation="vertical" size={0}>
+                            <Typography.Text strong>
+                              {value === "ai-runtime-preflight" ? "AI 运行环境预检" : value}
+                            </Typography.Text>
+                            <Typography.Text type="secondary" code>
+                              {value}
+                            </Typography.Text>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: "执行状态",
+                        dataIndex: "status",
+                        width: 110,
+                        render: (value) => (
+                          <Tag
+                            color={
+                              value === "completed" ? "green" : value === "failed" ? "red" : "blue"
+                            }
+                          >
+                            {value}
+                          </Tag>
+                        ),
+                      },
+                      {
+                        title: "预检结论",
+                        dataIndex: "output",
+                        width: 120,
+                        render: (value: WorkflowOutput | null) => {
+                          if (!value) return "-";
+                          const color =
+                            value.status === "ready"
+                              ? "green"
+                              : value.status === "warning"
+                                ? "gold"
+                                : "red";
+                          return <Tag color={color}>{value.status}</Tag>;
+                        },
+                      },
+                      {
+                        title: "Agent ID",
+                        dataIndex: "resourceId",
+                        width: 100,
+                      },
+                      {
+                        title: "Request ID",
+                        dataIndex: "requestId",
+                        ellipsis: true,
+                        render: (value) =>
+                          value ? <Typography.Text copyable>{value}</Typography.Text> : "-",
+                      },
+                      {
+                        title: "耗时",
+                        dataIndex: "durationMs",
+                        width: 110,
+                        render: (value) => (value == null ? "-" : `${value} ms`),
+                      },
+                      {
+                        title: "开始时间",
+                        dataIndex: "startedAt",
+                        width: 190,
+                        render: (value) => (value ? new Date(value).toLocaleString() : "-"),
+                      },
+                    ]}
+                  />
+                </div>
               ),
             },
           ]}
         />
       </Card>
 
-      <Modal title={editingAgent ? "编辑 Agent" : "新建 Agent"} open={agentModal} width={760} okText="保存" cancelText="取消" confirmLoading={saveAgent.isPending} onCancel={() => setAgentModal(false)} onOk={() => void agentForm.validateFields().then((values) => saveAgent.mutateAsync(values))}>
+      <Modal
+        title={editingAgent ? "编辑 Agent" : "新建 Agent"}
+        open={agentModal}
+        width={760}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={saveAgent.isPending}
+        onCancel={() => setAgentModal(false)}
+        onOk={() => void agentForm.validateFields().then((values) => saveAgent.mutateAsync(values))}
+      >
         <Form form={agentForm} layout="vertical" className="admin-entity-form-grid">
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="code" label="编码" rules={[{ required: true }]}><Input disabled={Boolean(editingAgent?.isSystem)} /></Form.Item>
-          <Form.Item name="modelId" label="模型"><Select allowClear placeholder="使用系统默认模型" options={(optionsQuery.data?.models ?? []).map((item) => ({ value: item.id, label: `${item.providerName} / ${item.name} (${item.modelId})` }))} /></Form.Item>
-          <Form.Item name="toolIds" label="工具"><Select mode="multiple" allowClear options={tools.map((item) => ({ value: item.id, label: `${item.name} · ${item.riskLevel}` }))} /></Form.Item>
-          <Form.Item name="temperature" label="Temperature"><InputNumber min={0} max={2} step={0.1} style={{ width: "100%" }} /></Form.Item>
-          <Form.Item name="maxOutputTokens" label="最大输出 Tokens"><InputNumber min={16} max={32768} step={512} style={{ width: "100%" }} /></Form.Item>
-          <Form.Item name="maxSteps" label="最大执行步骤"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item>
-          <Form.Item name="sort" label="排序"><InputNumber style={{ width: "100%" }} /></Form.Item>
-          <Form.Item name="status" label="启用" valuePropName="checked" getValueFromEvent={(checked) => checked ? 1 : 0} getValueProps={(value) => ({ checked: value === 1 })}><Switch /></Form.Item>
-          <Form.Item name="description" label="描述" className="admin-form-full"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item name="instructions" label="Instructions / System Prompt" className="admin-form-full" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item>
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="code" label="编码" rules={[{ required: true }]}>
+            <Input disabled={Boolean(editingAgent?.isSystem)} />
+          </Form.Item>
+          <Form.Item name="modelId" label="模型">
+            <Select
+              allowClear
+              placeholder="使用系统默认模型"
+              options={(optionsQuery.data?.models ?? []).map((item) => ({
+                value: item.id,
+                label: `${item.providerName} / ${item.name} (${item.modelId})`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="toolIds" label="工具">
+            <Select
+              mode="multiple"
+              allowClear
+              options={tools.map((item) => ({
+                value: item.id,
+                label: `${item.name} · ${item.riskLevel}`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="temperature" label="Temperature">
+            <InputNumber min={0} max={2} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="maxOutputTokens" label="最大输出 Tokens">
+            <InputNumber min={16} max={131072} step={512} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="maxSteps" label="最大执行步骤">
+            <InputNumber min={1} max={20} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="sort" label="排序">
+            <InputNumber style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="status"
+            label="启用"
+            valuePropName="checked"
+            getValueFromEvent={(checked) => (checked ? 1 : 0)}
+            getValueProps={(value) => ({ checked: value === 1 })}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item name="description" label="描述" className="admin-form-full">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          <Form.Item
+            name="instructions"
+            label="Instructions / System Prompt"
+            className="admin-form-full"
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={8} />
+          </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title={editingTool ? "编辑工具" : "新建工具"} open={toolModal} width={720} okText="保存" cancelText="取消" confirmLoading={saveTool.isPending} onCancel={() => setToolModal(false)} onOk={() => void toolForm.validateFields().then((values) => saveTool.mutateAsync(values))}>
+      <Modal
+        title={editingTool ? "编辑工具" : "新建工具"}
+        open={toolModal}
+        width={720}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={saveTool.isPending}
+        onCancel={() => setToolModal(false)}
+        onOk={() => void toolForm.validateFields().then((values) => saveTool.mutateAsync(values))}
+      >
         <Form form={toolForm} layout="vertical" className="admin-entity-form-grid">
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="code" label="编码" rules={[{ required: true }]}><Input disabled={Boolean(editingTool?.isSystem)} /></Form.Item>
-          <Form.Item name="handlerKey" label="服务端处理器" rules={[{ required: true }]}><Select disabled={Boolean(editingTool?.isSystem)} options={["current_time", "calculator", "system_status", "operation_log_summary", "module_design", "module_generate_draft", "module_preview_diff", "module_validate", "module_publish", "module_rollback"].map((value) => ({ value, label: value }))} /></Form.Item>
-          <Form.Item name="riskLevel" label="风险等级"><Select options={Object.keys(riskColors).map((value) => ({ value, label: value }))} /></Form.Item>
-          <Form.Item name="approvalRequired" label="需要人工审批" valuePropName="checked"><Switch /></Form.Item>
-          <Form.Item name="status" label="启用" valuePropName="checked" getValueFromEvent={(checked) => checked ? 1 : 0} getValueProps={(value) => ({ checked: value === 1 })}><Switch /></Form.Item>
-          <Form.Item name="sort" label="排序"><InputNumber style={{ width: "100%" }} /></Form.Item>
-          <Form.Item name="description" label="给模型的工具描述" className="admin-form-full" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
-          <Form.Item name="inputSchemaJson" label="输入结构说明 JSON" className="admin-form-full"><Input.TextArea rows={3} /></Form.Item>
-          <Form.Item name="configJson" label="工具配置 JSON" className="admin-form-full"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="code" label="编码" rules={[{ required: true }]}>
+            <Input disabled={Boolean(editingTool?.isSystem)} />
+          </Form.Item>
+          <Form.Item name="handlerKey" label="服务端处理器" rules={[{ required: true }]}>
+            <Select
+              disabled={Boolean(editingTool?.isSystem)}
+              options={(optionsQuery.data?.handlers ?? []).map((item) => ({
+                value: item.value,
+                label: `${item.label} · ${item.value}`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="riskLevel" label="风险等级">
+            <Select options={Object.keys(riskColors).map((value) => ({ value, label: value }))} />
+          </Form.Item>
+          <Form.Item name="approvalRequired" label="需要人工审批" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="status"
+            label="启用"
+            valuePropName="checked"
+            getValueFromEvent={(checked) => (checked ? 1 : 0)}
+            getValueProps={(value) => ({ checked: value === 1 })}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item name="sort" label="排序">
+            <InputNumber style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="description"
+            label="给模型的工具描述"
+            className="admin-form-full"
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="inputSchemaJson" label="输入结构说明 JSON" className="admin-form-full">
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="configJson" label="工具配置 JSON" className="admin-form-full">
+            <Input.TextArea rows={3} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -647,7 +1145,9 @@ export function AiAgentPage() {
         title={
           <Space size={8} wrap>
             <BugOutlined />
-            <Typography.Text strong>{debugAgent ? `调试 · ${debugAgent.name}` : "Agent 调试"}</Typography.Text>
+            <Typography.Text strong>
+              {debugAgent ? `调试 · ${debugAgent.name}` : "Agent 调试"}
+            </Typography.Text>
             {debugStatusTag(debugStatus)}
           </Space>
         }
@@ -714,7 +1214,9 @@ export function AiAgentPage() {
                   content={debugOutput}
                   minHeight={260}
                   maxHeight={520}
-                  placeholder={debugStatus === "running" ? "Agent 正在运行..." : "输入消息后开始调试"}
+                  placeholder={
+                    debugStatus === "running" ? "Agent 正在运行..." : "输入消息后开始调试"
+                  }
                 />
                 {debugError ? (
                   <Alert showIcon type="error" title="调试失败" description={debugError} />
@@ -738,7 +1240,9 @@ export function AiAgentPage() {
                   description={
                     <Space orientation="vertical" size={10} style={{ width: "100%" }}>
                       {approval.toolDescription ? (
-                        <Typography.Text type="secondary">{approval.toolDescription}</Typography.Text>
+                        <Typography.Text type="secondary">
+                          {approval.toolDescription}
+                        </Typography.Text>
                       ) : null}
                       <Typography.Text type="secondary">即将执行的参数</Typography.Text>
                       <JsonPreview value={approval.inputJson} />
@@ -769,14 +1273,18 @@ export function AiAgentPage() {
                           type="primary"
                           icon={<SafetyCertificateOutlined />}
                           loading={decideDebugApproval.isPending}
-                          onClick={() => decideDebugApproval.mutate({ id: approval.id, approved: true })}
+                          onClick={() =>
+                            decideDebugApproval.mutate({ id: approval.id, approved: true })
+                          }
                         >
                           批准并继续
                         </Button>
                         <Button
                           danger
                           loading={decideDebugApproval.isPending}
-                          onClick={() => decideDebugApproval.mutate({ id: approval.id, approved: false })}
+                          onClick={() =>
+                            decideDebugApproval.mutate({ id: approval.id, approved: false })
+                          }
                         >
                           拒绝
                         </Button>
@@ -823,14 +1331,31 @@ export function AiAgentPage() {
                 <Typography.Text type="secondary">{debugTrace.length} 个事件</Typography.Text>
               </div>
               {debugTrace.length === 0 ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="运行后显示模型、工具和审批事件" />
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="运行后显示模型、工具和审批事件"
+                />
               ) : (
                 <div className="ai-agent-debug-trace-list" role="list">
                   {debugTrace.map((item, index) => (
-                    <div className="ai-agent-debug-trace-item" key={`${item.createdAt}-${index}`} role="listitem">
+                    <div
+                      className="ai-agent-debug-trace-item"
+                      key={`${item.createdAt}-${index}`}
+                      role="listitem"
+                    >
                       <Space orientation="vertical" size={5} style={{ width: "100%" }}>
                         <Space style={{ justifyContent: "space-between", width: "100%" }}>
-                          <Tag color={item.event === "error" ? "red" : item.event === "approval" ? "orange" : item.event === "finish" ? "green" : "blue"}>
+                          <Tag
+                            color={
+                              item.event === "error"
+                                ? "red"
+                                : item.event === "approval"
+                                  ? "orange"
+                                  : item.event === "finish"
+                                    ? "green"
+                                    : "blue"
+                            }
+                          >
                             {item.label}
                           </Tag>
                           <Typography.Text type="secondary">{item.createdAt}</Typography.Text>
@@ -846,16 +1371,169 @@ export function AiAgentPage() {
         ) : null}
       </Drawer>
 
-      <Drawer title={activeRun ? `Run #${activeRun.id} · ${activeRun.agentName}` : "Run 详情"} size="large" open={Boolean(activeRun)} onClose={() => setActiveRun(null)}>
+      <Drawer
+        title={activeRun ? `Run #${activeRun.id} · ${activeRun.agentName}` : "Run 详情"}
+        size="large"
+        open={Boolean(activeRun)}
+        onClose={() => setActiveRun(null)}
+      >
         <Space orientation="vertical" size={14} style={{ width: "100%" }}>
           {(stepsQuery.data ?? []).map((step) => (
-            <Card key={step.id} size="small" title={<Space><Tag>{step.stepNo}</Tag><Typography.Text>{step.stepType}</Typography.Text>{step.toolName ? <Typography.Text code>{step.toolName}</Typography.Text> : null}</Space>} extra={<Tag>{step.status}</Tag>}>
-              <Typography.Text type="secondary">输入</Typography.Text><JsonPreview value={step.inputJson} />
-              <Typography.Text type="secondary">输出</Typography.Text><JsonPreview value={step.outputJson || step.usageJson} />
-              {step.errorMessage ? <Typography.Text type="danger">{step.errorMessage}</Typography.Text> : null}
+            <Card
+              key={step.id}
+              size="small"
+              title={
+                <Space>
+                  <Tag>{step.stepNo}</Tag>
+                  <Typography.Text>{step.stepType}</Typography.Text>
+                  {step.toolName ? <Typography.Text code>{step.toolName}</Typography.Text> : null}
+                </Space>
+              }
+              extra={<Tag>{step.status}</Tag>}
+            >
+              <Typography.Text type="secondary">输入</Typography.Text>
+              <JsonPreview value={step.inputJson} />
+              <Typography.Text type="secondary">输出</Typography.Text>
+              <JsonPreview value={step.outputJson || step.usageJson} />
+              {step.errorMessage ? (
+                <Typography.Text type="danger">{step.errorMessage}</Typography.Text>
+              ) : null}
             </Card>
           ))}
         </Space>
+      </Drawer>
+
+      <Drawer
+        title={
+          activeWorkflowRunId
+            ? `Workflow Run #${activeWorkflowRunId} · AI 运行环境预检`
+            : "Workflow Run"
+        }
+        size="min(1040px, 94vw)"
+        open={Boolean(activeWorkflowRunId)}
+        loading={workflowRunDetailQuery.isLoading}
+        onClose={() => setActiveWorkflowRunId(null)}
+      >
+        {workflowRunDetailQuery.data ? (
+          <Space orientation="vertical" size={18} style={{ width: "100%" }}>
+            <Space size={[6, 6]} wrap>
+              <Tag icon={<ApartmentOutlined />} color="blue">
+                {workflowRunDetailQuery.data.workflowCode}
+              </Tag>
+              <Tag color={workflowRunDetailQuery.data.status === "completed" ? "green" : "red"}>
+                {workflowRunDetailQuery.data.status}
+              </Tag>
+              {workflowRunDetailQuery.data.output ? (
+                <Tag
+                  color={
+                    workflowRunDetailQuery.data.output.status === "ready"
+                      ? "green"
+                      : workflowRunDetailQuery.data.output.status === "warning"
+                        ? "gold"
+                        : "red"
+                  }
+                >
+                  {workflowRunDetailQuery.data.output.status}
+                </Tag>
+              ) : null}
+              {workflowRunDetailQuery.data.output?.orchestrator ? (
+                <Tag>orchestrator: {workflowRunDetailQuery.data.output.orchestrator}</Tag>
+              ) : null}
+              {workflowRunDetailQuery.data.durationMs != null ? (
+                <Tag>{workflowRunDetailQuery.data.durationMs} ms</Tag>
+              ) : null}
+            </Space>
+
+            {workflowRunDetailQuery.data.requestId ? (
+              <Typography.Text copyable code>
+                requestId: {workflowRunDetailQuery.data.requestId}
+              </Typography.Text>
+            ) : null}
+
+            {workflowRunDetailQuery.data.output?.runtime ? (
+              <Alert
+                showIcon
+                type="success"
+                icon={<CheckCircleOutlined />}
+                title={`${workflowRunDetailQuery.data.output.runtime.provider.name} / ${workflowRunDetailQuery.data.output.runtime.model.name}`}
+                description={`Provider: ${workflowRunDetailQuery.data.output.runtime.provider.code} · Model ID: ${workflowRunDetailQuery.data.output.runtime.model.modelId}`}
+              />
+            ) : null}
+
+            <div>
+              <Typography.Title level={5}>预检结果</Typography.Title>
+              <Table
+                rowKey="key"
+                size="small"
+                pagination={false}
+                dataSource={workflowRunDetailQuery.data.output?.checks ?? []}
+                columns={[
+                  { title: "检查项", dataIndex: "label", width: 180 },
+                  {
+                    title: "结论",
+                    dataIndex: "status",
+                    width: 100,
+                    render: (value: WorkflowCheck["status"]) => (
+                      <Tag
+                        color={value === "pass" ? "green" : value === "warning" ? "gold" : "red"}
+                      >
+                        {value}
+                      </Tag>
+                    ),
+                  },
+                  { title: "说明", dataIndex: "message" },
+                ]}
+              />
+            </div>
+
+            <div>
+              <Typography.Title level={5}>执行步骤</Typography.Title>
+              <Table
+                rowKey="id"
+                size="small"
+                pagination={false}
+                dataSource={workflowRunDetailQuery.data.steps}
+                expandable={{
+                  expandedRowRender: (step) => (
+                    <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+                      <Typography.Text type="secondary">输入</Typography.Text>
+                      <DebugDataPreview value={step.input} />
+                      <Typography.Text type="secondary">输出</Typography.Text>
+                      <DebugDataPreview value={step.output} />
+                    </Space>
+                  ),
+                }}
+                columns={[
+                  { title: "#", dataIndex: "stepNo", width: 64 },
+                  { title: "步骤", dataIndex: "stepCode" },
+                  {
+                    title: "状态",
+                    dataIndex: "status",
+                    width: 100,
+                    render: (value) => (
+                      <Tag color={value === "completed" ? "green" : "red"}>{value}</Tag>
+                    ),
+                  },
+                  {
+                    title: "耗时",
+                    dataIndex: "durationMs",
+                    width: 110,
+                    render: (value) => (value == null ? "-" : `${value} ms`),
+                  },
+                ]}
+              />
+            </div>
+
+            {workflowRunDetailQuery.data.errorMessage ? (
+              <Alert
+                showIcon
+                type="error"
+                title="工作流执行失败"
+                description={workflowRunDetailQuery.data.errorMessage}
+              />
+            ) : null}
+          </Space>
+        ) : null}
       </Drawer>
     </PageScaffold>
   );

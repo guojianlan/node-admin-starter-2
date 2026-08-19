@@ -145,53 +145,89 @@ SMS templates are stored separately in `sys_sms_template`. They bind to a provid
 
 ## AI Provider, Models, And Runtime
 
-AI providers and models are resource configurations stored in `sys_ai_provider` and `sys_ai_model`. Provider API keys are encrypted at rest and responses only expose `hasApiKey`.
+AI providers and models are separate resource configurations stored in `sys_ai_provider` and `sys_ai_model`. A Provider record is one connection instance describing how the application connects and authenticates to an AI service through its protocol, Base URL, and API key. The same provider type may have multiple connection instances for separate accounts, environments, or gateways. A model belongs to one Provider connection and identifies the concrete model that business features may call, such as a Chat, Agent-capable, Embedding, image, or rerank model. One Provider connection can expose many models. Provider API keys are encrypted at rest and responses only expose `hasApiKey`.
 
-| Method     | Path                                                              | Description                                                                  |
-| ---------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| GET/POST   | `/api/system/ai/provider`                                         | Query and create AI providers                                                |
-| PUT        | `/api/system/ai/provider/:id`                                     | Update AI provider                                                           |
-| DELETE     | `/api/system/ai/provider/:id`                                     | Delete AI provider when not default/system                                   |
-| PUT        | `/api/system/ai/provider/status/:id`                              | Toggle AI provider status                                                    |
-| PUT        | `/api/system/ai/provider/default/:id`                             | Set default AI provider with protection                                      |
-| POST       | `/api/system/ai/provider/test`                                    | Test provider list/chat/embedding endpoint                                   |
-| POST       | `/api/system/ai/provider/test/stream`                             | Stream a provider chat test through AI SDK                                   |
-| GET/POST   | `/api/system/ai/model`                                            | Query and create AI models                                                   |
-| PUT        | `/api/system/ai/model/:id`                                        | Update AI model                                                              |
-| DELETE     | `/api/system/ai/model/:id`                                        | Delete AI model when not system/default protected                            |
-| PUT        | `/api/system/ai/model/status/:id`                                 | Toggle AI model status                                                       |
-| PUT        | `/api/system/ai/model/default/:id`                                | Set default chat/structured/embedding model                                  |
-| POST       | `/api/system/ai/model/test`                                       | Test a configured AI model                                                   |
-| POST       | `/api/system/ai/model/test/stream`                                | Stream a configured chat model test through AI SDK                           |
-| GET        | `/api/system/ai/runtime-config/:usage`                            | Read sanitized default runtime config for maintenance                        |
-| GET        | `/api/system/ai/playground/runtime-config/:usage`                 | Read sanitized runtime config for Playground                                 |
-| POST       | `/api/system/ai/playground/chat`                                  | Generate text with the default chat or structured model                      |
-| POST       | `/api/system/ai/playground/chat/stream`                           | Stream text with SSE events: `meta`, `delta`, `finish`, `error`              |
-| GET        | `/api/system/ai/chat/runtime-config`                              | Read sanitized runtime config for AI Chat                                    |
-| GET        | `/api/system/ai/chat/options`                                     | List active chat models and Agents available to AI Chat                      |
-| GET        | `/api/system/ai/chat/sessions`                                    | Query current user's AI Chat sessions                                        |
-| POST       | `/api/system/ai/chat/sessions`                                    | Create an AI Chat session                                                    |
-| PUT        | `/api/system/ai/chat/sessions/:id`                                | Update title, model, Agent, System Prompt, temperature, and output limit     |
-| DELETE     | `/api/system/ai/chat/sessions/:id`                                | Soft-delete current user's AI Chat session                                   |
-| GET        | `/api/system/ai/chat/sessions/:id/messages`                       | List messages in current user's AI Chat session                              |
-| POST       | `/api/system/ai/chat/sessions/:id/messages/stream`                | Append or resume a turn, stream model/Agent output, and persist status/usage |
-| POST       | `/api/system/ai/chat/sessions/:id/messages/:messageId/regenerate` | Supersede and regenerate the latest Assistant message                        |
-| GET        | `/api/system/ai/chat/sessions/:id/export`                         | Export a conversation as Markdown or JSON                                    |
-| GET        | `/api/system/ai/chat/sessions/:id/approvals`                      | List tool approvals for a chat session                                       |
-| GET/POST   | `/api/system/ai/agent`                                            | Query and create Agents                                                      |
-| PUT/DELETE | `/api/system/ai/agent/:id`                                        | Update or soft-delete an Agent                                               |
-| GET        | `/api/system/ai/agent/options`                                    | List models and tools available to Agent configuration                       |
-| GET/POST   | `/api/system/ai/tool`                                             | Query and create registered tools                                            |
-| PUT/DELETE | `/api/system/ai/tool/:id`                                         | Update or soft-delete a tool                                                 |
-| GET        | `/api/system/ai/agent/runs`                                       | Query current user's Agent runs                                              |
-| GET        | `/api/system/ai/agent/runs/:id/steps`                             | Inspect persisted model/tool/approval steps                                  |
-| POST       | `/api/system/ai/approval/:id/decision`                            | Approve or deny a pending tool execution                                     |
+The normal setup path is `/system/ai/setup`: choose a common Provider type, give the connection a recognizable name, enter the API key, test the transient connection, select one or more synchronized models, and assign default purposes. Discovery does not persist credentials or records. Completion creates the Provider, selected models, and default-purpose flags in one database transaction. The internal provider code is generated automatically and the Base URL remains editable for proxies or compatible gateways. Advanced administrators may continue to manage every field from the separate Provider and model pages. Model display name defaults to the model ID and base capabilities are inferred from the type. `contextWindow`, `maxOutputTokens`, capability overrides, price, and currency are optional advanced metadata. The runtime uses the context window for history compaction, the output limit for generation budgeting, and capability flags to decide whether structured output, Agent tools, vision, or embedding workflows are allowed. See `docs/ai-module-boundaries.md` for the complete Provider, model, Playground, Chat, and Agent boundary.
+
+| Method     | Path                                                                | Description                                                                           |
+| ---------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| GET        | `/api/system/ai/setup/summary`                                      | Read guided setup readiness, counts, and default models                               |
+| POST       | `/api/system/ai/setup/discover`                                     | Test a transient Provider and discover models without persistence                     |
+| POST       | `/api/system/ai/setup/complete`                                     | Atomically create a Provider, selected models, and default purposes                   |
+| GET/POST   | `/api/system/ai/provider`                                           | Query and create Provider connection instances; one type may have many connections    |
+| PUT        | `/api/system/ai/provider/:id`                                       | Update AI provider                                                                    |
+| DELETE     | `/api/system/ai/provider/:id`                                       | Delete AI provider when not default/system                                            |
+| PUT        | `/api/system/ai/provider/status/:id`                                | Toggle AI provider status                                                             |
+| PUT        | `/api/system/ai/provider/default/:id`                               | Set default AI provider with protection                                               |
+| POST       | `/api/system/ai/provider/test`                                      | Test provider list/chat/embedding endpoint                                            |
+| POST       | `/api/system/ai/provider/test/stream`                               | Stream a provider chat test through AI SDK                                            |
+| GET        | `/api/system/ai/provider/:id/models`                                | Synchronize a normalized model list from one connection for interactive selection     |
+| GET        | `/api/system/ai/provider/:id/test-models`                           | Synchronize candidates for Provider test dialogs with Provider test permission        |
+| GET/POST   | `/api/system/ai/web-search/provider`                                | Query or create Tavily, Brave, or SearXNG search connections                          |
+| PUT/DELETE | `/api/system/ai/web-search/provider/:id`                            | Update or delete a non-system Web Search Provider                                     |
+| PUT        | `/api/system/ai/web-search/provider/status/:id`                     | Enable or disable a saved search connection                                           |
+| POST       | `/api/system/ai/web-search/provider/test`                           | Test one connection and return normalized sources plus sanitized attempts             |
+| GET/POST   | `/api/system/ai/model`                                              | Query and create AI models                                                            |
+| PUT        | `/api/system/ai/model/:id`                                          | Update AI model                                                                       |
+| DELETE     | `/api/system/ai/model/:id`                                          | Delete AI model when not system/default protected                                     |
+| PUT        | `/api/system/ai/model/status/:id`                                   | Toggle AI model status                                                                |
+| PUT        | `/api/system/ai/model/default/:id`                                  | Set default chat/structured/embedding model                                           |
+| POST       | `/api/system/ai/model/test`                                         | Test a configured AI model                                                            |
+| POST       | `/api/system/ai/model/test/stream`                                  | Stream a configured chat model test through AI SDK                                    |
+| GET        | `/api/system/ai/runtime-config/:usage`                              | Read sanitized default runtime config for maintenance                                 |
+| GET        | `/api/system/ai/playground/options`                                 | List enabled Chat models available for explicit Playground selection                  |
+| GET        | `/api/system/ai/playground/runtime-config/:usage`                   | Read sanitized runtime config for Playground                                          |
+| POST       | `/api/system/ai/playground/chat`                                    | Generate text with an explicitly selected or default Chat/structured model            |
+| POST       | `/api/system/ai/playground/chat/stream`                             | Stream text with SSE events: `meta`, `delta`, `finish`, `error`                       |
+| GET        | `/api/system/ai/chat/runtime-config`                                | Read sanitized runtime config for AI Chat                                             |
+| GET        | `/api/system/ai/chat/options`                                       | List active Chat models, Agents, and each Agent's currently available Tool codes      |
+| GET        | `/api/system/ai/chat/sessions`                                      | Query current user's AI Chat sessions                                                 |
+| POST       | `/api/system/ai/chat/sessions`                                      | Create an AI Chat session                                                             |
+| PUT        | `/api/system/ai/chat/sessions/:id`                                  | Update title, model, Agent, System Prompt, temperature, and output limit              |
+| DELETE     | `/api/system/ai/chat/sessions/:id`                                  | Soft-delete current user's AI Chat session                                            |
+| GET        | `/api/system/ai/chat/sessions/:id/messages`                         | List messages in current user's AI Chat session                                       |
+| POST       | `/api/system/ai/chat/sessions/:id/messages/stream`                  | Append or resume a turn, stream model/Agent output, and persist status/usage          |
+| POST       | `/api/system/ai/chat/sessions/:id/messages/:messageId/regenerate`   | Supersede and regenerate the latest Assistant message                                 |
+| GET        | `/api/system/ai/chat/sessions/:id/export`                           | Export a conversation as Markdown or JSON                                             |
+| GET        | `/api/system/ai/chat/sessions/:id/approvals`                        | List tool approvals for a chat session                                                |
+| POST       | `/api/system/ai/chat/sessions/:sessionId/client-actions/:id/result` | Submit a normalized one-time browser Client Tool result and resume the same Agent run |
+| GET/POST   | `/api/system/ai/agent`                                              | Query and create Agents                                                               |
+| PUT/DELETE | `/api/system/ai/agent/:id`                                          | Update or soft-delete an Agent                                                        |
+| GET        | `/api/system/ai/agent/options`                                      | List models, tools, and controlled handler registry options                           |
+| GET/POST   | `/api/system/ai/tool`                                               | Query and create registered tools                                                     |
+| PUT/DELETE | `/api/system/ai/tool/:id`                                           | Update or soft-delete a tool                                                          |
+| GET        | `/api/system/ai/agent/runs`                                         | Query current user's Agent runs                                                       |
+| GET        | `/api/system/ai/agent/runs/:id/steps`                               | Inspect persisted model/tool/approval steps                                           |
+| POST       | `/api/system/ai/approval/:id/decision`                              | Approve or deny a pending tool execution                                              |
+| GET        | `/api/system/ai/workflow/definitions`                               | List server-registered trusted Workflow definitions                                   |
+| POST       | `/api/system/ai/workflow/:code/runs`                                | Execute a registered Workflow with its input schema and permission                    |
+| GET        | `/api/system/ai/workflow/runs`                                      | List current user's persisted Workflow runs                                           |
+| GET        | `/api/system/ai/workflow/runs/:id`                                  | Inspect one Workflow run and its persisted steps                                      |
 
 Supported provider types include OpenAI, Anthropic, Google Gemini, OpenAI-compatible gateways, DeepSeek, Qwen/DashScope, Moonshot/Kimi, Zhipu, SiliconFlow, OpenRouter, Ollama, and custom compatible endpoints.
 
-Runtime calls use the configured default model for `chat` or `structured` and return provider/model metadata without secrets. Playground calls write operation logs under `system.aiPlayground`; AI Chat calls write operation logs under `system.aiChat`. If `finishReason = length`, the response was stopped by the configured `maxOutputTokens` limit.
+Runtime calls use the configured default model for `chat`, `structured`, or `embedding` and return provider/model metadata without secrets. The reusable service APIs are `generateAiStructured`, `embedAiText`, and `embedAiTexts`; they resolve the configured Provider/model and call AI SDK 7. Playground calls write operation logs under `system.aiPlayground`; AI Chat calls write operation logs under `system.aiChat`. Playground remains the explicit parameter-debugging surface. Formal AI Chat turns do not accept per-message or per-session output-token/timeout overrides: they use the selected model's configured `maxOutputTokens`, fall back to 16384 when the model has no declared limit, apply the 131072-token system safety ceiling, and inherit the selected model's Provider `timeoutMs` while retaining manual stop. `contextWindow` is the total request capacity rather than the answer length: for a 1M-context model configure `contextWindow = 1000000`, then configure `maxOutputTokens` separately from the Provider's documented single-response output limit. Model synchronization reads common upstream capacity aliases when available; because `/models` has no universal capacity schema, missing values remain editable through common presets or direct numeric input. If `finishReason = length`, the response was stopped by the effective model output limit.
 
-AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. Assistant messages transition through `streaming`, `completed`, `stopped`, or `failed`; stale streaming records are recovered as failed. Context governance reserves output tokens, keeps a recent-message window, and stores a deterministic summary of compacted history. Agent execution persists `sys_ai_agent_run`, `sys_ai_agent_run_step`, and `sys_ai_tool_approval` records. Approval records can include `planHash`, affected files, validation output, expiry, approver, decision time, and execution time. Expired, denied, or replayed approvals do not execute their tool. Server-side tools are selected from a fixed handler registry; configuration cannot inject executable code.
+AI Chat stores sessions in `sys_ai_chat_session` and messages in `sys_ai_chat_message`. Sessions are scoped to the current user. Assistant messages transition through `streaming`, `completed`, `stopped`, or `failed`; stale streaming records are recovered as failed. Context governance uses a CJK-aware conservative estimate, reserves output tokens, keeps a recent-message window, and stores a deterministic summary of compacted history. Agent execution persists `sys_ai_agent_run`, `sys_ai_agent_run_step`, and `sys_ai_tool_approval` records. Approval decisions are claimed atomically; duplicates return HTTP 409 and cannot execute a tool twice. An approved tool produces a linked continuation Run (`parentRunId` and `sourceApprovalId`), so refresh/retry can recover the chain without presenting it as an unrelated Run. Approval records can include `planHash`, affected files, validation output, expiry, approver, decision time, and execution time. Expired, denied, or replayed approvals do not execute their tool. Server-side tools are selected from one fixed handler registry that owns input schema, risk, approval defaults, and execution dispatch; configuration cannot inject executable code.
+
+`browser-location` is a Client Tool rather than a server-side location lookup. The Agent may request it only when a task needs the user's current area and no city or region was supplied. Chat displays an explicit one-time permission action before calling `navigator.geolocation`; denial, unsupported browsers, and timeout are submitted as valid results so the same Agent run can ask for a city instead of failing. Coordinates are rounded in the browser and again on the server before persistence. Operation logs record only the capability and result status, never coordinates.
+
+Web Search connections are independent resource records in `sys_ai_web_search_provider`. API keys
+are encrypted and list responses expose only `hasApiKey`. The built-in `web-search` Tool accepts
+only `query` and `limit`; Provider endpoint, authentication, timeout, and result ceiling always come
+from server-owned configuration. Active Providers run by ascending `sort`, falling through on
+timeout, error, or empty results. Tool output stores normalized `title`, `url`, `snippet`, optional
+`publishedAt`, `source`, and sanitized attempts in the Agent Step. Chat SSE emits a separate
+`sources` event, and the Assistant message persists the same server-derived sources in
+`metadataJson`; the source panel never treats model-authored links as verified citations. When no
+search Provider is active, the Tool is not exposed to the Agent.
+
+Mastra Workflows are selected from a server-side static registry and persist governance records in
+`sys_ai_workflow_run` and `sys_ai_workflow_run_step`. The first registered Workflow,
+`ai-runtime-preflight`, deterministically checks Agent, Provider, Model, Tool Registry, approval
+policy, RequestContext, and data-scope readiness. It does not call the external model and does not
+change configuration. Mastra runtime DDL remains disabled; these tables are owned by the Admin Base
+migration chain.
 
 The built-in module-development Agent exposes only `module_design`, `module_generate_draft`,
 `module_preview_diff`, `module_validate`, `module_publish`, and `module_rollback` through the existing
@@ -307,12 +343,12 @@ Online sessions:
 
 Operation logs:
 
-| Method | Path                               | Description                                   |
-| ------ | ---------------------------------- | --------------------------------------------- |
-| GET    | `/api/system/operation/log`        | Query operation logs                          |
-| GET    | `/api/system/operation/log/stats`  | Operation log summary stats                   |
-| GET    | `/api/system/operation/log/export` | Export CSV using current filters              |
-| DELETE | `/api/system/operation/log/clean`  | Clean logs by filters with critical audit log |
+| Method | Path                               | Description                                             |
+| ------ | ---------------------------------- | ------------------------------------------------------- |
+| GET    | `/api/system/operation/log`        | Query operation logs                                    |
+| GET    | `/api/system/operation/log/stats`  | Module stats and filter labels resolved from `sys_rule` |
+| GET    | `/api/system/operation/log/export` | Export CSV using current filters                        |
+| DELETE | `/api/system/operation/log/clean`  | Clean logs by filters with critical audit log           |
 
 Operation log query supports:
 
@@ -321,6 +357,10 @@ module=system.user&action=delete&success=false&requestId=...&ip=...&riskLevel=hi
 ```
 
 `riskLevel` is `low | medium | high | critical`. Details JSON includes request/response/error context where available, and update actions can include `changedFields` with sensitive values masked.
+
+The stats response keeps `module` as the stable audit code and returns `label` from the matching
+active `sys_rule` record. The operation-log UI uses the modules that actually exist in the audit
+table, so new permission-backed modules become filterable without adding page-local options.
 
 ## Dashboard And Doctor
 

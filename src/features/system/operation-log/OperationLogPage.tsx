@@ -9,8 +9,20 @@ import {
   LinkOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, DatePicker, Descriptions, Drawer, Modal, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Badge,
+  Button,
+  DatePicker,
+  Descriptions,
+  Drawer,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import { useMemo, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
@@ -43,7 +55,18 @@ type OperationLogRecord = {
   createdAt: string;
 };
 
-const moduleOptions = [
+type OperationLogStats = {
+  modules: Array<{
+    module: string;
+    label: string;
+    total: number;
+    failed: number;
+    lastAt?: string | null;
+  }>;
+  failedTotal: number;
+};
+
+const fallbackModuleOptions = [
   { label: "用户管理", value: "system.user" },
   { label: "角色管理", value: "system.role" },
   { label: "菜单权限", value: "system.rule" },
@@ -115,6 +138,10 @@ function formatJson(value?: string | null) {
   }
 }
 
+function optionLabel(options: Array<{ label: React.ReactNode; value: unknown }>, value: unknown) {
+  return options.find((item) => item.value === value)?.label ?? String(value);
+}
+
 export function OperationLogPage() {
   const navigation = useNavigationAdapter();
   const queryClient = useQueryClient();
@@ -128,6 +155,22 @@ export function OperationLogPage() {
     success?: boolean;
   }>({});
   const activeJson = useMemo(() => formatJson(activeLog?.detailsJson), [activeLog]);
+  const statsQuery = useQuery({
+    queryKey: ["system-operation-log-stats"],
+    queryFn: () => request<OperationLogStats>("/api/system/operation/log/stats"),
+  });
+  const moduleOptions = useMemo(() => {
+    const options = new Map(fallbackModuleOptions.map((item) => [item.value, item] as const));
+    for (const item of statsQuery.data?.modules ?? []) {
+      options.set(item.module, {
+        label: item.label || item.module,
+        value: item.module,
+      });
+    }
+    return Array.from(options.values()).sort((left, right) =>
+      String(left.label).localeCompare(String(right.label), "zh-CN"),
+    );
+  }, [statsQuery.data?.modules]);
 
   const cleanMutation = useMutation({
     mutationFn: () =>
@@ -139,7 +182,10 @@ export function OperationLogPage() {
       feedback.success("清理成功");
       setCleanOpen(false);
       setCleanForm({});
-      await queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/operation/log"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["admin-data-table", "/api/system/operation/log"],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["system-operation-log-stats"] });
     },
   });
 
@@ -207,7 +253,7 @@ export function OperationLogPage() {
       options: moduleOptions,
       width: 128,
       fixed: "left",
-      render: (value) => <Tag color="blue">{String(value)}</Tag>,
+      render: (value) => <Tag color="blue">{optionLabel(moduleOptions, value)}</Tag>,
     },
     {
       title: "风险",
@@ -227,7 +273,7 @@ export function OperationLogPage() {
       valueType: "select",
       options: actionOptions,
       width: 112,
-      render: (value) => <Tag color="purple">{String(value)}</Tag>,
+      render: (value) => <Tag color="purple">{optionLabel(actionOptions, value)}</Tag>,
     },
     {
       title: "操作人",
@@ -365,7 +411,7 @@ export function OperationLogPage() {
   ];
 
   return (
-    <PageScaffold title="操作日志" description="追踪后台管理动作、失败结果和请求上下文">
+    <PageScaffold title="操作日志" description="追踪后台管理动作、失败结果和请求上下文" hideHeader>
       <AdminDataTable
         api="/api/system/operation/log"
         accessName="system.operationLog"
@@ -470,10 +516,10 @@ export function OperationLogPage() {
               </Descriptions.Item>
               <Descriptions.Item label="状态码">{activeLog.status}</Descriptions.Item>
               <Descriptions.Item label="模块">
-                <Tag color="blue">{activeLog.module}</Tag>
+                <Tag color="blue">{optionLabel(moduleOptions, activeLog.module)}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="动作">
-                <Tag color="purple">{activeLog.action}</Tag>
+                <Tag color="purple">{optionLabel(actionOptions, activeLog.action)}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="风险等级">
                 <Tag color={riskColors[activeLog.riskLevel]}>{activeLog.riskLevel}</Tag>
@@ -553,7 +599,12 @@ export function OperationLogPage() {
         okButtonProps={{ danger: true }}
         confirmLoading={cleanMutation.isPending}
         onOk={() => {
-          if (!cleanForm.before && !cleanForm.module && !cleanForm.riskLevel && cleanForm.success === undefined) {
+          if (
+            !cleanForm.before &&
+            !cleanForm.module &&
+            !cleanForm.riskLevel &&
+            cleanForm.success === undefined
+          ) {
             feedback.warning("请选择至少一个清理条件");
             return;
           }

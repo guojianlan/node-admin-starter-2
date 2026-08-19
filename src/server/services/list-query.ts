@@ -31,6 +31,41 @@ function parseSort(value: string | null) {
   return { field, order };
 }
 
+function isConventionallySortableField(field: string) {
+  return (
+    field === "id" ||
+    field === "sort" ||
+    field === "order" ||
+    field === "priority" ||
+    field.endsWith("At")
+  );
+}
+
+export function resolveListOrder(input: {
+  params: URLSearchParams;
+  fieldMap: Record<string, string>;
+  sortableFields?: string[];
+  defaultSort?: { field: string; order: "asc" | "desc" };
+}) {
+  const sortableFields = new Set([
+    ...(input.sortableFields ?? []),
+    ...Object.keys(input.fieldMap).filter(isConventionallySortableField),
+  ]);
+  const requestedSort = parseSort(input.params.get("sort"));
+  const activeSort =
+    requestedSort && sortableFields.has(requestedSort.field)
+      ? requestedSort
+      : (input.defaultSort ?? { field: "id", order: "desc" as const });
+  const sortColumn = input.fieldMap[activeSort.field] ?? input.fieldMap.id ?? "id";
+  const direction = activeSort.order.toUpperCase();
+  const tieBreaker =
+    activeSort.field !== "id" && input.fieldMap.id ? `, ${input.fieldMap.id} ${direction}` : "";
+  return {
+    ...activeSort,
+    sql: `ORDER BY ${sortColumn} ${direction}${tieBreaker}`,
+  };
+}
+
 function appendFieldFilter(input: {
   params: URLSearchParams;
   field: string;
@@ -104,14 +139,12 @@ export async function buildListQuery<T>(
   });
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const sort = parseSort(params.get("sort"));
-  const sortableFields = new Set(config.sortableFields ?? []);
-  const activeSort =
-    sort && sortableFields.has(sort.field)
-      ? sort
-      : (config.defaultSort ?? { field: "id", order: "desc" as const });
-  const sortColumn = config.fieldMap[activeSort.field] ?? config.fieldMap.id ?? "id";
-  const orderSql = `ORDER BY ${sortColumn} ${activeSort.order.toUpperCase()}`;
+  const orderSql = resolveListOrder({
+    params,
+    fieldMap: config.fieldMap,
+    sortableFields: config.sortableFields,
+    defaultSort: config.defaultSort,
+  }).sql;
 
   const totalRow = (await sqlite
     .prepare(`SELECT COUNT(1) AS total FROM ${config.table} ${whereSql}`)

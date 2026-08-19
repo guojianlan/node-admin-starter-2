@@ -23,8 +23,7 @@ async function readJson<T = unknown>(response: Response) {
 }
 
 async function login(username = "admin", password?: string) {
-  const resolvedPassword =
-    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
+  const resolvedPassword = password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -86,6 +85,89 @@ async function createQueryOnlyUser() {
     .run("dictviewer", roleId);
 }
 
+async function createScopedUserManager() {
+  const now = nowIso();
+  const password = "ScopedDemo123!";
+  const passwordHash = await bcrypt.hash(password, 10);
+  const southDept = await sqlite
+    .prepare(
+      `INSERT INTO sys_dept
+        (parent_id, name, code, sort, status, is_system, created_at, updated_at)
+       VALUES (1, '测试华南部门', 'TEST_SCOPE_SOUTH', 100, 1, false, ?, ?)
+       RETURNING id`,
+    )
+    .run(now, now);
+  const northDept = await sqlite
+    .prepare(
+      `INSERT INTO sys_dept
+        (parent_id, name, code, sort, status, is_system, created_at, updated_at)
+       VALUES (1, '测试华北部门', 'TEST_SCOPE_NORTH', 101, 1, false, ?, ?)
+       RETURNING id`,
+    )
+    .run(now, now);
+  const southDeptId = Number(southDept.lastInsertRowid);
+  const northDeptId = Number(northDept.lastInsertRowid);
+  const role = await sqlite
+    .prepare(
+      `INSERT INTO sys_role
+        (name, code, remark, sort, status, data_scope, is_system, created_at, updated_at)
+       VALUES ('测试部门用户管理员', 'test_scoped_user_manager', '', 100, 1, 'current_dept', false, ?, ?)
+       RETURNING id`,
+    )
+    .run(now, now);
+  const roleId = Number(role.lastInsertRowid);
+  const ruleRows = (await sqlite
+    .prepare(
+      `SELECT id
+       FROM sys_rule
+       WHERE key IN (
+         'system',
+         'system.access',
+         'system.user',
+         'system.user.query',
+         'system.user.create',
+         'system.user.update',
+         'system.user.delete',
+         'system.user.resetPassword'
+       )
+         AND deleted_at IS NULL`,
+    )
+    .all()) as Array<{ id: number }>;
+  for (const rule of ruleRows) {
+    await sqlite
+      .prepare("INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+      .run(roleId, rule.id);
+  }
+
+  async function insertUser(username: string, nickname: string, deptId: number) {
+    const result = await sqlite
+      .prepare(
+        `INSERT INTO sys_user
+          (username, password_hash, nickname, sex, dept_id, status, is_system,
+           force_password_change, created_at, updated_at)
+         VALUES (?, ?, ?, 0, ?, 1, false, false, ?, ?)
+         RETURNING id`,
+      )
+      .run(username, passwordHash, nickname, deptId, now, now);
+    return Number(result.lastInsertRowid);
+  }
+
+  const managerId = await insertUser("scope_manager", "部门管理员", southDeptId);
+  const sameDeptUserId = await insertUser("scope_same_user", "同部门用户", southDeptId);
+  const otherDeptUserId = await insertUser("scope_other_user", "跨部门用户", northDeptId);
+  await sqlite
+    .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)")
+    .run(managerId, roleId);
+
+  return {
+    password,
+    northDeptId,
+    managerId,
+    sameDeptUserId,
+    otherDeptUserId,
+  };
+}
+
 async function findDictByCode(code: string) {
   return (await sqlite
     .prepare(
@@ -137,6 +219,97 @@ describe("system CRUD factory API", () => {
     const createBody = await readJson(create);
     expect(create.status).toBe(403);
     expect(createBody.msg).toBe("No Permission");
+  });
+
+  it("enforces data scope on user list and every user mutation", async () => {
+    const fixture = await createScopedUserManager();
+    const { token } = await login("scope_manager", fixture.password);
+
+    const list = await app.request("/api/system/user?page=1&pageSize=100", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const listBody = await readJson<Page<{ id: number; username: string }>>(list);
+    expect(list.status).toBe(200);
+    expect(listBody.data?.data.map((item) => item.username)).toEqual(
+      expect.arrayContaining(["scope_manager", "scope_same_user"]),
+    );
+    expect(listBody.data?.data.map((item) => item.username)).not.toContain("scope_other_user");
+
+    const createOutsideScope = await app.request("/api/system/user", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        username: "scope_created_outside",
+        password: "CreatedDemo123!",
+        nickname: "跨部门新用户",
+        deptId: fixture.northDeptId,
+      }),
+    });
+    expect(createOutsideScope.status).toBe(403);
+
+    const updateOutsideScope = await app.request(`/api/system/user/${fixture.otherDeptUserId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ nickname: "越权修改" }),
+    });
+    expect(updateOutsideScope.status).toBe(404);
+    expect((await readJson(updateOutsideScope)).msg).toBe("记录不存在或无数据权限");
+
+    const moveOutsideScope = await app.request(`/api/system/user/${fixture.sameDeptUserId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ deptId: fixture.northDeptId }),
+    });
+    expect(moveOutsideScope.status).toBe(403);
+
+    const deleteOutsideScope = await app.request(`/api/system/user/${fixture.otherDeptUserId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(deleteOutsideScope.status).toBe(404);
+
+    const mixedBatchDelete = await app.request("/api/system/user/batch-delete", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ ids: [fixture.sameDeptUserId, fixture.otherDeptUserId] }),
+    });
+    expect(mixedBatchDelete.status).toBe(404);
+
+    const resetOutsideScope = await app.request("/api/system/user/resetPassword", {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ id: fixture.otherDeptUserId, password: "ChangedDemo123!" }),
+    });
+    expect(resetOutsideScope.status).toBe(404);
+    expect((await readJson(resetOutsideScope)).msg).toBe("用户不存在或无数据权限");
+
+    const rows = (await sqlite
+      .prepare(
+        `SELECT id, nickname, deleted_at AS "deletedAt"
+         FROM sys_user
+         WHERE id IN (?, ?)
+         ORDER BY id ASC`,
+      )
+      .all(fixture.sameDeptUserId, fixture.otherDeptUserId)) as Array<{
+      id: number;
+      nickname: string;
+      deletedAt: string | null;
+    }>;
+    expect(rows).toEqual([
+      expect.objectContaining({ id: fixture.sameDeptUserId, deletedAt: null }),
+      expect.objectContaining({
+        id: fixture.otherDeptUserId,
+        nickname: "跨部门用户",
+        deletedAt: null,
+      }),
+    ]);
+
+    const updateInsideScope = await app.request(`/api/system/user/${fixture.sameDeptUserId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ nickname: "同部门已更新" }),
+    });
+    expect(updateInsideScope.status).toBe(200);
   });
 
   it("creates, updates, soft-deletes and batch-deletes dictionaries with audit fields", async () => {

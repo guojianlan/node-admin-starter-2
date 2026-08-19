@@ -1,0 +1,10 @@
+services:
+  searxng:
+    image: ${SEARXNG_IMAGE:-docker.m.daocloud.io/searxng/searxng:latest}
+    ports:
+      - "127.0.0.1:18082:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:18082/
+    restart: unless-stopped

@@ -36,6 +36,16 @@ function parseSort(value: string | null) {
   return { field, order };
 }
 
+function isConventionallySortableField(field: string) {
+  return (
+    field === "id" ||
+    field === "sort" ||
+    field === "order" ||
+    field === "priority" ||
+    field.endsWith("At")
+  );
+}
+
 function parseFieldValue(column: AnyPgColumn | SQL, value: string): QueryValue {
   const columnDataType = "dataType" in column ? String(column.dataType) : "";
   if (columnDataType === "number") {
@@ -125,14 +135,25 @@ export async function buildCrudListQuery<T>(
 
   const whereSql = where.length ? and(...where) : undefined;
   const sort = parseSort(params.get("sort"));
-  const sortableFields = new Set(config.sortableFields ?? []);
+  const sortableFields = new Set([
+    ...(config.sortableFields ?? []),
+    ...Object.keys(config.select).filter(isConventionallySortableField),
+  ]);
   const activeSort =
     sort && sortableFields.has(sort.field)
       ? sort
       : (config.defaultSort ?? { field: "id", order: "desc" as const });
   const sortColumn = config.select[activeSort.field] ?? config.select.id;
-  const orderBy =
+  const primaryOrderBy =
     activeSort.order === "asc" ? asc(sortColumn as AnyPgColumn) : desc(sortColumn as AnyPgColumn);
+  const idColumn = config.select.id;
+  const orderBy =
+    activeSort.field !== "id" && idColumn
+      ? [
+          primaryOrderBy,
+          activeSort.order === "asc" ? asc(idColumn as AnyPgColumn) : desc(idColumn as AnyPgColumn),
+        ]
+      : [primaryOrderBy];
 
   let totalQuery = db.select({ total: count() }).from(table).$dynamic();
   totalQuery = applyJoins(totalQuery, config.joins);
@@ -145,7 +166,10 @@ export async function buildCrudListQuery<T>(
     .$dynamic();
   dataQuery = applyJoins(dataQuery, config.joins);
   if (whereSql) dataQuery = dataQuery.where(whereSql);
-  const data = (await dataQuery.orderBy(orderBy).limit(pageSize).offset(offset)) as T[];
+  const data = (await dataQuery
+    .orderBy(...orderBy)
+    .limit(pageSize)
+    .offset(offset)) as T[];
 
   return {
     data,

@@ -16,6 +16,7 @@ export type OperationLogInput = {
   message?: string | null;
   durationMs?: number | null;
   details?: Record<string, unknown> | null;
+  requestId?: string | null;
 };
 
 export async function recordBackgroundOperationLog(
@@ -31,7 +32,7 @@ export async function recordBackgroundOperationLog(
         `INSERT INTO sys_operation_log
           (user_id, username, module, action, resource, resource_id, method, path, ip, user_agent,
            request_id, status, success, risk_level, message, duration_ms, details_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.userId ?? null,
@@ -42,6 +43,7 @@ export async function recordBackgroundOperationLog(
         input.resourceId == null ? null : String(input.resourceId),
         input.method ?? "AGENT",
         input.path ?? "/internal/ai-agent/tool",
+        input.requestId ?? null,
         input.status ?? 200,
         input.success ?? true,
         inferRiskLevel(input),
@@ -65,6 +67,20 @@ function getClientIp(c: Context<{ Variables: HonoVariables }>) {
 
 function toErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function toErrorStatus(error: unknown) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    error.status >= 400 &&
+    error.status <= 599
+  ) {
+    return error.status;
+  }
+  return 500;
 }
 
 const sensitiveDetailKeys = [
@@ -199,7 +215,7 @@ export async function runWithOperationLog<T>(
   } catch (error) {
     await recordOperationLog(c, {
       ...input,
-      status: 500,
+      status: toErrorStatus(error),
       success: false,
       message: toErrorMessage(error),
       durationMs: performance.now() - startedAt,

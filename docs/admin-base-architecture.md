@@ -1,31 +1,41 @@
 # Admin Base 当前技术栈与架构
 
-> 当前核对：2026-06-22  
+> 当前核对：2026-08-14
 > 目标：记录当前项目真实技术栈、模块边界、运行链路和架构约束。后续新增能力时，先更新本文，再改实现。
+
+AI 服务商连接、模型、Playground、Chat 和 Agent 的详细职责见
+[`docs/ai-module-boundaries.md`](./ai-module-boundaries.md)。
+Web Search 的已交付边界以及 Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill 和 MCP 的
+采用边界见 [`docs/ai-capability-evolution-roadmap.md`](./ai-capability-evolution-roadmap.md)。路线图中
+除明确标为已实现的能力外，均不等于当前实现。
+AI SDK、DeepSeek Harness、Mastra 和 Pi 的 Runtime 选型结论见
+[`docs/ai-runtime-framework-comparison.md`](./ai-runtime-framework-comparison.md)。
 
 ## 1. 当前技术栈
 
-| 层级          | 当前选型                                    | 当前用途                                                 |
-| ------------- | ------------------------------------------- | -------------------------------------------------------- |
-| 应用宿主      | Next.js 16 App Router                       | 承载后台页面和 `/api` route handler                      |
-| UI 框架       | React 19、Ant Design 6、`@ant-design/icons` | 后台页面、表单、表格、Drawer、Modal、图标                |
-| 数据请求      | TanStack React Query 5                      | 列表、详情、辅助数据缓存和 mutation 状态                 |
-| 客户端状态    | Zustand 5                                   | 登录态、权限、菜单、布局偏好等全局状态                   |
-| API 框架      | Hono 4                                      | API route、middleware、错误处理、权限校验                |
-| 数据库        | PostgreSQL                                  | 当前唯一主目标数据库                                     |
-| ORM / SQL     | Drizzle ORM 0.45、`postgres` driver         | schema、typed query、事务和手写 SQL 兼容层               |
-| 校验          | Zod 4                                       | API 入参和 CRUD schema 校验                              |
-| 认证          | Bearer token + `sys_access_token`           | 登录后生成 token，token 保存权限快照                     |
-| 密码          | bcryptjs                                    | 用户密码 hash                                            |
-| 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                      |
-| 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                   |
-| 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                      |
-| 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志       |
-| 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                 |
-| 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                     |
-| 单测          | Vitest 4                                    | API、service、CRUD、权限测试                             |
-| E2E           | Playwright 1.57                             | 浏览器流测试；当前默认会重置数据库，不能作为普通本地检查 |
-| 工具链        | TypeScript 5.9、ESLint 9、Prettier 3、tsx   | 类型检查、代码检查、格式化、脚本运行                     |
+| 层级          | 当前选型                                    | 当前用途                                                   |
+| ------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| 应用宿主      | Next.js 16 App Router                       | 承载后台页面和 `/api` route handler                        |
+| UI 框架       | React 19、Ant Design 6、`@ant-design/icons` | 后台页面、表单、表格、Drawer、Modal、图标                  |
+| 数据请求      | TanStack React Query 5                      | 列表、详情、辅助数据缓存和 mutation 状态                   |
+| 客户端状态    | Zustand 5                                   | 登录态、权限、菜单、布局偏好等全局状态                     |
+| API 框架      | Hono 4                                      | API route、middleware、错误处理、权限校验                  |
+| 数据库        | PostgreSQL                                  | 当前唯一主目标数据库                                       |
+| ORM / SQL     | Drizzle ORM 0.45、`postgres` driver         | schema、typed query、事务和手写 SQL 兼容层                 |
+| 校验          | Zod 4                                       | API 入参和 CRUD schema 校验                                |
+| 认证          | Bearer token + `sys_access_token`           | 登录后生成 token，token 保存权限快照                       |
+| 密码          | bcryptjs                                    | 用户密码 hash                                              |
+| 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                        |
+| 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                     |
+| 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                        |
+| AI 模型运行时 | AI SDK 7                                    | Provider、生成、流式、Tool Calling、结构化输出和 Embedding |
+| AI 编排内核   | Mastra Core 1.59                            | 渐进式 Agent/Workflow 编排；当前仅通用助手 canary          |
+| 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志         |
+| 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                   |
+| 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                       |
+| 单测          | Vitest 4                                    | API、service、CRUD、权限测试                               |
+| E2E           | Playwright 1.57                             | 浏览器流测试；当前默认会重置数据库，不能作为普通本地检查   |
+| 工具链        | TypeScript 5.9、ESLint 9、Prettier 3、tsx   | 类型检查、代码检查、格式化、脚本运行                       |
 
 当前没有引入：
 
@@ -164,26 +174,29 @@ CRUD factory 当前能力：
 
 当前核心表：
 
-| 表                                      | 作用                                           |
-| --------------------------------------- | ---------------------------------------------- |
+| 表                                      | 作用                                                      |
+| --------------------------------------- | --------------------------------------------------------- |
 | `sys_user`                              | 用户、密码 hash、部门、状态、锁定和密码策略字段、系统保护 |
-| `sys_role`                              | 角色、状态、`data_scope`、系统保护             |
-| `sys_user_role`                         | 用户角色关系                                   |
-| `sys_role_dept`                         | 角色自定义数据权限部门                         |
-| `sys_rule`                              | 菜单、路由、按钮/API 权限                      |
-| `sys_role_rule`                         | 角色权限关系                                   |
-| `sys_dept`                              | 部门树                                         |
-| `sys_access_token`                      | 登录 token hash、权限快照、IP/User-Agent、过期和最近活跃 |
-| `sys_user_password_history`             | 用户历史密码 hash，用于密码历史策略            |
-| `sys_password_reset_token`              | 忘记密码重置 token hash、过期时间和使用状态    |
-| `sys_login_record`                      | 登录日志                                       |
-| `sys_operation_log`                     | 后台操作日志，记录用户、接口、模块、动作和结果 |
-| `sys_notice` / `sys_notice_read`        | 通知公告和用户已读状态                         |
-| `sys_dict` / `sys_dict_item`            | 字典和字典项                                   |
-| `sys_config_group` / `sys_config_items` | 普通系统参数、文件策略、安全/登录/token 策略   |
-| `sys_storage`                           | 本地/S3-compatible 存储配置                    |
-| `sys_file_group` / `sys_file`           | 文件分组、文件元数据、sha256、存储归属         |
-| `sys_mail_account`                      | SMTP 账号配置                                  |
+| `sys_role`                              | 角色、状态、`data_scope`、系统保护                        |
+| `sys_user_role`                         | 用户角色关系                                              |
+| `sys_role_dept`                         | 角色自定义数据权限部门                                    |
+| `sys_rule`                              | 菜单、路由、按钮/API 权限                                 |
+| `sys_role_rule`                         | 角色权限关系                                              |
+| `sys_dept`                              | 部门树                                                    |
+| `sys_access_token`                      | 登录 token hash、权限快照、IP/User-Agent、过期和最近活跃  |
+| `sys_user_password_history`             | 用户历史密码 hash，用于密码历史策略                       |
+| `sys_password_reset_token`              | 忘记密码重置 token hash、过期时间和使用状态               |
+| `sys_login_record`                      | 登录日志                                                  |
+| `sys_operation_log`                     | 后台操作日志，记录用户、接口、模块、动作和结果            |
+| `sys_notice` / `sys_notice_read`        | 通知公告和用户已读状态                                    |
+| `sys_dict` / `sys_dict_item`            | 字典和字典项                                              |
+| `sys_config_group` / `sys_config_items` | 普通系统参数、文件策略、安全/登录/token 策略              |
+| `sys_storage`                           | 本地/S3-compatible 存储配置                               |
+| `sys_file_group` / `sys_file`           | 文件分组、文件元数据、sha256、存储归属                    |
+| `sys_mail_account`                      | SMTP 账号配置                                             |
+| `sys_ai_web_search_provider`            | Tavily、Brave、SearXNG 搜索连接、密钥和调用优先级         |
+| `sys_ai_workflow_run`                   | 可信 AI Workflow 运行、状态、输入输出和 Request ID        |
+| `sys_ai_workflow_run_step`              | Workflow 确定性步骤、耗时、输入输出和错误                 |
 
 数据库策略：
 
@@ -194,6 +207,8 @@ CRUD factory 当前能力：
 - `created_by`、`updated_by`、`deleted_by` 由 CRUD factory 或显式 route 写入。
 - migration 当前在 `src/server/db/migrations.ts` 中维护手写 SQL。
 - `sys_config_items` 只承载普通参数和策略参数；`sys_storage`、`sys_mail_account` 是独立资源型配置，后端 API、权限、默认实例和测试连接逻辑不合并。
+- `sys_ai_provider` 保存连接、凭据和网络相关的请求超时；`sys_ai_model` 保存各模型自己的上下文窗口、最大输出、能力和价格。运行时先选模型，再解析其 Provider，不能把多模型容量合并到 Provider。
+- `/system/ai/setup` 是普通接入入口，只编排现有 Provider/Model 契约：发现阶段不落库，完成阶段使用单事务创建连接、批量模型和默认用途；高级管理页面继续保留全部配置能力。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。
 
@@ -282,11 +297,43 @@ curl http://localhost:3000/api/ready
 - `pnpm e2e` 只允许使用 `TEST_DATABASE_URL` 指向的 `*_test` 数据库，并在独立 3101 端口启动服务。
 - 日常生产预检继续使用非破坏性的 `pnpm smoke`；smoke 不执行 migration、seed 或 reset。
 
-## 10. 架构约束
+## 10. AI Runtime 和 Mastra 边界
+
+AI SDK 7 继续负责模型协议和 Provider 调用。Mastra 作为同一 Next.js + Hono 进程内的编排内核，
+不启动第二个 Server，也不接管 Provider、Model、Chat、权限、审批或操作日志。
+
+```text
+AI Chat / Agent / future Workflow
+  -> Admin Base governance: sys_rule / data scope / Approval / operation log
+  -> legacy | Mastra orchestration adapter
+  -> AI SDK 7 LanguageModel
+  -> existing sys_ai_provider / sys_ai_model
+```
+
+当前迁移规则：
+
+- `ADMIN_BASE_AI_ORCHESTRATOR=legacy` 是默认值，所有 Agent 使用原运行时。
+- `ADMIN_BASE_AI_ORCHESTRATOR=mastra` 时，仅 `general-assistant` 使用 Mastra；模块开发 Agent 仍使用
+  legacy，避免高风险发布工具在迁移期改变执行语义。
+- Mastra Tool 由现有服务端 Tool Registry 映射，执行仍经过权限、审批、Run/Step 和审计边界。
+- Mastra RequestContext 注入 `userId`、abilities、requestId 和已解析 data scope。
+- Mastra stream 会归一化到现有 SSE 事件，前端和 Chat API 不需要识别第二套协议。
+- Workflow 只能从服务端静态注册表执行；首个 `ai-runtime-preflight` 工作流只读检查 Agent、Provider、
+  Model、Tool 和治理上下文，不调用外部模型、不修改配置。
+- Workflow Run/Step 由 `sys_ai_workflow_run*` 持久化，并继续受 `sys_rule`、Request ID 和操作日志治理。
+- Web Search 由 `sys_ai_web_search_provider` 和系统内置 `web-search` Tool 提供；仅接受 query/limit，
+  按 Provider sort 回退，并把服务端来源写入 Step、SSE 和 Assistant metadata。
+- 当前不启用 Mastra Memory，不迁移 `sys_ai_chat_*`，也不双写消息。
+- `@mastra/pg` 仍只预留独立 `mastra_runtime` schema，并固定 `disableInit: true`；当前 Workflow 不使用
+  Mastra Storage。正式启用 Snapshot/Suspend 持久化前必须将导出 DDL 纳入 Admin Base migration。
+
+## 11. 架构约束
 
 - 不把 SMTP、S3、文件策略写死到 `.env`；这些属于后台配置。
 - 不把 Docker 作为唯一启动方式；源码直接启动是主路径。
 - 不复制 XinAdmin 或 ContiNew 的代码和 API；只对齐后台能力和工程化标准。
 - 不在当前阶段引入 SQLite 兼容目标。
-- 不在当前阶段引入完整多租户、AI、SMS、定时任务；这些作为插件或后置模块。
+- 不在当前阶段引入完整多租户、任务调度中心或分布式 AI 基础设施。
+- Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill 和 MCP 按演进路线图分期
+  实施，不把计划能力写成当前能力，也不为对齐参考项目提前引入 Redis、队列或独立向量数据库。
 - 新增后台页面必须同时维护 route manifest、seed rule/action、API 权限、页面入口和 `admin:check-routes`。

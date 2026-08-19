@@ -281,6 +281,21 @@
         "summary": "Render variables and send test SMS through bound provider"
       }
     },
+    "/system/ai/setup/summary": {
+      "get": { "tags": ["ai"], "summary": "Read guided AI setup readiness" }
+    },
+    "/system/ai/setup/discover": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Test a transient AI provider and discover models without persistence"
+      }
+    },
+    "/system/ai/setup/complete": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Atomically create an AI provider, selected models, and default purposes"
+      }
+    },
     "/system/ai/provider": {
       "get": { "tags": ["ai"], "summary": "AI provider page query" },
       "post": { "tags": ["ai"], "summary": "Create AI provider" }
@@ -300,6 +315,23 @@
     },
     "/system/ai/provider/test/stream": {
       "post": { "tags": ["ai"], "summary": "Stream AI provider chat test through AI SDK" }
+    },
+    "/system/ai/web-search/provider": {
+      "get": { "tags": ["ai"], "summary": "Web Search provider page query with masked API keys" },
+      "post": { "tags": ["ai"], "summary": "Create Web Search provider" }
+    },
+    "/system/ai/web-search/provider/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update Web Search provider" },
+      "delete": { "tags": ["ai"], "summary": "Delete non-system Web Search provider" }
+    },
+    "/system/ai/web-search/provider/status/{id}": {
+      "put": { "tags": ["ai"], "summary": "Toggle Web Search provider status" }
+    },
+    "/system/ai/web-search/provider/test": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Test one Web Search provider and return normalized sources and attempts"
+      }
     },
     "/system/ai/model": {
       "get": { "tags": ["ai"], "summary": "AI model page query" },
@@ -338,7 +370,10 @@
       "get": { "tags": ["ai"], "summary": "Read sanitized AI Chat runtime config" }
     },
     "/system/ai/chat/options": {
-      "get": { "tags": ["ai"], "summary": "List models and Agents available to AI Chat" }
+      "get": {
+        "tags": ["ai"],
+        "summary": "List models, Agents, and each Agent's currently available Tool codes"
+      }
     },
     "/system/ai/chat/sessions": {
       "get": { "tags": ["ai"], "summary": "AI Chat session page query" },
@@ -354,7 +389,7 @@
     "/system/ai/chat/sessions/{id}/messages/stream": {
       "post": {
         "tags": ["ai"],
-        "summary": "Append or resume a turn and stream model or Agent output"
+        "summary": "Append or resume a turn and stream output with server-owned model limits"
       }
     },
     "/system/ai/chat/sessions/{id}/messages/{messageId}/regenerate": {
@@ -365,6 +400,12 @@
     },
     "/system/ai/chat/sessions/{id}/approvals": {
       "get": { "tags": ["ai"], "summary": "List tool approvals for AI Chat" }
+    },
+    "/system/ai/chat/sessions/{sessionId}/client-actions/{id}/result": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Submit one-time browser Client Tool result and resume the Agent run"
+      }
     },
     "/system/ai/agent": {
       "get": { "tags": ["ai"], "summary": "List Agents" },
@@ -388,6 +429,18 @@
     "/system/ai/agent/runs": { "get": { "tags": ["ai"], "summary": "List Agent runs" } },
     "/system/ai/agent/runs/{id}/steps": {
       "get": { "tags": ["ai"], "summary": "List Agent run steps" }
+    },
+    "/system/ai/workflow/definitions": {
+      "get": { "tags": ["ai"], "summary": "List trusted AI Workflow definitions" }
+    },
+    "/system/ai/workflow/{code}/runs": {
+      "post": { "tags": ["ai"], "summary": "Execute a registered AI Workflow" }
+    },
+    "/system/ai/workflow/runs": {
+      "get": { "tags": ["ai"], "summary": "List current user's AI Workflow runs" }
+    },
+    "/system/ai/workflow/runs/{id}": {
+      "get": { "tags": ["ai"], "summary": "Get AI Workflow run and persisted steps" }
     },
     "/system/ai/approval/{id}/decision": {
       "post": { "tags": ["ai"], "summary": "Approve or deny tool execution" }
@@ -570,7 +623,10 @@
       }
     },
     "/system/operation/log/stats": {
-      "get": { "tags": ["audit"], "summary": "Operation log stats" }
+      "get": {
+        "tags": ["audit"],
+        "summary": "Operation log module stats with sys_rule display labels"
+      }
     },
     "/system/operation/log/export": {
       "get": { "tags": ["audit"], "summary": "Export operation logs as CSV using current filters" }

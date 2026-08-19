@@ -24,10 +24,22 @@ Recommended optional variables:
 ```bash
 DATABASE_POOL_SIZE=10
 LOG_LEVEL=info
+ADMIN_BASE_AI_ORCHESTRATOR=legacy
 SMOKE_BASE_URL=https://your-admin-domain.example
 SMOKE_USERNAME=admin
 SMOKE_PASSWORD=<admin-or-smoke-user-password>
 ```
+
+`ADMIN_BASE_AI_ORCHESTRATOR` is a deployment-level switch, not a database setting. Keep it at
+`legacy` unless the Mastra canary has been verified for the target environment. In the current
+migration stage, `mastra` routes only `general-assistant` through Mastra; other Agents remain on the
+legacy runtime. Mastra uses the existing Admin Base Provider/Model configuration and does not start
+a second API server.
+
+Mastra PostgreSQL storage is reserved for later Workflow snapshots under the `mastra_runtime`
+schema. Runtime configuration always uses `disableInit: true`; production startup must never let
+Mastra create or alter tables. Any future Mastra DDL must first be exported, reviewed, and added to
+the Admin Base migration chain.
 
 ## First Deploy
 
@@ -170,6 +182,19 @@ server {
 - Configure at least one enabled default mail account for password reset flows.
 - Use the mail account test action after every SMTP change.
 - Passwords are stored encrypted and never returned by API responses.
+
+## Web Search
+
+- Configure Tavily, Brave Search, or SearXNG from `/system/ai/web-search`; keys are encrypted in
+  PostgreSQL and are never returned by the API.
+- Keep only tested connections enabled. The Agent calls enabled connections by ascending fallback
+  order and moves to the next connection on timeout, failure, or empty results.
+- Production SearXNG should be an HTTPS endpoint reachable only from the application network. Its
+  JSON response format must be enabled.
+- Do not expose a private SearXNG instance to the public Internet without its own access controls,
+  rate limits, outbound policy, and monitoring.
+- The local emulator under `deploy/local-integrations/searxng` is for development and integration
+  verification only. Start and stop it with the commands in `docs/ai-web-search.md`.
 
 ## Backup And Restore
 

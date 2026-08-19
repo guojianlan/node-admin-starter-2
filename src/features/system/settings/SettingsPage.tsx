@@ -4,6 +4,7 @@ import {
   ApiOutlined,
   CloudServerOutlined,
   DatabaseOutlined,
+  GlobalOutlined,
   LockOutlined,
   LoginOutlined,
   MailOutlined,
@@ -220,7 +221,7 @@ function parseOAuthProviders(value?: string | null) {
   }
 }
 
-function ConfigControl({ item }: { item: ConfigItem }) {
+function renderConfigControl(item: ConfigItem) {
   if (item.key === "file.dangerous_file_strategy") {
     return (
       <Select
@@ -247,8 +248,14 @@ function ConfigSectionForm({
 }) {
   const [form] = Form.useForm<Record<string, unknown>>();
   const queryClient = useQueryClient();
-  const items = section.keys.map((key) => itemsByKey.get(key)).filter(Boolean) as ConfigItem[];
-  const missingKeys = section.keys.filter((key) => !itemsByKey.has(key));
+  const items = useMemo(
+    () => section.keys.map((key) => itemsByKey.get(key)).filter(Boolean) as ConfigItem[],
+    [itemsByKey, section.keys],
+  );
+  const missingKeys = useMemo(
+    () => section.keys.filter((key) => !itemsByKey.has(key)),
+    [itemsByKey, section.keys],
+  );
 
   useEffect(() => {
     const values: Record<string, unknown> = {};
@@ -265,6 +272,7 @@ function ConfigSectionForm({
     onSuccess: () => {
       feedback.success(`${section.title}已保存`);
       void queryClient.invalidateQueries({ queryKey: ["system-settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-config-items"] });
       void queryClient.invalidateQueries({ queryKey: ["login", "options"] });
     },
   });
@@ -314,7 +322,7 @@ function ConfigSectionForm({
                   extra={item.describe}
                   valuePropName={item.type === "switch" ? "checked" : "value"}
                 >
-                  <ConfigControl item={item} />
+                  {renderConfigControl(item)}
                 </Form.Item>
               </Col>
             ))}
@@ -543,6 +551,14 @@ function ResourceSettings({
               <AuthButton auth="system.aiModel.query">
                 <Button onClick={() => navigation.push("/system/ai/model")}>模型</Button>
               </AuthButton>
+              <AuthButton auth="system.aiWebSearch.query">
+                <Button
+                  icon={<GlobalOutlined />}
+                  onClick={() => navigation.push("/system/ai/web-search")}
+                >
+                  联网
+                </Button>
+              </AuthButton>
             </Space>
           }
         >
@@ -635,7 +651,9 @@ function LoginMethods({
               <Space wrap>
                 {providers.map((provider) => (
                   <Tag
-                    color={provider.enabled && Number(provider.status ?? 1) === 1 ? "success" : "default"}
+                    color={
+                      provider.enabled && Number(provider.status ?? 1) === 1 ? "success" : "default"
+                    }
                     key={provider.key}
                   >
                     {provider.name || provider.key}
@@ -654,7 +672,9 @@ function LoginMethods({
           title="OAuth Provider 已按资源型配置独立维护；系统设置只聚合入口，不直接暴露复杂 JSON。"
           action={
             <AuthButton auth="system.oauthProvider.query">
-              <Button onClick={() => navigation.push("/system/oauth/provider")}>管理 Provider</Button>
+              <Button onClick={() => navigation.push("/system/oauth/provider")}>
+                管理 Provider
+              </Button>
             </AuthButton>
           }
         />

@@ -3,6 +3,18 @@ import { decryptSecret } from "@/server/services/secret";
 
 export type AiModelUsage = "chat" | "structured" | "embedding";
 
+export const aiProviderDefaultTimeoutMs = 300_000;
+export const aiProviderMinTimeoutMs = 5_000;
+export const aiProviderMaxTimeoutMs = 3_600_000;
+
+export function resolveAiProviderTimeoutMs(
+  providerTimeoutMs?: number | null,
+  overrideTimeoutMs?: number | null,
+) {
+  const value = overrideTimeoutMs ?? providerTimeoutMs ?? aiProviderDefaultTimeoutMs;
+  return Math.min(Math.max(Math.round(value), aiProviderMinTimeoutMs), aiProviderMaxTimeoutMs);
+}
+
 export class AiRuntimeConfigurationError extends Error {
   constructor(message: string) {
     super(message);
@@ -20,6 +32,7 @@ export type AiProviderRuntimeConfig = {
     apiKey: string | null;
     organization?: string | null;
     project?: string | null;
+    timeoutMs: number;
     options?: Record<string, unknown>;
   };
   model: {
@@ -42,6 +55,7 @@ export type AiProviderRow = {
   apiKeyEncrypted: string | null;
   organization: string | null;
   project: string | null;
+  timeoutMs: number;
   isDefault: boolean;
   status: number;
   optionsJson: string | null;
@@ -90,6 +104,7 @@ function providerSelectSql(extraWhere: string) {
     api_key_encrypted AS "apiKeyEncrypted",
     organization,
     project,
+    timeout_ms AS "timeoutMs",
     is_default AS "isDefault",
     status,
     options_json AS "optionsJson"
@@ -134,9 +149,9 @@ function requireActiveModel(model?: AiModelRow | null) {
 }
 
 export async function getAiProvider(id: number) {
-  return (await sqlite
-    .prepare(`${providerSelectSql("AND id = ?")} LIMIT 1`)
-    .get(id)) as AiProviderRow | undefined;
+  return (await sqlite.prepare(`${providerSelectSql("AND id = ?")} LIMIT 1`).get(id)) as
+    | AiProviderRow
+    | undefined;
 }
 
 export async function getDefaultAiProvider() {
@@ -146,9 +161,9 @@ export async function getDefaultAiProvider() {
 }
 
 export async function getAiModel(id: number) {
-  return (await sqlite
-    .prepare(`${modelSelectSql("AND id = ?")} LIMIT 1`)
-    .get(id)) as AiModelRow | undefined;
+  return (await sqlite.prepare(`${modelSelectSql("AND id = ?")} LIMIT 1`).get(id)) as
+    | AiModelRow
+    | undefined;
 }
 
 export async function getDefaultAiModel(usage: AiModelUsage) {
@@ -167,7 +182,9 @@ export async function getAiRuntimeConfig(
   usage: AiModelUsage = "chat",
   modelId?: number | null,
 ): Promise<AiProviderRuntimeConfig> {
-  const model = requireActiveModel(modelId ? await getAiModel(modelId) : await getDefaultAiModel(usage));
+  const model = requireActiveModel(
+    modelId ? await getAiModel(modelId) : await getDefaultAiModel(usage),
+  );
   if (usage === "embedding" && model.modelType !== "embedding") {
     throw new AiRuntimeConfigurationError("默认 Embedding 模型类型不正确");
   }
@@ -186,6 +203,7 @@ export async function getAiRuntimeConfig(
       apiKey: provider.apiKey,
       organization: provider.organization,
       project: provider.project,
+      timeoutMs: resolveAiProviderTimeoutMs(provider.timeoutMs),
       options: parseOptions(provider.optionsJson),
     },
     model: {

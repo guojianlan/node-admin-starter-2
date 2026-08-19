@@ -51,8 +51,13 @@ real cross-route abstraction already exists and removes measurable duplication.
 - Every protected API must use server-side `authRequired()` and `ability(code)` as appropriate.
 - Permission codes follow `<domain>.<resource>.<action>` and must exist in `sys_rule` seed data.
 - Frontend action visibility uses `AuthButton`, but frontend hiding never replaces API checks.
-- Modules containing department, owner, creator, or assignee fields must explicitly decide their
-  data-scope behavior. Never silently default sensitive business data to global visibility.
+- Every new record type must explicitly classify visibility as global system data,
+  department-owned, user-owned, department-and-user-owned, or custom business scope. Omission is
+  an incomplete module contract; never silently default user-generated business data to global.
+- Department-owned data persists `deptId`; user-owned data persists `ownerId`. Set ownership on the
+  server during create, declare the matching CRUD `dataScope`, protect explicit routes separately,
+  and test cross-department reads and writes. `createdBy` is audit evidence, not a substitute for
+  business ownership. Global modules must state why `dataScope: false` is intentional.
 - Every material mutation must write `sys_operation_log`. High-risk actions must include an
   appropriate risk level and useful, sanitized details.
 - Passwords, tokens, secrets, access keys, client secrets, and SMTP credentials must be hashed,

@@ -134,7 +134,7 @@ export function OnlineUserPage() {
   ];
 
   return (
-    <PageScaffold title="在线用户" description="查看当前有效会话并执行强制下线">
+    <PageScaffold title="在线用户" description="查看当前有效会话并执行强制下线" hideHeader>
       <AdminDataTable
         api="/api/system/online/user"
         accessName="system.onlineUser"

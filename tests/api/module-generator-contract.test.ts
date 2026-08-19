@@ -1,6 +1,9 @@
 import fs from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { generateModuleDraft } from "../../scripts/generate-module";
 import {
   adminModuleGeneratorCapabilities,
   adminModuleJsonSchema,
@@ -137,5 +140,34 @@ describe("module generator contract", () => {
         forceDelete: "delete",
       },
     });
+  });
+
+  it("emits real data-scope configuration for owned module fields", async () => {
+    const outputRoot = await mkdtemp(path.join(os.tmpdir(), "admin-base-module-scope-"));
+    try {
+      const result = await generateModuleDraft({
+        rawConfig: {
+          name: "scope-check",
+          title: "范围检查",
+          frontendPath: "/system/scope/check",
+          fields: [
+            { name: "name", label: "名称", type: "text", required: true },
+            { name: "deptId", label: "部门", type: "integer", required: true },
+            { name: "ownerId", label: "负责人", type: "integer", required: true },
+          ],
+        },
+        outDir: outputRoot,
+      });
+      const route = await readFile(
+        path.join(result.outputRoot, "src/server/routes/system/scope-check.ts"),
+        "utf8",
+      );
+
+      expect(route).toContain("dataScope: {");
+      expect(route).toContain("deptId: sysScopeCheck.deptId");
+      expect(route).toContain("ownerId: sysScopeCheck.ownerId");
+    } finally {
+      await rm(outputRoot, { recursive: true, force: true });
+    }
   });
 });

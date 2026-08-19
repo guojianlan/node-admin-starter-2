@@ -8,6 +8,7 @@ import { useNavigationAdapter } from "@/platform/navigation";
 import { findMenuAncestors } from "@/router/menu-utils";
 import type { MenuNode } from "@/stores/auth";
 import { useAuthStore } from "@/stores/auth";
+import { getRememberedPageHref } from "./admin-page-tabs";
 import { renderMenuIcon } from "./icon-map";
 
 function getMenuKey(node: MenuNode) {
@@ -49,9 +50,7 @@ function toMenuItems(
 ): MenuProps["items"] {
   return getVisibleMenuNodes(nodes).map((node) => {
     const children =
-      !options.collapsed && node.children?.length
-        ? toMenuItems(node.children, options)
-        : undefined;
+      !options.collapsed && node.children?.length ? toMenuItems(node.children, options) : undefined;
     const isExternalLink = node.link === 1 && Boolean(node.path);
     return {
       key: getMenuKey(node),
@@ -164,25 +163,16 @@ function useMenuNavigation(onNavigate?: () => void) {
       return;
     }
     if (node.path?.startsWith("/")) {
-      navigation.push(node.path);
+      navigation.push(getRememberedPageHref(node.path));
       onNavigate?.();
     }
   };
 }
 
-function MegaMenuPanel({
-  node,
-  onNavigate,
-}: {
-  node: MenuNode;
-  onNavigate?: () => void;
-}) {
+function MegaMenuPanel({ node, onNavigate }: { node: MenuNode; onNavigate?: () => void }) {
   const pathname = usePathname();
   const navigate = useMenuNavigation(onNavigate);
-  const columns = useMemo(
-    () => distributeMegaMenuSections(getMegaMenuSections(node)),
-    [node],
-  );
+  const columns = useMemo(() => distributeMegaMenuSections(getMegaMenuSections(node)), [node]);
 
   return (
     <nav
@@ -215,9 +205,7 @@ function MegaMenuPanel({
                         aria-current={active ? "page" : undefined}
                         onClick={() => navigate(item)}
                       >
-                        <span className="xin-mega-menu-item-icon">
-                          {renderMenuIcon(item.icon)}
-                        </span>
+                        <span className="xin-mega-menu-item-icon">{renderMenuIcon(item.icon)}</span>
                         <span className="xin-mega-menu-item-label">{item.name}</span>
                       </button>
                     );
@@ -297,13 +285,7 @@ function CollapsedMenuEntry({
   );
 }
 
-function AdminCollapsedMenu({
-  menus,
-  onNavigate,
-}: {
-  menus: MenuNode[];
-  onNavigate?: () => void;
-}) {
+function AdminCollapsedMenu({ menus, onNavigate }: { menus: MenuNode[]; onNavigate?: () => void }) {
   const pathname = usePathname();
   const ancestors = useMemo(() => findMenuAncestors(menus, pathname), [menus, pathname]);
   const visibleMenus = useMemo(() => getVisibleMenuNodes(menus), [menus]);
@@ -313,12 +295,7 @@ function AdminCollapsedMenu({
       {visibleMenus.map((node) => {
         const active = node.path === pathname || ancestors.some((item) => item.id === node.id);
         return (
-          <CollapsedMenuEntry
-            key={node.id}
-            node={node}
-            active={active}
-            onNavigate={onNavigate}
-          />
+          <CollapsedMenuEntry key={node.id} node={node} active={active} onNavigate={onNavigate} />
         );
       })}
     </nav>
@@ -386,7 +363,7 @@ export function AdminMenu({
           return;
         }
         if (path.startsWith("/")) {
-          navigation.push(path);
+          navigation.push(getRememberedPageHref(path));
           onNavigate?.();
         }
       }}

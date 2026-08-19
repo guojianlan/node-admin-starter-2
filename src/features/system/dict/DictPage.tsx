@@ -173,6 +173,7 @@ export function DictPage() {
             accessName="system.dict"
             rowKey="id"
             columns={columns}
+            toolbarTitle="字典列表"
             searchPlacement="card"
             searchCardClassName="system-dict-search-card"
             showSearchButton

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { eq, sql as drizzleSql } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -62,6 +62,33 @@ function parseRoleNames(value: unknown) {
     .filter(Boolean);
 }
 
+class UserDataScopeAccessError extends Error {
+  status = 404;
+
+  constructor() {
+    super("用户不存在或无数据权限");
+  }
+}
+
+async function assertUserInDataScope(c: Context<{ Variables: HonoVariables }>, userId: number) {
+  const scope = await resolveDataScope(c);
+  const scopeWhere = buildDataScopeWhereSql(scope, {
+    deptId: "dept_id",
+    userId: "id",
+  });
+  const row = await sqlite
+    .prepare(
+      `SELECT id
+       FROM sys_user
+       WHERE id = ?
+         AND deleted_at IS NULL
+         ${scopeWhere ? `AND ${scopeWhere}` : ""}
+       LIMIT 1`,
+    )
+    .get(userId);
+  if (!row) throw new UserDataScopeAccessError();
+}
+
 async function assertUsernameAvailable(dbClient: DbClient, username: string, currentId?: number) {
   const row = (await dbClient
     .prepare(
@@ -101,7 +128,9 @@ const userCrud = createCrudRoutes({
       isSystem: sysUser.isSystem,
       createdAt: sysUser.createdAt,
       updatedAt: sysUser.updatedAt,
-      roleIds: drizzleSql<string | null>`(SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = ${sysUser.id})`.as(
+      roleIds: drizzleSql<
+        string | null
+      >`(SELECT STRING_AGG(role_id::text, ',') FROM sys_user_role WHERE user_id = ${sysUser.id})`.as(
         "roleIds",
       ),
       roleNames: drizzleSql<string | null>`(
@@ -234,6 +263,7 @@ userRoutes.put(
         resourceId: payload.id,
       },
       async () => {
+        await assertUserInDataScope(c, payload.id);
         await assertPasswordPolicy({ password: payload.password, userId: payload.id });
         const passwordHash = await bcrypt.hash(payload.password, 10);
         await sqlite

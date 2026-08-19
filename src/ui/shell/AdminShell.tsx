@@ -15,6 +15,7 @@ import {
   findFirstMenuPath,
   getVisibleMenuNodes,
 } from "./AdminMenu";
+import { getRememberedPageHref } from "./admin-page-tabs";
 import { AdminPageWorkspace } from "./AdminPageWorkspace";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -49,7 +50,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   function selectRootMenu(node: (typeof visibleRootMenus)[number]) {
     setRootSelection({ pathname, key: node.key });
     const path = findFirstMenuPath(node);
-    if (path && path !== pathname) navigation.push(path);
+    if (path && path !== pathname) navigation.push(getRememberedPageHref(path));
   }
 
   const content = (
@@ -110,7 +111,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               trigger={null}
             >
               <AdminMenu
-                nodes={useMixMenu ? activeRoot?.children ?? [] : menus}
+                nodes={useMixMenu ? (activeRoot?.children ?? []) : menus}
                 collapsed={collapsed}
               />
             </Layout.Sider>

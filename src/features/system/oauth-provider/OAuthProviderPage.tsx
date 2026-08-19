@@ -142,7 +142,9 @@ export function OAuthProviderPage() {
       hideInForm: true,
       hideInSearch: true,
       width: 88,
-      render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>,
+      render: (value) => (
+        <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
+      ),
     },
     {
       title: "Scopes",
@@ -195,12 +197,17 @@ export function OAuthProviderPage() {
   ];
 
   return (
-    <PageScaffold title="第三方登录" description="维护 OAuth Provider、授权地址和账号绑定策略">
+    <PageScaffold
+      title="第三方登录"
+      description="维护 OAuth Provider、授权地址和账号绑定策略"
+      hideHeader
+    >
       <AdminDataTable
         api="/api/system/oauth/provider"
         accessName="system.oauthProvider"
         rowKey="id"
         columns={columns}
+        toolbarTitle="登录方式"
         createTitle="新增 Provider"
         updateTitle="编辑 Provider"
         actionColumnWidth={164}

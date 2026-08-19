@@ -30,9 +30,7 @@ type SmsProviderRecord = {
   isSystem: boolean;
 };
 
-const providerOptions = [
-  { label: "Webhook", value: "webhook" },
-];
+const providerOptions = [{ label: "Webhook", value: "webhook" }];
 
 function normalizePayload(values: Record<string, unknown>) {
   const payload = { ...values };
@@ -48,7 +46,9 @@ export function SmsProviderPage() {
   const [testContent, setTestContent] = useState("Admin Base SMS test");
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/sms/provider"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin-data-table", "/api/system/sms/provider"],
+    });
     void queryClient.invalidateQueries({ queryKey: ["system-settings", "sms-provider"] });
   };
 
@@ -65,7 +65,8 @@ export function SmsProviderPage() {
   });
 
   const defaultMutation = useMutation({
-    mutationFn: (id: number) => request(`/api/system/sms/provider/default/${id}`, { method: "PUT" }),
+    mutationFn: (id: number) =>
+      request(`/api/system/sms/provider/default/${id}`, { method: "PUT" }),
     onSuccess: () => {
       feedback.success("设置成功");
       invalidate();
@@ -125,7 +126,12 @@ export function SmsProviderPage() {
       width: 110,
       render: (value) => <Tag>{String(value || "webhook")}</Tag>,
     },
-    { title: "Webhook Endpoint", dataIndex: "endpoint", width: 260, formHelp: "v1 支持通用 Webhook POST 发送。" },
+    {
+      title: "Webhook Endpoint",
+      dataIndex: "endpoint",
+      width: 260,
+      formHelp: "v1 支持通用 Webhook POST 发送。",
+    },
     { title: "Access Key", dataIndex: "accessKey", hideInSearch: true, width: 150 },
     {
       title: "Secret Key",
@@ -141,7 +147,9 @@ export function SmsProviderPage() {
       hideInForm: true,
       hideInSearch: true,
       width: 88,
-      render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>,
+      render: (value) => (
+        <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
+      ),
     },
     { title: "短信签名", dataIndex: "signature", hideInSearch: true, width: 140 },
     { title: "模板编码", dataIndex: "templateCode", hideInSearch: true, width: 140 },
@@ -193,12 +201,13 @@ export function SmsProviderPage() {
   ];
 
   return (
-    <PageScaffold title="短信配置" description="维护短信服务商、签名、密钥和测试发送">
+    <PageScaffold title="短信配置" description="维护短信服务商、签名、密钥和测试发送" hideHeader>
       <AdminDataTable
         api="/api/system/sms/provider"
         accessName="system.smsProvider"
         rowKey="id"
         columns={columns}
+        toolbarTitle="短信服务商"
         createTitle="新增短信配置"
         updateTitle="编辑短信配置"
         actionColumnWidth={176}
@@ -273,7 +282,11 @@ export function SmsProviderPage() {
             <strong>{testProvider?.name}</strong>
             <span>使用当前 Webhook 短信配置发送一条测试消息。</span>
           </div>
-          <Input value={testTo} onChange={(event) => setTestTo(event.target.value)} placeholder="接收手机号" />
+          <Input
+            value={testTo}
+            onChange={(event) => setTestTo(event.target.value)}
+            placeholder="接收手机号"
+          />
           <Input.TextArea
             value={testContent}
             rows={4}

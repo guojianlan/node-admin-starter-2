@@ -64,7 +64,8 @@ export function StoragePage() {
   });
 
   const testMutation = useMutation({
-    mutationFn: (id: number) => request("/api/system/storage/test", { method: "POST", body: { id } }),
+    mutationFn: (id: number) =>
+      request("/api/system/storage/test", { method: "POST", body: { id } }),
     onSuccess: () => {
       feedback.success("测试成功");
     },
@@ -107,7 +108,9 @@ export function StoragePage() {
       hideInForm: true,
       hideInSearch: true,
       width: 80,
-      render: (value) => <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>,
+      render: (value) => (
+        <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
+      ),
     },
     { title: "Base URL", dataIndex: "baseUrl", hideInSearch: true, width: 180 },
     { title: "Root Path", dataIndex: "rootPath", hideInSearch: true, width: 160 },
@@ -150,12 +153,13 @@ export function StoragePage() {
   ];
 
   return (
-    <PageScaffold title="存储配置" description="维护本地和 S3-compatible 文件存储">
+    <PageScaffold title="存储配置" description="维护本地和 S3-compatible 文件存储" hideHeader>
       <AdminDataTable
         api="/api/system/storage"
         accessName="system.storage"
         rowKey="id"
         columns={columns}
+        toolbarTitle="存储列表"
         createTitle="新增存储"
         updateTitle="编辑存储"
         actionColumnWidth={176}

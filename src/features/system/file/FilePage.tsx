@@ -787,6 +787,7 @@ export function FilePage() {
     <PageScaffold
       title="文件管理"
       description="管理本地上传文件，按文件分组查看、上传、移动与回收站处理"
+      hideHeader
     >
       <Row className="system-workbench system-file-workbench" gutter={[16, 16]}>
         <Col xs={24} lg={4}>

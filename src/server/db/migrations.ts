@@ -1633,6 +1633,307 @@ WHERE agent.code = 'module-development-agent'
 ON CONFLICT (agent_id, tool_id) DO UPDATE SET approval_mode = EXCLUDED.approval_mode;
 `,
   },
+  {
+    id: "0028_atomic_ai_tool_approval",
+    sql: `
+ALTER TABLE sys_ai_agent_run ADD COLUMN IF NOT EXISTS parent_run_id INTEGER REFERENCES sys_ai_agent_run(id) ON DELETE SET NULL;
+ALTER TABLE sys_ai_agent_run ADD COLUMN IF NOT EXISTS source_approval_id INTEGER REFERENCES sys_ai_tool_approval(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_parent_run_id_idx ON sys_ai_agent_run(parent_run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_agent_run_source_approval_unique ON sys_ai_agent_run(source_approval_id) WHERE source_approval_id IS NOT NULL;
+
+UPDATE sys_ai_tool_approval
+SET status = 'failed', reason = COALESCE(reason, '审批执行被部署中断，请重新发起工具调用'), updated_at = now()
+WHERE status = 'executing';
+`,
+  },
+  {
+    id: "0029_ai_resource_navigation_labels",
+    sql: `
+UPDATE sys_rule
+SET name = 'AI 服务商', updated_at = now()
+WHERE key = 'system.aiProvider' AND type = 'route';
+
+UPDATE sys_rule
+SET name = '模型管理', updated_at = now()
+WHERE key = 'system.aiModel' AND type = 'route';
+`,
+  },
+  {
+    id: "0030_ai_workflow_runtime",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_run (
+  id SERIAL PRIMARY KEY,
+  workflow_code TEXT NOT NULL,
+  orchestrator_run_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'suspended', 'completed', 'failed', 'cancelled')),
+  request_id TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  input_json TEXT,
+  output_json TEXT,
+  error_message TEXT,
+  duration_ms INTEGER,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_workflow_run_orchestrator_unique
+  ON sys_ai_workflow_run(orchestrator_run_id);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_user_status_idx
+  ON sys_ai_workflow_run(user_id, status);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_code_created_idx
+  ON sys_ai_workflow_run(workflow_code, created_at);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_request_id_idx
+  ON sys_ai_workflow_run(request_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_run_step (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_workflow_run(id) ON DELETE CASCADE,
+  step_no INTEGER NOT NULL,
+  step_code TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'suspended', 'completed', 'failed', 'skipped')),
+  input_json TEXT,
+  output_json TEXT,
+  error_message TEXT,
+  duration_ms INTEGER,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_workflow_run_step_run_no_unique
+  ON sys_ai_workflow_run_step(run_id, step_no);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_step_code_idx
+  ON sys_ai_workflow_run_step(step_code);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_workflow_run_updated_at ON sys_ai_workflow_run;
+CREATE TRIGGER trg_sys_ai_workflow_run_updated_at
+BEFORE UPDATE ON sys_ai_workflow_run
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_sys_ai_workflow_run_step_updated_at ON sys_ai_workflow_run_step;
+CREATE TRIGGER trg_sys_ai_workflow_run_step_updated_at
+BEFORE UPDATE ON sys_ai_workflow_run_step
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (286, 280, 'action', 'system.aiAgent.executeWorkflow', '执行 AI 工作流', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, 286
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = 286)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0031_ai_web_search_provider",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_web_search_provider (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  provider_type TEXT NOT NULL CHECK (provider_type IN ('tavily', 'brave', 'searxng')),
+  endpoint TEXT NOT NULL,
+  api_key_encrypted TEXT,
+  timeout_ms INTEGER NOT NULL DEFAULT 10000 CHECK (timeout_ms BETWEEN 1000 AND 60000),
+  max_results INTEGER NOT NULL DEFAULT 8 CHECK (max_results BETWEEN 1 AND 10),
+  status INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0,
+  remark TEXT,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_web_search_provider_code_active_unique
+  ON sys_ai_web_search_provider(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_web_search_provider_type_status_idx
+  ON sys_ai_web_search_provider(provider_type, status);
+CREATE INDEX IF NOT EXISTS sys_ai_web_search_provider_status_sort_idx
+  ON sys_ai_web_search_provider(status, sort);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_web_search_provider_updated_at ON sys_ai_web_search_provider;
+CREATE TRIGGER trg_sys_ai_web_search_provider_updated_at
+BEFORE UPDATE ON sys_ai_web_search_provider
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_ai_web_search_provider
+  (name, code, provider_type, endpoint, timeout_ms, max_results, status, sort, is_system, remark)
+VALUES
+  ('Tavily Search', 'tavily-default', 'tavily', 'https://api.tavily.com/search', 10000, 8, 0, 10, true,
+   '配置 API Key 后启用；适合 Agent 联网搜索'),
+  ('Brave Search', 'brave-default', 'brave', 'https://api.search.brave.com/res/v1/web/search', 10000, 8, 0, 20, true,
+   '配置 Brave Search API Key 后启用'),
+  ('Local SearXNG', 'searxng-local', 'searxng', 'http://127.0.0.1:18082/search', 10000, 8, 0, 30, true,
+   '本地或内网 SearXNG；默认端口 18082')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('联网搜索', 'web-search',
+   '搜索公开网络信息并返回可追溯来源；只接受搜索词和结果数量，不访问任意指定 URL',
+   'web_search', '{"query":"string","limit":"number"}', 'low', false, 1, 5, true)
+ON CONFLICT DO NOTHING;
+
+UPDATE sys_ai_tool
+SET name = '联网搜索',
+    description = '搜索公开网络信息并返回可追溯来源；只接受搜索词和结果数量，不访问任意指定 URL',
+    handler_key = 'web_search', input_schema_json = '{"query":"string","limit":"number"}',
+    risk_level = 'low', approval_required = false, status = 1, sort = 5,
+    is_system = true, updated_at = now()
+WHERE code = 'web-search' AND deleted_at IS NULL;
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id, 'never'
+FROM sys_ai_agent agent
+CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'general-assistant' AND agent.deleted_at IS NULL
+  AND tool.code = 'web-search' AND tool.deleted_at IS NULL
+ON CONFLICT (agent_id, tool_id) DO UPDATE SET approval_mode = 'never';
+
+UPDATE sys_ai_agent
+SET instructions = '你是 Admin Base 后台工作助手。回答应准确、简洁。遇到天气、新闻、时效性事实或需要公开网络信息的问题时，在联网搜索工具可用的情况下应先调用 web-search，并基于工具返回的真实来源回答；不得虚构搜索、来源或实时信息。高风险工具必须等待人工审批。',
+    updated_at = now()
+WHERE code = 'general-assistant' AND deleted_at IS NULL;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (290, 180, 'route', 'system.aiWebSearch', '联网搜索', '/system/ai/web-search', 'global', 85, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (291, 290, 'action', 'system.aiWebSearch.query', '查询搜索 Provider', 1, 1, 0, 0, true, now(), now()),
+  (292, 290, 'action', 'system.aiWebSearch.create', '新增搜索 Provider', 2, 1, 0, 0, true, now(), now()),
+  (293, 290, 'action', 'system.aiWebSearch.update', '编辑搜索 Provider', 3, 1, 0, 0, true, now(), now()),
+  (294, 290, 'action', 'system.aiWebSearch.delete', '删除搜索 Provider', 4, 1, 0, 0, true, now(), now()),
+  (295, 290, 'action', 'system.aiWebSearch.status', '启停搜索 Provider', 5, 1, 0, 0, true, now(), now()),
+  (296, 290, 'action', 'system.aiWebSearch.test', '测试搜索 Provider', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (290), (291), (292), (293), (294), (295), (296)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+
+SELECT setval(
+  pg_get_serial_sequence('sys_ai_web_search_provider', 'id'),
+  COALESCE((SELECT MAX(id) FROM sys_ai_web_search_provider), 1), true
+);
+SELECT setval(
+  pg_get_serial_sequence('sys_ai_tool', 'id'),
+  COALESCE((SELECT MAX(id) FROM sys_ai_tool), 1), true
+);
+`,
+  },
+  {
+    id: "0032_ai_provider_timeout",
+    sql: `
+ALTER TABLE sys_ai_provider
+  ADD COLUMN IF NOT EXISTS timeout_ms INTEGER;
+
+UPDATE sys_ai_provider
+SET timeout_ms = 300000
+WHERE timeout_ms IS NULL;
+
+ALTER TABLE sys_ai_provider
+  ALTER COLUMN timeout_ms SET DEFAULT 300000,
+  ALTER COLUMN timeout_ms SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'sys_ai_provider_timeout_ms_check'
+  ) THEN
+    ALTER TABLE sys_ai_provider
+      ADD CONSTRAINT sys_ai_provider_timeout_ms_check
+      CHECK (timeout_ms BETWEEN 5000 AND 3600000);
+  END IF;
+END $$;
+`,
+  },
+  {
+    id: "0033_ai_setup_workbench",
+    sql: `
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (300, 180, 'route', 'system.aiSetup', 'AI 接入', '/system/ai/setup', 'api', 79, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (301, 300, 'action', 'system.aiSetup.query', '查看 AI 接入', 1, 1, 0, 0, true, now(), now()),
+  (302, 300, 'action', 'system.aiSetup.configure', '配置 AI 接入', 2, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (300), (301), (302)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0034_ai_browser_location_client_tool",
+    sql: `
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('浏览器位置', 'browser-location',
+   '请求当前用户一次性授权浏览器大致位置；仅由浏览器执行，服务端不读取精确位置',
+   'browser_location', '{"reason":"string"}', 'medium', true, 1, 6, true)
+ON CONFLICT DO NOTHING;
+
+UPDATE sys_ai_tool
+SET name = '浏览器位置',
+    description = '请求当前用户一次性授权浏览器大致位置；仅由浏览器执行，服务端不读取精确位置',
+    handler_key = 'browser_location', input_schema_json = '{"reason":"string"}',
+    risk_level = 'medium', approval_required = true, status = 1, sort = 6,
+    is_system = true, updated_at = now()
+WHERE code = 'browser-location' AND deleted_at IS NULL;
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id, 'always'
+FROM sys_ai_agent agent
+CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'general-assistant' AND agent.deleted_at IS NULL
+  AND tool.code = 'browser-location' AND tool.deleted_at IS NULL
+ON CONFLICT (agent_id, tool_id) DO UPDATE SET approval_mode = 'always';
+
+UPDATE sys_ai_agent
+SET instructions = '你是 Admin Base 后台工作助手。回答应准确、简洁。遇到天气、附近服务、路线等依赖当前位置的问题且用户未提供城市或地区时，应先调用 browser-location 请求一次性大致位置；获得位置后再调用 web-search。用户拒绝或定位失败时应询问城市，不得虚构位置。遇到新闻、时效性事实或需要公开网络信息的问题时，在联网搜索工具可用的情况下应先调用 web-search，并基于工具返回的真实来源回答；不得虚构搜索、来源或实时信息。高风险工具必须等待人工审批。',
+    updated_at = now()
+WHERE code = 'general-assistant' AND deleted_at IS NULL;
+
+SELECT setval(
+  pg_get_serial_sequence('sys_ai_tool', 'id'),
+  COALESCE((SELECT MAX(id) FROM sys_ai_tool), 1), true
+);
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

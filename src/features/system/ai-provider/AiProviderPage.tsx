@@ -4,12 +4,16 @@ import {
   ApiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  DownOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  AutoComplete,
   Button,
+  Dropdown,
+  Form,
   Input,
   InputNumber,
   Modal,
@@ -39,6 +43,7 @@ type AiProviderRecord = {
   hasApiKey?: boolean;
   organization?: string | null;
   project?: string | null;
+  timeoutMs: number;
   isDefault: boolean;
   status: number;
   sort: number;
@@ -56,19 +61,27 @@ type AiTestResult = {
   preview: string;
 };
 
+type ProviderModelOption = {
+  id: string;
+  name: string;
+  modelType: "chat" | "embedding" | "image" | "rerank";
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+};
+
 const providerTypeOptions = [
-  { label: "OpenAI-compatible 网关", value: "openai-compatible" },
   { label: "OpenAI", value: "openai" },
   { label: "Anthropic Claude", value: "anthropic" },
   { label: "Google Gemini", value: "google" },
-  { label: "DeepSeek compatible", value: "deepseek" },
-  { label: "Qwen / DashScope compatible", value: "qwen" },
-  { label: "Moonshot / Kimi compatible", value: "moonshot" },
-  { label: "Zhipu GLM compatible", value: "zhipu" },
-  { label: "SiliconFlow compatible", value: "siliconflow" },
-  { label: "OpenRouter compatible", value: "openrouter" },
-  { label: "Ollama / Local compatible", value: "ollama" },
-  { label: "Custom", value: "custom" },
+  { label: "DeepSeek", value: "deepseek" },
+  { label: "通义千问 / DashScope", value: "qwen" },
+  { label: "Moonshot / Kimi", value: "moonshot" },
+  { label: "智谱 GLM", value: "zhipu" },
+  { label: "SiliconFlow", value: "siliconflow" },
+  { label: "OpenRouter", value: "openrouter" },
+  { label: "Ollama 本地模型", value: "ollama" },
+  { label: "OpenAI 兼容服务", value: "openai-compatible" },
+  { label: "其他兼容服务", value: "custom" },
 ];
 
 const providerTypeExamples: Record<string, string> = {
@@ -92,11 +105,67 @@ const testModeOptions = [
   { label: "Embedding 调用", value: "embedding" },
 ];
 
+const timeoutPresets = [
+  { label: "30 秒", value: 30_000 },
+  { label: "1 分钟", value: 60_000 },
+  { label: "2 分钟", value: 120_000 },
+  { label: "5 分钟", value: 300_000 },
+  { label: "10 分钟", value: 600_000 },
+  { label: "15 分钟", value: 900_000 },
+  { label: "30 分钟", value: 1_800_000 },
+  { label: "60 分钟", value: 3_600_000 },
+];
+
+function ProviderTimeoutField({ form }: { form: import("antd").FormInstance }) {
+  const timeoutMs = Form.useWatch("timeoutMs", form) as number | undefined;
+  return (
+    <Space.Compact block>
+      <InputNumber
+        min={0.1}
+        max={60}
+        step={0.5}
+        precision={2}
+        addonAfter="分钟"
+        value={(timeoutMs ?? 300000) / 60000}
+        style={{ width: "100%" }}
+        onChange={(value) =>
+          form.setFieldValue("timeoutMs", Math.round(Number(value ?? 5) * 60000))
+        }
+      />
+      <Dropdown
+        trigger={["click"]}
+        menu={{
+          items: timeoutPresets.map((preset) => ({
+            key: String(preset.value),
+            label: preset.label,
+            onClick: () => form.setFieldValue("timeoutMs", preset.value),
+          })),
+        }}
+      >
+        <Button icon={<DownOutlined />}>常用时间</Button>
+      </Dropdown>
+    </Space.Compact>
+  );
+}
+
 function normalizePayload(values: Record<string, unknown>) {
   const payload = { ...values };
+  delete payload.code;
   delete payload.hasApiKey;
   if (!payload.apiKey) delete payload.apiKey;
   return payload;
+}
+
+function applyProviderDefaults(
+  providerType: string,
+  form: { setFieldsValue: (values: Record<string, unknown>) => void },
+  currentName?: unknown,
+) {
+  const option = providerTypeOptions.find((item) => item.value === providerType);
+  form.setFieldsValue({
+    baseUrl: providerTypeExamples[providerType] ?? providerTypeExamples.custom,
+    ...(currentName ? {} : { name: option?.label ?? providerType }),
+  });
 }
 
 export function AiProviderPage() {
@@ -104,9 +173,12 @@ export function AiProviderPage() {
   const [testProvider, setTestProvider] = useState<AiProviderRecord | null>(null);
   const [testMode, setTestMode] = useState<AiTestMode>("listModels");
   const [testModelId, setTestModelId] = useState("");
+  const [testModels, setTestModels] = useState<ProviderModelOption[]>([]);
+  const [testModelsOpen, setTestModelsOpen] = useState(false);
+  const [testModelsLoading, setTestModelsLoading] = useState(false);
   const [testInput, setTestInput] = useState("请用一句话回复 OK。");
   const [testMaxOutputTokens, setTestMaxOutputTokens] = useState(4096);
-  const [testTimeoutMs, setTestTimeoutMs] = useState(60000);
+  const [testTimeoutMs, setTestTimeoutMs] = useState(300000);
   const [testResult, setTestResult] = useState<AiTestResult | null>(null);
   const [streamContent, setStreamContent] = useState("");
   const [streamEndpoint, setStreamEndpoint] = useState("");
@@ -119,8 +191,14 @@ export function AiProviderPage() {
     void queryClient.invalidateQueries({
       queryKey: ["admin-data-table", "/api/system/ai/provider"],
     });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-setup-summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-provider-options"] });
     void queryClient.invalidateQueries({ queryKey: ["system-settings", "ai-provider"] });
     void queryClient.invalidateQueries({ queryKey: ["system-settings", "ai-model"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-playground-options"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-playground-runtime"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] });
+    void queryClient.invalidateQueries({ queryKey: ["system-ai-chat-runtime"] });
   };
 
   const statusMutation = useMutation({
@@ -217,6 +295,31 @@ export function AiProviderPage() {
     }
   };
 
+  const loadTestModels = async () => {
+    if (!testProvider) return;
+    setTestModelsLoading(true);
+    try {
+      const result = await request<{ models: ProviderModelOption[] }>(
+        `/api/system/ai/provider/${testProvider.id}/test-models`,
+      );
+      setTestModels(result.models);
+      setTestModelsOpen(result.models.length > 0);
+      if (result.models.length) {
+        feedback.success(`已同步 ${result.models.length} 个模型，请选择测试模型`);
+      } else {
+        feedback.info("服务商没有返回模型，请手工输入模型 ID");
+      }
+    } finally {
+      setTestModelsLoading(false);
+    }
+  };
+
+  const visibleTestModels = testModels.filter((model) => {
+    if (testMode === "embedding") return model.modelType === "embedding";
+    if (testMode === "chat") return model.modelType === "chat";
+    return true;
+  });
+
   const columns: AdminDataTableColumn<AiProviderRecord>[] = [
     {
       title: "ID",
@@ -227,11 +330,36 @@ export function AiProviderPage() {
       fixed: "left",
     },
     {
-      title: "名称",
+      title: "服务商",
+      dataIndex: "providerType",
+      valueType: "select",
+      options: providerTypeOptions,
+      required: true,
+      width: 150,
+      renderFormField: ({ form }) => (
+        <Select
+          options={providerTypeOptions}
+          placeholder="选择服务商"
+          onChange={(value) =>
+            applyProviderDefaults(String(value), form, form.getFieldValue("name"))
+          }
+        />
+      ),
+      render: (value) => (
+        <Tag>
+          {providerTypeOptions.find((item) => item.value === value)?.label ??
+            String(value || "openai-compatible")}
+        </Tag>
+      ),
+    },
+    {
+      title: "连接名称",
       dataIndex: "name",
       required: true,
       width: 210,
       fixed: "left",
+      formHelp: "同一服务商可以创建多套连接，请用名称区分账号、环境或代理网关。",
+      fieldProps: { placeholder: "例如 OpenAI 生产账号" },
       render: (value, record) => (
         <Space size={6} wrap>
           <ThunderboltOutlined />
@@ -241,20 +369,12 @@ export function AiProviderPage() {
       ),
     },
     {
-      title: "编码",
+      title: "内部编码",
       dataIndex: "code",
-      required: true,
+      hideInForm: true,
+      hideInSearch: true,
       width: 150,
-      formHelp: "系统内置 AI Provider 不能修改编码。业务模块可按编码选择 Provider。",
-    },
-    {
-      title: "类型",
-      dataIndex: "providerType",
-      valueType: "select",
-      options: providerTypeOptions,
-      required: true,
-      width: 150,
-      render: (value) => <Tag>{String(value || "openai-compatible")}</Tag>,
+      formHelp: "由系统自动生成，业务代码可用它稳定引用 Provider。",
     },
     {
       title: "Base URL",
@@ -262,6 +382,7 @@ export function AiProviderPage() {
       width: 280,
       formHelp:
         "OpenAI-compatible 使用 /v1；Claude 使用 Anthropic /v1；Gemini 使用 Google Generative Language API /v1beta。",
+      fieldProps: { placeholder: "选择服务商后自动填写，也可以粘贴自己的 Base URL" },
     },
     {
       title: "API Key",
@@ -270,6 +391,18 @@ export function AiProviderPage() {
       hideInTable: true,
       hideInSearch: true,
       formHelp: "留空时保留原密钥；响应只返回密钥状态。",
+    },
+    {
+      title: "请求超时",
+      dataIndex: "timeoutMs",
+      valueType: "digit",
+      hideInSearch: true,
+      width: 112,
+      formSection: "advanced",
+      formHelp:
+        "该连接下的正式 Chat、Agent、结构化输出和向量调用默认使用此超时；测试弹窗与 Playground 可以临时覆盖。",
+      renderFormField: ({ form }) => <ProviderTimeoutField form={form} />,
+      render: (value) => `${Number((Number(value || 300000) / 60000).toFixed(1))} min`,
     },
     {
       title: "密钥",
@@ -281,8 +414,22 @@ export function AiProviderPage() {
         <Tag color={value ? "success" : "default"}>{value ? "已配置" : "未配置"}</Tag>
       ),
     },
-    { title: "Organization", dataIndex: "organization", hideInSearch: true, width: 160 },
-    { title: "Project", dataIndex: "project", hideInSearch: true, width: 160 },
+    {
+      title: "Organization",
+      dataIndex: "organization",
+      hideInSearch: true,
+      width: 160,
+      formSection: "advanced",
+      formHelp: "仅 OpenAI Organization 场景需要。普通账号留空。",
+    },
+    {
+      title: "Project",
+      dataIndex: "project",
+      hideInSearch: true,
+      width: 160,
+      formSection: "advanced",
+      formHelp: "仅 OpenAI Project 场景需要。普通账号留空。",
+    },
     {
       title: "默认",
       dataIndex: "isDefault",
@@ -297,6 +444,7 @@ export function AiProviderPage() {
       valueType: "select",
       options: statusOptions,
       width: 104,
+      formSection: "advanced",
       render: (value, record) => (
         <Switch
           checked={Number(value) === 1}
@@ -310,7 +458,14 @@ export function AiProviderPage() {
         />
       ),
     },
-    { title: "排序", dataIndex: "sort", valueType: "digit", hideInSearch: true, width: 88 },
+    {
+      title: "排序",
+      dataIndex: "sort",
+      valueType: "digit",
+      hideInSearch: true,
+      width: 88,
+      formSection: "advanced",
+    },
     {
       title: "扩展配置 JSON",
       dataIndex: "optionsJson",
@@ -318,6 +473,7 @@ export function AiProviderPage() {
       hideInTable: true,
       hideInSearch: true,
       fullWidth: true,
+      formSection: "advanced",
       formHelp: "保存 provider 私有配置，例如兼容网关、限额或自定义 header；必须是合法 JSON。",
     },
     {
@@ -327,24 +483,48 @@ export function AiProviderPage() {
       hideInTable: true,
       hideInSearch: true,
       fullWidth: true,
+      formSection: "advanced",
     },
   ];
 
   return (
     <PageScaffold
-      title="AI Provider"
-      description="维护 AI 服务商、OpenAI-compatible 网关、密钥和默认 Provider"
+      title="AI 服务商"
+      description="管理外部 AI 服务连接与凭据；同一服务商可配置多个账号、环境或代理网关"
+      hideHeader
     >
       <AdminDataTable
         api="/api/system/ai/provider"
         accessName="system.aiProvider"
         rowKey="id"
         columns={columns}
-        createTitle="新增 AI Provider"
-        updateTitle="编辑 AI Provider"
+        toolbarTitle="服务商连接"
+        createTitle="添加 AI 服务商"
+        updateTitle="编辑 AI 服务商"
+        formBasicColumns={1}
+        formNotice={
+          <Alert
+            showIcon
+            type="info"
+            title="一条记录代表一个独立连接"
+            description="连接名称用于区分同一服务商的不同账号、环境或网关。系统会生成唯一内部编码；保存并启用后，再到模型管理同步模型。"
+          />
+        }
         actionColumnWidth={176}
         canDelete={(record) => !record.isDefault && !record.isSystem}
+        deleteDisabledReason={(record) =>
+          record.isSystem
+            ? "系统内置服务商连接不能删除，可以停用"
+            : record.isDefault
+              ? "默认服务商连接不能删除，请先切换默认连接"
+              : undefined
+        }
         beforeSubmit={normalizePayload}
+        createInitialValues={{
+          timeoutMs: 300000,
+          status: 1,
+          sort: 0,
+        }}
         onDataChanged={invalidate}
         operateRender={(record, reload) => (
           <>
@@ -357,9 +537,11 @@ export function AiProviderPage() {
                   setTestProvider(record);
                   setTestMode("listModels");
                   setTestModelId("");
+                  setTestModels([]);
+                  setTestModelsOpen(false);
                   setTestInput("请用一句话回复 OK。");
                   setTestMaxOutputTokens(4096);
-                  setTestTimeoutMs(60000);
+                  setTestTimeoutMs(record.timeoutMs ?? 300000);
                   setTestResult(null);
                   resetStreamState();
                 }}
@@ -437,17 +619,41 @@ export function AiProviderPage() {
             options={testModeOptions}
             onChange={(value) => {
               setTestMode(value);
+              setTestModelId("");
+              setTestModelsOpen(false);
               setTestResult(null);
               resetStreamState();
             }}
           />
           {testMode !== "listModels" ? (
             <>
-              <Input
-                value={testModelId}
-                onChange={(event) => setTestModelId(event.target.value)}
-                placeholder="模型 ID，例如 gpt-4.1-mini / deepseek-chat / qwen-plus / gemini-2.5-flash"
-              />
+              <Space.Compact block>
+                <AutoComplete
+                  allowClear
+                  open={testModelsOpen && visibleTestModels.length > 0}
+                  options={visibleTestModels.map((model) => ({
+                    value: model.id,
+                    label: model.name === model.id ? model.id : `${model.name} (${model.id})`,
+                  }))}
+                  value={testModelId}
+                  onChange={setTestModelId}
+                  onFocus={() => setTestModelsOpen(visibleTestModels.length > 0)}
+                  onOpenChange={setTestModelsOpen}
+                  onSelect={(value) => {
+                    setTestModelId(value);
+                    setTestModelsOpen(false);
+                  }}
+                  filterOption={(input, option) =>
+                    String(option?.label ?? option?.value ?? "")
+                      .toLowerCase()
+                      .includes(input.toLowerCase())
+                  }
+                  placeholder="同步后选择模型，或手工输入模型 ID"
+                />
+                <Button loading={testModelsLoading} onClick={() => void loadTestModels()}>
+                  同步模型
+                </Button>
+              </Space.Compact>
               <Input.TextArea
                 rows={4}
                 value={testInput}
@@ -460,7 +666,7 @@ export function AiProviderPage() {
                     <Typography.Text type="secondary">最大输出 tokens</Typography.Text>
                     <InputNumber
                       min={16}
-                      max={32768}
+                      max={131072}
                       step={512}
                       value={testMaxOutputTokens}
                       onChange={(value) => setTestMaxOutputTokens(Number(value ?? 4096))}
@@ -470,10 +676,12 @@ export function AiProviderPage() {
                     <Typography.Text type="secondary">超时 ms</Typography.Text>
                     <InputNumber
                       min={5000}
-                      max={300000}
+                      max={3600000}
                       step={5000}
                       value={testTimeoutMs}
-                      onChange={(value) => setTestTimeoutMs(Number(value ?? 60000))}
+                      onChange={(value) =>
+                        setTestTimeoutMs(Number(value ?? testProvider?.timeoutMs ?? 300000))
+                      }
                     />
                   </Space>
                 </Space>

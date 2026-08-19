@@ -276,7 +276,10 @@
 | AIM-003 | P0 | 模型测试 | 使用配置模型执行测试 | 通过 AI SDK 请求；Streamdown 流式渲染 | 自动/环境 |
 | PLAY-001 | P1 | Chat 流式调用 | 在 Playground 输入 Markdown Prompt | SSE meta/delta/finish 顺序正确；正文持续渲染 | 自动/手工 |
 | PLAY-002 | P1 | 输出截断提示 | 设置较小 maxOutputTokens | finishReason=length；页面明确提示内容可能截断 | 自动/手工 |
-| PLAY-003 | P1 | 超时和停止 | 设置短超时或主动停止 | 请求中止；状态恢复；不会无限 loading | 待补自动化/手工 |
+| PLAY-003 | P1 | 超时和停止 | 设置短超时或主动停止 | 请求中止；状态恢复；不会无限 loading | 手工；服务端状态路径自动 |
+| AIR-001 | P0 | 输出预算 | 请求 64K、超模型上限和超系统上限 | 分别保留 64K、收敛到模型上限、收敛到 131072 | 自动 |
+| AIR-002 | P1 | Structured Runtime | 业务服务调用 `generateAiStructured` | 使用默认 structured 模型；按 schema 返回；不暴露 secret | 服务自动/环境调用 |
+| AIR-003 | P1 | Embedding Runtime | 调用 `embedAiText/embedAiTexts` | 使用默认 embedding 模型；返回向量和 usage | 服务自动/环境调用 |
 
 ## 16. AI Chat、Agent、Tool、Run 和 Approval
 
@@ -290,17 +293,25 @@
 | CHAT-006 | P1 | 重新生成 | 对最后一条 Assistant 执行重新生成 | 旧消息状态正确；新回答持久化 | 自动 |
 | CHAT-007 | P1 | 会话模型和 System Prompt | 修改会话设置后继续聊天 | 仅当前会话生效；刷新后保持 | 自动/手工 |
 | CHAT-008 | P1 | 使用量与导出 | 完成多轮后导出 Markdown/JSON | token 汇总正确；导出内容完整且不含 secret | 自动/手工 |
-| CHAT-009 | P1 | 上下文治理 | 构造超长会话超过上下文预算 | 触发摘要/压缩；近期消息保留；模型调用不超限 | 自动/待补自动化 |
+| CHAT-009 | P1 | 上下文治理 | 构造超长中文会话超过上下文预算 | CJK 保守估算；触发摘要/压缩；近期消息保留；模型调用不超限 | 自动 |
+| CHAT-010 | P1 | 首字前运行反馈 | 发送消息并让 Provider 延迟返回首个正文 | Assistant 行持续显示正在思考/处理、动画和已等待时长；首字出现后切换正文；停止、失败或完成后不残留动画 | 自动/手工 |
 | AGENT-001 | P1 | Agent CRUD | 创建 Agent，配置模型、Prompt 和 Tool | 保存、回显、启停正确 | 自动/手工 |
 | AGENT-002 | P1 | Agent 调试 | 在 Agent 页面输入 Prompt | 展示模型、工具、审批、结果的运行轨迹 | 手工 |
 | AGENT-003 | P0 | Run/Step 持久化 | 从 AI Chat 选择 Agent 并执行 | 创建 Run、Step；刷新后运行检查器仍可查看 | 自动 |
 | AGENT-004 | P0 | Run 完成状态 | 模型回复完成后查看时间线 | Run 和模型 Step 均 completed，不残留 spinner | 自动/手工 |
 | TOOL-001 | P0 | 只读工具调用 | Agent 调用 operation-log-summary 等工具 | 参数校验；仅返回当前用户可访问数据 | 自动 |
 | APPROVAL-001 | P0 | 高风险工具审批 | Agent 请求需要审批的工具 | 暂停运行；显示工具、影响、风险和参数 | 自动 |
-| APPROVAL-002 | P0 | 批准并继续 | 点击批准 | 工具只执行一次；写结果；Run 恢复并完成 | 自动 |
+| APPROVAL-002 | P0 | 批准并继续 | 点击批准 | 工具只执行一次；写结果；创建可追溯 continuation Run 并完成 | 自动 |
 | APPROVAL-003 | P0 | 拒绝 | 点击拒绝并填写原因 | 工具不执行；Run/Step 状态正确；原因可追踪 | 自动/手工 |
-| APPROVAL-004 | P0 | 重复审批防护 | 重复提交同一 approval/toolCall | 不重复执行；唯一约束无异常 | 自动 |
+| APPROVAL-004 | P0 | 重复审批防护 | 并发或重复提交同一 approval/toolCall | 原子 claim；仅一次执行；重复请求返回 409 | 自动 |
 | APPROVAL-005 | P1 | 工具结果展示 | 工具执行后查看中间对话和检查器 | 对话显示紧凑结果条；原始 JSON 在详情/检查器中 | 手工 |
+| SEARCH-001 | P0 | Provider 密钥 | 创建 Tavily/Brave 搜索连接 | API Key 加密保存；列表只返回 `hasApiKey` | 自动 |
+| SEARCH-002 | P0 | Tool 可用性 | 所有搜索连接停用后运行 Agent | 模型工具列表不包含 `web-search`，不会伪装已联网 | 自动 |
+| SEARCH-003 | P0 | 优先级故障转移 | 首选连接失败、下一优先级连接成功 | 按优先级继续；attempts 包含状态、耗时、结果数和脱敏错误 | 自动 |
+| SEARCH-004 | P0 | 来源持久化 | Agent 调用搜索后继续回答 | Run Step 保存标准结果；SSE 发出 `sources`；消息 metadata 保存同一来源 | 自动 |
+| SEARCH-005 | P1 | 来源 UI | 查看包含搜索结果的 Assistant 回复 | 回答下方展示标题、摘要、域名和可点击 URL；不把模型链接标成可信来源 | 自动/手工 |
+| SEARCH-006 | P0 | 网络边界 | 尝试在 Tool 参数传 URL/Header/Key | schema 只接受 query/limit；端点和凭据只能来自服务端资源配置 | 自动 |
+| SEARCH-007 | P1 | 本地 SearXNG | 按文档启动本地容器并测试搜索 | JSON 搜索可用；停容器后测试明确失败且下一个 Provider 可回退 | 环境/手工 |
 
 ## 17. 模块生成器
 
@@ -342,6 +353,8 @@
 | `tests/api/framework-completeness-coverage.test.ts` | 通知范围、富文本安全、OAuth、SMS Provider、模块生成器、文件安全/分片、安全策略、强制改密、操作日志和系统设置 |
 | `tests/api/operation-log.test.ts` | CRUD 和显式操作审计、权限、登录退出日志 |
 | `tests/api/ai-provider.test.ts` | AI Provider、模型、运行时、Playground、AI Chat 会话和流式消息 |
+| `tests/api/ai-web-search.test.ts` | 搜索 Provider 脱敏、启用保护、优先级故障转移、Tool 可用性、来源 SSE/持久化和审计 |
+| `tests/api/list-sorting.test.ts` | CRUD 和显式列表 API 的 ID、创建时间服务端升降序 |
 | `tests/api/sms-template.test.ts` | SMS 模板权限、生命周期、变量渲染和测试发送 |
 | `tests/api/production-foundation.test.ts` | seed 密码、requestId、ready、doctor 和 db:reset 保护 |
 | `tests/services/env.test.ts` | 开发默认值和生产环境变量安全 |

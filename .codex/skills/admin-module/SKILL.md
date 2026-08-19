@@ -14,6 +14,8 @@ Use the repository contract in `AGENTS.md`. Read `docs/ai-development-guide.md` 
    backend registration, frontend page, and tests. Preserve unrelated changes.
 2. Define actors, lifecycle, fields, relations, permissions, data ownership, side effects, secret
    handling, and acceptance criteria.
+   Classify visibility as global, department-owned, user-owned, department-and-user-owned, or
+   custom. User-generated records with no visibility decision are not ready for generation.
 3. Classify the module and select the implementation pattern.
 4. Establish the minimum module contract from `docs/ai-development-guide.md`.
 5. Generate a draft only when the current generator supports the module shape.
@@ -76,6 +78,7 @@ ability. Regenerate old drafts when the server reports missing contract snippets
 
 Do not call a module complete until:
 
+- visibility is explicitly global or mapped to persisted ownership fields and server-side defaults
 - permissions exist in seed and pass route checks
 - unauthorized and out-of-scope access are rejected
 - sensitive values are encrypted, hashed, omitted, or masked

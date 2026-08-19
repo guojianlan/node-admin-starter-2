@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 import {
   appendAgentRunStep,
+  AiApprovalDecisionConflictError,
   createAgentRun,
   decideToolApproval,
   executeAgentTool,
@@ -167,6 +168,73 @@ describe("AI Agent approval governance", () => {
       .get(fixture.runId)) as { status: string };
     expect(step.status).toBe("denied");
     expect(run.status).toBe("stopped");
+  });
+
+  it("atomically claims an approval so concurrent decisions execute the tool once", async () => {
+    const moduleName = `approval-atomic-${Date.now()}`;
+    const fixture = await createApprovalFixture("module_design", {
+      contract: {
+        name: moduleName,
+        title: "并发审批测试",
+        fields: [{ name: "name", label: "名称", required: true }],
+      },
+    });
+    const approvalResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_tool_approval
+          (run_id, step_id, session_id, user_id, tool_id, tool_name, tool_call_id, input_json,
+           expires_at, status)
+         VALUES (?, ?, ?, 1, ?, ?, ?, ?, now() + interval '30 minutes', 'pending')
+         RETURNING id`,
+      )
+      .run(
+        fixture.runId,
+        fixture.stepId,
+        fixture.sessionId,
+        fixture.tool.id,
+        fixture.tool.code,
+        `atomic-${Date.now()}`,
+        JSON.stringify({
+          contract: {
+            name: moduleName,
+            title: "并发审批测试",
+            fields: [{ name: "name", label: "名称", required: true }],
+          },
+        }),
+      );
+    const approvalId = Number(approvalResult.lastInsertRowid);
+
+    const decisions = await Promise.allSettled([
+      decideToolApproval({ id: approvalId, userId: 1, approved: true }),
+      decideToolApproval({ id: approvalId, userId: 1, approved: true }),
+    ]);
+
+    expect(decisions.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    const rejected = decisions.find((item) => item.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.any(AiApprovalDecisionConflictError),
+    });
+    const approval = (await sqlite
+      .prepare("SELECT status FROM sys_ai_tool_approval WHERE id = ?")
+      .get(approvalId)) as { status: string };
+    expect(approval.status).toBe("executed");
+    const logs = (await sqlite
+      .prepare(
+        `SELECT COUNT(1)::int AS total FROM sys_operation_log
+         WHERE module = 'system.moduleGenerator.agent'
+           AND action = 'module_design'
+           AND resource_id = ?`,
+      )
+      .get(moduleName)) as { total: number };
+    expect(logs.total).toBe(1);
+    const resultMessages = (await sqlite
+      .prepare(
+        `SELECT COUNT(1)::int AS total FROM sys_ai_chat_message
+         WHERE session_id = ? AND content LIKE '[已审批工具执行结果]%'`,
+      )
+      .get(fixture.sessionId)) as { total: number };
+    expect(resultMessages.total).toBe(1);
   });
 
   it("expires pending approvals and leaves the requested tool unexecuted", async () => {

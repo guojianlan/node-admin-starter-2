@@ -35,6 +35,7 @@ export type AdminDataTableColumn<T extends object> = Omit<ColumnType<T>, "dataIn
   hideInUpdate?: boolean;
   required?: boolean;
   formHelp?: ReactNode;
+  formSection?: "basic" | "advanced";
   formItemProps?: FormItemProps;
   fieldProps?: Record<string, unknown>;
   options?: FieldOption[];

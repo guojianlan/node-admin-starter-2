@@ -440,6 +440,7 @@ export function ConfigPage() {
       feedback.success(itemModalMode === "create" ? "创建成功" : "更新成功");
       setItemModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["system-settings", "config"] });
     },
   });
 
@@ -449,6 +450,7 @@ export function ConfigPage() {
     onSuccess: () => {
       feedback.success("删除成功");
       void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["system-settings", "config"] });
     },
   });
 
@@ -466,6 +468,7 @@ export function ConfigPage() {
     onSuccess: () => {
       feedback.success("保存成功");
       void queryClient.invalidateQueries({ queryKey: ["system-config-items", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["system-settings", "config"] });
     },
   });
 

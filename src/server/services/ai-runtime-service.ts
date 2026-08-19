@@ -1,7 +1,7 @@
 import { generateText, streamText, type ModelMessage } from "ai";
 import type { AiModelUsage, AiProviderRuntimeConfig } from "./ai-provider-service";
-import { getAiRuntimeConfig } from "./ai-provider-service";
-import { buildAiSdkChatRuntime } from "./ai-sdk-runtime";
+import { getAiRuntimeConfig, resolveAiProviderTimeoutMs } from "./ai-provider-service";
+import { aiOutputTokenSafetyLimit, buildAiSdkChatRuntime } from "./ai-sdk-runtime";
 
 export type AiRuntimeMessage = {
   role: "system" | "user" | "assistant";
@@ -27,6 +27,7 @@ export type AiRuntimePublicConfig = {
     providerType: string;
     baseUrl: string;
     hasApiKey: boolean;
+    timeoutMs: number;
   };
   model: {
     id: number;
@@ -54,12 +55,20 @@ export type AiTextGenerationResult = AiRuntimePublicConfig & {
   warnings?: string[];
 };
 
-const defaultTimeoutMs = 60000;
 const minOutputTokens = 16;
-const maxOutputTokenLimit = 32768;
-
-function clampOutputTokens(value: number) {
-  return Math.min(Math.max(Math.round(value), minOutputTokens), maxOutputTokenLimit);
+export function resolveAiOutputTokens(input: {
+  requested?: number | null;
+  modelLimit?: number | null;
+  fallback?: number;
+}) {
+  const configured =
+    input.modelLimit && input.modelLimit > 0 ? input.modelLimit : (input.fallback ?? 16384);
+  const requested = input.requested && input.requested > 0 ? input.requested : configured;
+  return Math.min(
+    Math.max(Math.round(requested), minOutputTokens),
+    Math.max(Math.round(configured), minOutputTokens),
+    aiOutputTokenSafetyLimit,
+  );
 }
 
 function normalizeUsage(usage: unknown): Record<string, unknown> {
@@ -86,6 +95,7 @@ function publicConfig(config: AiProviderRuntimeConfig): AiRuntimePublicConfig {
       providerType: config.provider.providerType,
       baseUrl: config.provider.baseUrl,
       hasApiKey: Boolean(config.provider.apiKey),
+      timeoutMs: config.provider.timeoutMs,
     },
     model: {
       id: config.model.id,
@@ -116,7 +126,6 @@ function resolveRuntime(options: AiRuntimeCallOptions) {
     usage: options.usage ?? "chat",
     input,
     messages,
-    timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
   };
 }
 
@@ -145,11 +154,16 @@ export async function createAiRuntime(options: AiRuntimeCallOptions) {
   const base = resolveRuntime(options);
   const config = await getAiRuntimeConfig(base.usage, options.modelId);
   const sdkRuntime = buildAiSdkChatRuntime(config.provider, config.model);
-  const maxOutputTokens = clampOutputTokens(options.maxOutputTokens ?? sdkRuntime.maxOutputTokens);
+  const maxOutputTokens = resolveAiOutputTokens({
+    requested: options.maxOutputTokens,
+    modelLimit: config.model.maxOutputTokens,
+    fallback: sdkRuntime.maxOutputTokens,
+  });
   return {
     ...base,
     config,
     sdkRuntime,
+    timeoutMs: resolveAiProviderTimeoutMs(config.provider.timeoutMs, options.timeoutMs),
     maxOutputTokens,
     temperature:
       typeof options.temperature === "number"

@@ -95,6 +95,53 @@ function openAiTextStream(chunks: string[]) {
   });
 }
 
+function openAiReasoningTextStream(reasoningChunks: string[], textChunks: string[]) {
+  const body = [
+    ...reasoningChunks.map(
+      (chunk, index) =>
+        `data: ${JSON.stringify({
+          id: "chatcmpl-reasoning-test",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "test-chat",
+          choices: [
+            {
+              index: 0,
+              delta:
+                index === 0
+                  ? { role: "assistant", reasoning_content: chunk }
+                  : { reasoning_content: chunk },
+              finish_reason: null,
+            },
+          ],
+        })}`,
+    ),
+    ...textChunks.map(
+      (chunk) =>
+        `data: ${JSON.stringify({
+          id: "chatcmpl-reasoning-test",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "test-chat",
+          choices: [{ index: 0, delta: { content: chunk }, finish_reason: null }],
+        })}`,
+    ),
+    `data: ${JSON.stringify({
+      id: "chatcmpl-reasoning-test",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "test-chat",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    })}`,
+    "data: [DONE]",
+    "",
+  ].join("\n\n");
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
 function openAiToolCallStream(toolName: string, input: Record<string, unknown>) {
   const body = [
     `data: ${JSON.stringify({
@@ -102,19 +149,23 @@ function openAiToolCallStream(toolName: string, input: Record<string, unknown>) 
       object: "chat.completion.chunk",
       created: 0,
       model: "test-chat",
-      choices: [{
-        index: 0,
-        delta: {
-          role: "assistant",
-          tool_calls: [{
-            index: 0,
-            id: "call-approval-1",
-            type: "function",
-            function: { name: toolName, arguments: JSON.stringify(input) },
-          }],
+      choices: [
+        {
+          index: 0,
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: "call-approval-1",
+                type: "function",
+                function: { name: toolName, arguments: JSON.stringify(input) },
+              },
+            ],
+          },
+          finish_reason: null,
         },
-        finish_reason: null,
-      }],
+      ],
     })}`,
     `data: ${JSON.stringify({
       id: "chatcmpl-tool",
@@ -129,9 +180,21 @@ function openAiToolCallStream(toolName: string, input: Record<string, unknown>) 
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
+function readSseEvent(text: string, eventName: string) {
+  const block = text
+    .split(/\n\n/)
+    .find((candidate) => candidate.split("\n").includes(`event: ${eventName}`));
+  const data = block
+    ?.split("\n")
+    .find((line) => line.startsWith("data: "))
+    ?.slice(6);
+  return data ? (JSON.parse(data) as Record<string, unknown>) : null;
+}
+
 describe("AI provider configuration", () => {
   beforeEach(async () => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     await resetTestDatabase();
   }, 120000);
 
@@ -162,6 +225,544 @@ describe("AI provider configuration", () => {
     }
   });
 
+  it("discovers models without persistence and completes guided AI setup atomically", async () => {
+    const token = await login();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://guided-ai.test/v1/models");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer guided-secret");
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "guided-chat",
+              display_name: "Guided Chat",
+              context_length: 128000,
+              max_completion_tokens: 16384,
+            },
+            {
+              id: "guided-embedding",
+              display_name: "Guided Embedding",
+              input_token_limit: 8192,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = {
+      name: "Guided AI",
+      providerType: "openai-compatible",
+      baseUrl: "https://guided-ai.test/v1",
+      apiKey: "guided-secret",
+      timeoutMs: 420000,
+    };
+    const discover = await app.request("/api/system/ai/setup/discover", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-setup-discover" },
+      body: JSON.stringify({ provider }),
+    });
+    const discoverBody = await readJson<{
+      models: Array<{
+        id: string;
+        name: string;
+        modelType: string;
+        contextWindow: number | null;
+        maxOutputTokens: number | null;
+      }>;
+    }>(discover);
+    expect(discover.status).toBe(200);
+    expect(discoverBody.data?.models).toEqual([
+      {
+        id: "guided-chat",
+        name: "Guided Chat",
+        modelType: "chat",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+      },
+      {
+        id: "guided-embedding",
+        name: "Guided Embedding",
+        modelType: "embedding",
+        contextWindow: 8192,
+        maxOutputTokens: null,
+      },
+    ]);
+    const beforeComplete = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=Guided AI", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(beforeComplete.data?.total).toBe(0);
+
+    const invalid = await app.request("/api/system/ai/setup/complete", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        provider: { ...provider, name: "Invalid Guided AI" },
+        models: [
+          {
+            modelId: "guided-chat",
+            name: "Guided Chat",
+            modelType: "chat",
+            contextWindow: 128000,
+            maxOutputTokens: 16384,
+          },
+        ],
+        defaults: { embedding: "guided-chat" },
+      }),
+    });
+    expect(invalid.status).toBe(400);
+    const invalidProvider = (await sqlite
+      .prepare("SELECT id FROM sys_ai_provider WHERE name = ? AND deleted_at IS NULL")
+      .get("Invalid Guided AI")) as { id: number } | undefined;
+    expect(invalidProvider).toBeUndefined();
+
+    const complete = await app.request("/api/system/ai/setup/complete", {
+      method: "POST",
+      headers: { ...authHeaders(token), "x-request-id": "ai-setup-complete" },
+      body: JSON.stringify({
+        provider,
+        models: [
+          {
+            modelId: "guided-chat",
+            name: "Guided Chat",
+            modelType: "chat",
+            contextWindow: 128000,
+            maxOutputTokens: 16384,
+          },
+          {
+            modelId: "guided-embedding",
+            name: "Guided Embedding",
+            modelType: "embedding",
+            contextWindow: 8192,
+          },
+        ],
+        defaults: {
+          chat: "guided-chat",
+          structured: "guided-chat",
+          embedding: "guided-embedding",
+        },
+        makeDefaultProvider: true,
+      }),
+    });
+    const completeBody = await readJson<{
+      providerId: number;
+      providerCode: string;
+      importedModels: Array<{ id: number; modelId: string }>;
+    }>(complete);
+    expect(complete.status).toBe(200);
+    expect(completeBody.data).toMatchObject({
+      providerCode: "openai-compatible-2",
+      importedModels: [{ modelId: "guided-chat" }, { modelId: "guided-embedding" }],
+    });
+
+    const storedProvider = (await sqlite
+      .prepare(
+        `SELECT timeout_ms AS "timeoutMs", is_default AS "isDefault",
+          api_key_encrypted AS "apiKeyEncrypted"
+         FROM sys_ai_provider WHERE id = ?`,
+      )
+      .get(Number(completeBody.data?.providerId))) as
+      | { timeoutMs: number; isDefault: boolean; apiKeyEncrypted: string }
+      | undefined;
+    expect(storedProvider).toMatchObject({ timeoutMs: 420000, isDefault: true });
+    expect(storedProvider?.apiKeyEncrypted).not.toContain("guided-secret");
+    const storedModels = (await sqlite
+      .prepare(
+        `SELECT model_id AS "modelId", is_default_chat AS "isDefaultChat",
+          is_default_structured AS "isDefaultStructured",
+          is_default_embedding AS "isDefaultEmbedding"
+         FROM sys_ai_model WHERE provider_id = ? ORDER BY id ASC`,
+      )
+      .all(Number(completeBody.data?.providerId))) as Array<Record<string, unknown>>;
+    expect(storedModels).toEqual([
+      expect.objectContaining({
+        modelId: "guided-chat",
+        isDefaultChat: true,
+        isDefaultStructured: true,
+      }),
+      expect.objectContaining({
+        modelId: "guided-embedding",
+        isDefaultEmbedding: true,
+      }),
+    ]);
+    const summary = await readJson<{
+      defaults: {
+        chat: { modelId: string } | null;
+        structured: { modelId: string } | null;
+        embedding: { modelId: string } | null;
+      };
+    }>(
+      await app.request("/api/system/ai/setup/summary", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(summary.data?.defaults).toMatchObject({
+      chat: { modelId: "guided-chat" },
+      structured: { modelId: "guided-chat" },
+      embedding: { modelId: "guided-embedding" },
+    });
+    expect(await latestOperation("system.aiSetup", "discover")).toMatchObject({
+      requestId: "ai-setup-discover",
+      success: true,
+    });
+    expect(await latestOperation("system.aiSetup", "complete")).toMatchObject({
+      requestId: "ai-setup-complete",
+      success: true,
+      riskLevel: "high",
+    });
+    const setupLogs = (await sqlite
+      .prepare(
+        `SELECT details_json AS "detailsJson"
+         FROM sys_operation_log
+         WHERE module = 'system.aiSetup'`,
+      )
+      .all()) as Array<{ detailsJson: string | null }>;
+    expect(JSON.stringify(setupLogs)).not.toContain("guided-secret");
+  });
+
+  it("creates a provider from common defaults and normalizes its model list", async () => {
+    const token = await login();
+    const create = await app.request("/api/system/ai/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerType: "deepseek",
+        apiKey: "deepseek-secret",
+        timeoutMs: 180000,
+        status: 1,
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const providers = await readJson<
+      Page<{
+        id: number;
+        name: string;
+        code: string;
+        baseUrl: string;
+        hasApiKey: boolean;
+        timeoutMs: number;
+      }>
+    >(
+      await app.request("/api/system/ai/provider?keyword=DeepSeek", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const provider = providers.data?.data.find((item) => item.code.startsWith("deepseek-"));
+    expect(provider).toMatchObject({
+      name: "DeepSeek",
+      baseUrl: "https://api.deepseek.com/v1",
+      hasApiKey: true,
+      timeoutMs: 180000,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://api.deepseek.com/v1/models");
+      expect((init?.headers as Record<string, string>).authorization).toBe(
+        "Bearer deepseek-secret",
+      );
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "deepseek-chat",
+              display_name: "DeepSeek Chat",
+              context_length: 1000000,
+              top_provider: { max_completion_tokens: 65536 },
+            },
+            { id: "deepseek-embedding", context_window: 8192 },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request(`/api/system/ai/provider/${provider?.id}/models`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const body = await readJson<{
+      endpoint: string;
+      models: Array<{ id: string; name: string; modelType: string; contextWindow: number | null }>;
+    }>(response);
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual({
+      endpoint: "https://api.deepseek.com/v1/models",
+      models: [
+        {
+          id: "deepseek-chat",
+          name: "DeepSeek Chat",
+          modelType: "chat",
+          contextWindow: 1000000,
+          maxOutputTokens: 65536,
+        },
+        {
+          id: "deepseek-embedding",
+          name: "deepseek-embedding",
+          modelType: "embedding",
+          contextWindow: 8192,
+          maxOutputTokens: null,
+        },
+      ],
+    });
+    const testModels = await app.request(`/api/system/ai/provider/${provider?.id}/test-models`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(testModels.status).toBe(200);
+    expect(await readJson(testModels)).toMatchObject({ data: { models: body.data?.models } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates multiple connection instances for the same provider type", async () => {
+    const token = await login();
+    for (const name of ["OpenAI 生产账号", "OpenAI 备用账号"]) {
+      const response = await app.request("/api/system/ai/provider", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          name,
+          providerType: "openai",
+          apiKey: `${name}-secret`,
+          status: 1,
+        }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const response = await app.request("/api/system/ai/provider?page=1&pageSize=200", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const body =
+      await readJson<
+        Page<{ name: string; code: string; providerType: string; hasApiKey: boolean }>
+      >(response);
+    const connections = (body.data?.data ?? []).filter((item) =>
+      ["OpenAI 生产账号", "OpenAI 备用账号"].includes(item.name),
+    );
+
+    expect(response.status).toBe(200);
+    expect(connections).toHaveLength(2);
+    expect(new Set(connections.map((item) => item.code)).size).toBe(2);
+    expect(connections.every((item) => item.code.startsWith("openai"))).toBe(true);
+    expect(connections.every((item) => item.providerType === "openai")).toBe(true);
+    expect(connections.every((item) => item.hasApiKey)).toBe(true);
+  });
+
+  it("infers model names and base capabilities from a minimal model payload", async () => {
+    const token = await login();
+    const providers = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=openai-compatible", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const providerId = Number(providers.data?.data[0]?.id);
+    const create = await app.request("/api/system/ai/model", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerId,
+        modelId: "minimal-embedding",
+        modelType: "embedding",
+        status: 1,
+      }),
+    });
+    expect(create.status).toBe(200);
+
+    const models = await readJson<
+      Page<{
+        name: string;
+        modelId: string;
+        capabilitiesJson: string;
+      }>
+    >(
+      await app.request("/api/system/ai/model?keyword=minimal-embedding", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(models.data?.data[0]).toMatchObject({
+      name: "minimal-embedding",
+      modelId: "minimal-embedding",
+      capabilitiesJson: '{"embedding":true}',
+    });
+  });
+
+  it("deletes ordinary AI model and provider records", async () => {
+    const token = await login();
+    const providerCreate = await app.request("/api/system/ai/provider", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "Disposable AI Connection",
+        providerType: "openai-compatible",
+        baseUrl: "https://disposable-ai.test/v1",
+        apiKey: "disposable-secret",
+        status: 1,
+      }),
+    });
+    expect(providerCreate.status).toBe(200);
+    const providers = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=Disposable", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const providerId = Number(providers.data?.data[0]?.id);
+    const modelCreate = await app.request("/api/system/ai/model", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerId,
+        name: "Disposable Model",
+        modelId: "disposable-model",
+        modelType: "chat",
+        status: 1,
+      }),
+    });
+    expect(modelCreate.status).toBe(200);
+    const models = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/model?keyword=Disposable", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const modelId = Number(models.data?.data[0]?.id);
+
+    const deleteModel = await app.request(`/api/system/ai/model/${modelId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    expect(deleteModel.status).toBe(200);
+    const deleteProvider = await app.request(`/api/system/ai/provider/${providerId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    expect(deleteProvider.status).toBe(200);
+  });
+
+  it("rejects deleting a provider while an active model still references it", async () => {
+    const token = await login();
+    expect(
+      await app.request("/api/system/ai/provider", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          name: "Referenced AI Connection",
+          providerType: "openai-compatible",
+          baseUrl: "https://referenced-ai.test/v1",
+          apiKey: "referenced-secret",
+          status: 1,
+        }),
+      }),
+    ).toHaveProperty("status", 200);
+    const providers = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/provider?keyword=Referenced", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const providerId = Number(providers.data?.data[0]?.id);
+    expect(
+      await app.request("/api/system/ai/model", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          providerId,
+          name: "Referenced Model",
+          modelId: "referenced-model",
+          modelType: "chat",
+          status: 1,
+        }),
+      }),
+    ).toHaveProperty("status", 200);
+
+    const response = await app.request(`/api/system/ai/provider/${providerId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    const body = await readJson(response);
+
+    expect(response.status).toBe(500);
+    expect(body.msg).toContain("仍被模型");
+  });
+
+  it("keeps a model visible and allows rebinding after its provider was soft deleted", async () => {
+    const token = await login();
+    expect(
+      await app.request("/api/system/ai/provider", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          name: "Legacy AI Connection",
+          providerType: "openai-compatible",
+          baseUrl: "https://legacy-ai.test/v1",
+          apiKey: "legacy-secret",
+          status: 1,
+        }),
+      }),
+    ).toHaveProperty("status", 200);
+    const providers = await readJson<Page<{ id: number; name: string }>>(
+      await app.request("/api/system/ai/provider?page=1&pageSize=200", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const legacyProviderId = Number(
+      providers.data?.data.find((item) => item.name === "Legacy AI Connection")?.id,
+    );
+    const targetProviderId = Number(
+      providers.data?.data.find((item) => item.name === "OpenAI Compatible")?.id,
+    );
+    expect(legacyProviderId).toBeGreaterThan(0);
+    expect(targetProviderId).toBeGreaterThan(0);
+
+    expect(
+      await app.request("/api/system/ai/model", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          providerId: legacyProviderId,
+          name: "Legacy Bound Model",
+          modelId: "legacy-bound-model",
+          modelType: "chat",
+          status: 1,
+        }),
+      }),
+    ).toHaveProperty("status", 200);
+    const models = await readJson<Page<{ id: number }>>(
+      await app.request("/api/system/ai/model?keyword=Legacy%20Bound", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const modelId = Number(models.data?.data[0]?.id);
+    await sqlite
+      .prepare("UPDATE sys_ai_provider SET deleted_at = now() WHERE id = ?")
+      .run(legacyProviderId);
+
+    const orphanedModels = await readJson<
+      Page<{ id: number; providerId: number; providerDeletedAt: string | null }>
+    >(
+      await app.request("/api/system/ai/model?keyword=Legacy%20Bound", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(orphanedModels.data?.data[0]).toMatchObject({
+      id: modelId,
+      providerId: legacyProviderId,
+    });
+    expect(orphanedModels.data?.data[0]?.providerDeletedAt).toBeTruthy();
+
+    const update = await app.request(`/api/system/ai/model/${modelId}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ providerId: targetProviderId }),
+    });
+    expect(update.status).toBe(200);
+    expect(
+      await sqlite
+        .prepare('SELECT provider_id AS "providerId" FROM sys_ai_model WHERE id = ?')
+        .get(modelId),
+    ).toMatchObject({ providerId: targetProviderId });
+  });
+
   it("manages the AI Agent and Tool lifecycle", async () => {
     const token = await login();
     const operationLogTool: AiToolRow = {
@@ -178,9 +779,9 @@ describe("AI provider configuration", () => {
       sort: 1,
       isSystem: true,
     };
-    await expect(
-      executeAgentTool(operationLogTool, { hours: 6 }, { userId: 2 }),
-    ).rejects.toThrow("没有操作日志查询权限");
+    await expect(executeAgentTool(operationLogTool, { hours: 6 }, { userId: 2 })).rejects.toThrow(
+      "没有操作日志查询权限",
+    );
     await expect(
       executeAgentTool(operationLogTool, { hours: 6 }, { userId: 1 }),
     ).resolves.toMatchObject({ hours: 6, rows: expect.any(Array) });
@@ -253,35 +854,29 @@ describe("AI provider configuration", () => {
       ]),
     );
 
-    const updateAgent = await app.request(
-      `/api/system/ai/agent/${createAgentBody.data?.id}`,
-      {
-        method: "PUT",
-        headers: authHeaders(token),
-        body: JSON.stringify({
-          name: "验收 Agent 更新",
-          code: "acceptance-agent",
-          description: "已更新",
-          instructions: "只输出经过确认的结果。",
-          modelId: null,
-          temperature: 0.2,
-          maxOutputTokens: 1024,
-          maxSteps: 3,
-          status: 0,
-          sort: 21,
-          toolIds: [],
-        }),
-      },
-    );
+    const updateAgent = await app.request(`/api/system/ai/agent/${createAgentBody.data?.id}`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        name: "验收 Agent 更新",
+        code: "acceptance-agent",
+        description: "已更新",
+        instructions: "只输出经过确认的结果。",
+        modelId: null,
+        temperature: 0.2,
+        maxOutputTokens: 1024,
+        maxSteps: 3,
+        status: 0,
+        sort: 21,
+        toolIds: [],
+      }),
+    });
     expect(updateAgent.status).toBe(200);
 
-    const removeAgent = await app.request(
-      `/api/system/ai/agent/${createAgentBody.data?.id}`,
-      {
-        method: "DELETE",
-        headers: { authorization: `Bearer ${token}` },
-      },
-    );
+    const removeAgent = await app.request(`/api/system/ai/agent/${createAgentBody.data?.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
     expect(removeAgent.status).toBe(200);
     const removeTool = await app.request(`/api/system/ai/tool/${createToolBody.data?.id}`, {
       method: "DELETE",
@@ -303,6 +898,7 @@ describe("AI provider configuration", () => {
         apiKey: "ai-secret",
         organization: "org-test",
         project: "project-test",
+        timeoutMs: 180000,
         status: 1,
         sort: 10,
         optionsJson: '{"timeout":15000}',
@@ -321,6 +917,7 @@ describe("AI provider configuration", () => {
       hasApiKey: true,
       organization: "org-test",
       project: "project-test",
+      timeoutMs: 180000,
     });
     expect(listBody.data?.data[0]).not.toHaveProperty("apiKey");
     expect(listBody.data?.data[0]).not.toHaveProperty("apiKeyEncrypted");
@@ -677,16 +1274,75 @@ describe("AI provider configuration", () => {
         headers: { authorization: `Bearer ${token}` },
       }),
     );
-    const modelId = Number(models.data?.data.find((item) => item.modelId === "playground-chat")?.id);
+    const modelId = Number(
+      models.data?.data.find((item) => item.modelId === "playground-chat")?.id,
+    );
+
+    const playgroundOptions = await readJson<{
+      models: Array<{ id: number; modelId: string; providerCode: string }>;
+    }>(
+      await app.request("/api/system/ai/playground/options", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(playgroundOptions.data?.models).toContainEqual(
+      expect.objectContaining({
+        id: modelId,
+        modelId: "playground-chat",
+        providerCode: "playground-gateway",
+      }),
+    );
     await app.request(`/api/system/ai/model/default/${modelId}`, {
       method: "PUT",
       headers: authHeaders(token),
       body: JSON.stringify({ usage: "chat" }),
     });
 
-    const runtimeConfig = await app.request("/api/system/ai/playground/runtime-config/chat", {
-      headers: { authorization: `Bearer ${token}` },
+    await app.request("/api/system/ai/model", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        providerId,
+        name: "Playground Alternate",
+        modelId: "playground-alternate",
+        modelType: "chat",
+        capabilitiesJson: '{"chat":true,"structured":true}',
+        contextWindow: 64000,
+        maxOutputTokens: 4096,
+        status: 1,
+        sort: 2,
+      }),
     });
+    const updatedModels = await readJson<Page<{ id: number; modelId: string }>>(
+      await app.request("/api/system/ai/model?keyword=Playground", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const alternateModelId = Number(
+      updatedModels.data?.data.find((item) => item.modelId === "playground-alternate")?.id,
+    );
+
+    const updatedPlaygroundOptions = await readJson<{
+      models: Array<{ id: number; modelId: string; providerCode: string }>;
+    }>(
+      await app.request("/api/system/ai/playground/options", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(updatedPlaygroundOptions.data?.models).toContainEqual(
+      expect.objectContaining({
+        id: alternateModelId,
+        modelId: "playground-alternate",
+        providerCode: "playground-gateway",
+      }),
+    );
+
+    const runtimeConfig = await app.request(
+      `/api/system/ai/playground/runtime-config/chat?modelId=${modelId}`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
     const runtimeConfigBody = await readJson<{
       provider: { code: string; hasApiKey: boolean; apiKey?: string };
       model: { modelId: string };
@@ -699,13 +1355,26 @@ describe("AI provider configuration", () => {
     expect(runtimeConfigBody.data?.provider).not.toHaveProperty("apiKey");
     expect(runtimeConfigBody.data?.model.modelId).toBe("playground-chat");
 
+    const selectedRuntime = await readJson<{
+      model: { id: number; modelId: string };
+    }>(
+      await app.request(
+        `/api/system/ai/playground/runtime-config/chat?modelId=${alternateModelId}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      ),
+    );
+    expect(selectedRuntime.data?.model).toMatchObject({
+      id: alternateModelId,
+      modelId: "playground-alternate",
+    });
+
     const chatFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://playground-ai.test/v1/chat/completions");
       expect((init?.headers as Record<string, string>).authorization).toBe(
         "Bearer playground-secret",
       );
       expect(readRequestBody(init)).toMatchObject({
-        model: "playground-chat",
+        model: "playground-alternate",
         messages: [{ role: "user", content: "请返回 OK" }],
       });
       return new Response(
@@ -713,7 +1382,7 @@ describe("AI provider configuration", () => {
           id: "chatcmpl-playground",
           object: "chat.completion",
           created: 0,
-          model: "playground-chat",
+          model: "playground-alternate",
           choices: [
             {
               index: 0,
@@ -733,6 +1402,7 @@ describe("AI provider configuration", () => {
       headers: { ...authHeaders(token), "x-request-id": "ai-playground-chat" },
       body: JSON.stringify({
         usage: "chat",
+        modelId: alternateModelId,
         input: "请返回 OK",
         maxOutputTokens: 1024,
         timeoutMs: 30000,
@@ -750,7 +1420,7 @@ describe("AI provider configuration", () => {
       text: "OK",
       finishReason: "stop",
       provider: { code: "playground-gateway" },
-      model: { modelId: "playground-chat" },
+      model: { modelId: "playground-alternate" },
       request: { maxOutputTokens: 1024 },
     });
     expect(chatBody.data?.provider).not.toHaveProperty("apiKey");
@@ -764,7 +1434,7 @@ describe("AI provider configuration", () => {
     const streamFetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://playground-ai.test/v1/chat/completions");
       expect(readRequestBody(init)).toMatchObject({
-        model: "playground-chat",
+        model: "playground-alternate",
         stream: true,
       });
       return openAiTextStream(["O", "K"]);
@@ -775,6 +1445,7 @@ describe("AI provider configuration", () => {
       method: "POST",
       headers: { ...authHeaders(token), "x-request-id": "ai-playground-stream" },
       body: JSON.stringify({
+        modelId: alternateModelId,
         input: "请返回 OK",
         maxOutputTokens: 1024,
       }),
@@ -782,7 +1453,7 @@ describe("AI provider configuration", () => {
     expect(stream.status).toBe(200);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     expect(stream.headers.get("x-ai-playground-provider")).toBe("playground-gateway");
-    expect(stream.headers.get("x-ai-playground-model")).toBe("playground-chat");
+    expect(stream.headers.get("x-ai-playground-model")).toBe("playground-alternate");
     const streamText = await stream.text();
     expect(streamText).toContain("event: meta");
     expect(streamText).toContain('"text":"O"');
@@ -807,6 +1478,7 @@ describe("AI provider configuration", () => {
         providerType: "openai-compatible",
         baseUrl: "https://chat-ai.test/v1",
         apiKey: "chat-secret",
+        timeoutMs: 180000,
         status: 1,
         sort: 40,
       }),
@@ -871,9 +1543,10 @@ describe("AI provider configuration", () => {
       expect(readRequestBody(init)).toMatchObject({
         model: "chat-model",
         stream: true,
+        max_tokens: 2048,
         messages: [{ role: "user", content: "你好，回复 OK" }],
       });
-      return openAiTextStream(["O", "K"]);
+      return openAiReasoningTextStream(["先分析问题"], ["O", "K"]);
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -888,11 +1561,21 @@ describe("AI provider configuration", () => {
     expect(stream.status).toBe(200);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     expect(stream.headers.get("x-ai-chat-session-id")).toBe(String(sessionId));
+    expect(stream.headers.get("x-ai-chat-max-output-tokens")).toBe("2048");
+    expect(stream.headers.get("x-ai-chat-timeout-ms")).toBe("180000");
     const streamText = await stream.text();
     expect(streamText).toContain("event: meta");
     expect(streamText).toContain('"text":"O"');
     expect(streamText).toContain('"text":"K"');
     expect(streamText).toContain('"finishReason":"stop"');
+    const finishEvent = readSseEvent(streamText, "finish");
+    const timing = finishEvent?.timing as Record<string, unknown> | undefined;
+    expect(timing).toMatchObject({ reasoningObserved: true });
+    expect(timing?.totalMs).toEqual(expect.any(Number));
+    expect(timing?.firstResponseMs).toEqual(expect.any(Number));
+    expect(timing?.firstTextMs).toEqual(expect.any(Number));
+    expect(timing?.reasoningMs).toEqual(expect.any(Number));
+    expect(Number(timing?.totalMs)).toBeGreaterThanOrEqual(Number(timing?.firstResponseMs));
     expect(await latestOperation("system.aiChat", "chatStream")).toMatchObject({
       requestId: "ai-chat-stream",
       success: true,
@@ -904,16 +1587,38 @@ describe("AI provider configuration", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     const messagesBody = await readJson<
-      Array<{ id: number; role: string; content: string; status: string; finishReason?: string; usageJson?: string }>
+      Array<{
+        id: number;
+        role: string;
+        content: string;
+        status: string;
+        finishReason?: string;
+        usageJson?: string;
+        metadataJson?: string;
+        durationMs?: number;
+      }>
     >(messages);
     expect(messages.status).toBe(200);
     expect(messagesBody.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ role: "user", content: "你好，回复 OK" }),
-        expect.objectContaining({ role: "assistant", content: "OK", status: "completed", finishReason: "stop" }),
+        expect.objectContaining({
+          role: "assistant",
+          content: "OK",
+          status: "completed",
+          finishReason: "stop",
+        }),
       ]),
     );
     expect(messagesBody.data?.find((item) => item.role === "assistant")?.usageJson).toBeTruthy();
+    const assistantMessage = messagesBody.data?.find((item) => item.role === "assistant");
+    const persistedTiming = JSON.parse(String(assistantMessage?.metadataJson || "{}")) as {
+      timing?: Record<string, unknown>;
+    };
+    expect(assistantMessage?.durationMs).toEqual(expect.any(Number));
+    expect(persistedTiming.timing).toMatchObject({ reasoningObserved: true });
+    expect(persistedTiming.timing?.firstTextMs).toEqual(expect.any(Number));
+    expect(persistedTiming.timing?.reasoningMs).toEqual(expect.any(Number));
 
     const configureSession = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
       method: "PUT",
@@ -929,7 +1634,10 @@ describe("AI provider configuration", () => {
     expect(configureSession.status).toBe(200);
 
     const agentFetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = readRequestBody(init) as { messages?: Array<{ role: string; content: string }>; tools?: unknown[] };
+      const body = readRequestBody(init) as {
+        messages?: Array<{ role: string; content: string }>;
+        tools?: unknown[];
+      };
       expect(body.messages?.[0]).toMatchObject({
         role: "system",
         content: expect.stringContaining("Admin Base 后台工作助手"),
@@ -939,11 +1647,15 @@ describe("AI provider configuration", () => {
       return openAiTextStream(["Agent OK"]);
     });
     vi.stubGlobal("fetch", agentFetchMock);
-    const agentStream = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages/stream`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ content: "使用 Agent 回答" }),
-    });
+    vi.stubEnv("ADMIN_BASE_AI_ORCHESTRATOR", "mastra");
+    const agentStream = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ content: "使用 Agent 回答" }),
+      },
+    );
     expect(agentStream.status).toBe(200);
     expect(await agentStream.text()).toContain("Agent OK");
     const runs = await readJson<Array<{ status: string; totalSteps: number }>>(
@@ -990,25 +1702,70 @@ describe("AI provider configuration", () => {
     expect(regenerate.status).toBe(200);
     expect(await regenerate.text()).toContain("重新生成");
 
+    const regeneratedMessages = await readJson<
+      Array<{ id: number; role: string; content: string; status: string }>
+    >(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    const regeneratedAssistant = [...(regeneratedMessages.data ?? [])]
+      .reverse()
+      .find((item) => item.role === "assistant" && item.status === "completed");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("provider failed", { status: 500 })),
+    );
+    const failedRegenerate = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/${regeneratedAssistant?.id}/regenerate`,
+      { method: "POST", headers: authHeaders(token), body: JSON.stringify({}) },
+    );
+    expect(failedRegenerate.status).toBe(200);
+    expect(await failedRegenerate.text()).toContain("event: error");
+    const messagesAfterFailedRegenerate = await readJson<
+      Array<{ id: number; role: string; content: string; status: string }>
+    >(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(messagesAfterFailedRegenerate.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: regeneratedAssistant?.id,
+          role: "assistant",
+          content: "重新生成",
+          status: "completed",
+        }),
+        expect.objectContaining({ role: "assistant", status: "failed" }),
+      ]),
+    );
+
     const approvalFetchMock = vi.fn(async () =>
       openAiToolCallStream("operation-log-summary", { hours: 6 }),
     );
     vi.stubGlobal("fetch", approvalFetchMock);
-    const approvalStream = await app.request(`/api/system/ai/chat/sessions/${sessionId}/messages/stream`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ content: "查看最近操作日志摘要" }),
-    });
+    const approvalStream = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ content: "查看最近操作日志摘要" }),
+      },
+    );
     const approvalStreamText = await approvalStream.text();
     expect(approvalStreamText).toContain("event: approval");
-    const approvals = await readJson<Array<{
-      id: number;
-      status: string;
-      toolName: string;
-      toolDisplayName: string;
-      toolDescription: string;
-      riskLevel: string;
-    }>>(
+    const approvals = await readJson<
+      Array<{
+        id: number;
+        runId: number;
+        status: string;
+        toolName: string;
+        toolDisplayName: string;
+        toolDescription: string;
+        riskLevel: string;
+      }>
+    >(
       await app.request(`/api/system/ai/chat/sessions/${sessionId}/approvals`, {
         headers: { authorization: `Bearer ${token}` },
       }),
@@ -1020,17 +1777,58 @@ describe("AI provider configuration", () => {
       riskLevel: "medium",
     });
     expect(approvals.data?.[0]?.toolDescription).toContain("操作日志");
-    const approve = await app.request(`/api/system/ai/approval/${approvals.data?.[0]?.id}/decision`, {
-      method: "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify({ approved: true }),
-    });
+    const approve = await app.request(
+      `/api/system/ai/approval/${approvals.data?.[0]?.id}/decision`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ approved: true }),
+      },
+    );
     const approveBody = await readJson<{ status: string; output: unknown }>(approve);
     expect(approve.status).toBe(200);
     expect(approveBody.data).toMatchObject({
       status: "executed",
       output: expect.objectContaining({ hours: 6, rows: expect.any(Array) }),
     });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => openAiTextStream(["审批后继续完成"])),
+    );
+    const continuation = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ resumeApprovalId: approvals.data?.[0]?.id }),
+      },
+    );
+    expect(continuation.status).toBe(200);
+    expect(await continuation.text()).toContain("审批后继续完成");
+    const continuedRun = await readJson<{
+      id: number;
+      status: string;
+      parentRunId: number;
+      sourceApprovalId: number;
+    }>(
+      await app.request(`/api/system/ai/chat/sessions/${sessionId}/run/latest`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(continuedRun.data).toMatchObject({
+      status: "completed",
+      parentRunId: approvals.data?.[0]?.runId,
+      sourceApprovalId: approvals.data?.[0]?.id,
+    });
+    const duplicateContinuation = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ resumeApprovalId: approvals.data?.[0]?.id }),
+      },
+    );
+    expect(duplicateContinuation.status).toBe(409);
     const duplicateApprove = await app.request(
       `/api/system/ai/approval/${approvals.data?.[0]?.id}/decision`,
       {
@@ -1039,7 +1837,7 @@ describe("AI provider configuration", () => {
         body: JSON.stringify({ approved: true }),
       },
     );
-    expect(duplicateApprove.status).toBe(500);
+    expect(duplicateApprove.status).toBe(409);
 
     vi.stubGlobal(
       "fetch",
@@ -1069,9 +1867,12 @@ describe("AI provider configuration", () => {
     expect(deny.status).toBe(200);
     expect(denyBody.data?.status).toBe("denied");
 
-    const exported = await app.request(`/api/system/ai/chat/sessions/${sessionId}/export?format=markdown`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
+    const exported = await app.request(
+      `/api/system/ai/chat/sessions/${sessionId}/export?format=markdown`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
     expect(exported.status).toBe(200);
     expect(exported.headers.get("content-disposition")).toContain("ai-chat");
     expect(await exported.text()).toContain("# 测试聊天");
@@ -1079,9 +1880,10 @@ describe("AI provider configuration", () => {
     const sessions = await app.request("/api/system/ai/chat/sessions", {
       headers: { authorization: `Bearer ${token}` },
     });
-    const sessionsBody = await readJson<Page<{ id: number; messageCount: number; modelIdentifier: string; agentName?: string }>>(
-      sessions,
-    );
+    const sessionsBody =
+      await readJson<
+        Page<{ id: number; messageCount: number; modelIdentifier: string; agentName?: string }>
+      >(sessions);
     expect(sessionsBody.data?.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1091,7 +1893,9 @@ describe("AI provider configuration", () => {
         }),
       ]),
     );
-    expect(sessionsBody.data?.data.find((item) => item.id === sessionId)?.messageCount).toBeGreaterThanOrEqual(4);
+    expect(
+      sessionsBody.data?.data.find((item) => item.id === sessionId)?.messageCount,
+    ).toBeGreaterThanOrEqual(4);
 
     const rename = await app.request(`/api/system/ai/chat/sessions/${sessionId}`, {
       method: "PUT",

@@ -22,37 +22,7 @@ import { NavigationScope, useNavigationAdapter } from "@/platform/navigation";
 import { adminRoutes } from "@/router/route-manifest";
 import { findMenuByPath } from "@/router/menu-utils";
 import { useAuthStore } from "@/stores/auth";
-
-type PageTab = {
-  path: string;
-  href: string;
-  title: string;
-  closable: boolean;
-};
-
-const storageKey = "admin-base-page-tabs";
-
-function readStoredTabs(): PageTab[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]") as PageTab[];
-    return Array.isArray(parsed)
-      ? parsed
-          .filter((item) => item && adminRoutes.some((route) => route.path === item.path))
-          .map((item) => ({
-            path: item.path,
-            href:
-              typeof item.href === "string" && item.href.startsWith(item.path)
-                ? item.href
-                : item.path,
-            title: typeof item.title === "string" && item.title.trim() ? item.title : routeTitle(item.path),
-            closable: item.path !== ADMIN_PAGE_HOME_PATH,
-          }))
-      : [];
-  } catch {
-    return [];
-  }
-}
+import { readStoredPageTabs, writeStoredPageTabs, type PageTab } from "./admin-page-tabs";
 
 function searchFromHref(href: string) {
   const queryStart = href.indexOf("?");
@@ -85,14 +55,23 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
     [menu?.name, navigation.search, pathname],
   );
   const [tabs, setTabs] = useState<PageTab[]>(() => {
-    const stored = readStoredTabs();
+    const stored = readStoredPageTabs()
+      .filter((item) => adminRoutes.some((route) => route.path === item.path))
+      .map((item) => ({
+        ...item,
+        title: item.title === "页面" ? routeTitle(item.path) : item.title,
+        closable: item.path !== ADMIN_PAGE_HOME_PATH,
+      }));
     const home = {
       path: ADMIN_PAGE_HOME_PATH,
       href: ADMIN_PAGE_HOME_PATH,
       title: "仪表盘",
       closable: false,
     };
-    return [home, ...stored.filter((item) => item.path !== ADMIN_PAGE_HOME_PATH)].slice(0, ADMIN_PAGE_TAB_LIMIT);
+    return [home, ...stored.filter((item) => item.path !== ADMIN_PAGE_HOME_PATH)].slice(
+      0,
+      ADMIN_PAGE_TAB_LIMIT,
+    );
   });
   const [mountedPaths, setMountedPaths] = useState<string[]>(() => [pathname]);
   const [lastTrackedTab, setLastTrackedTab] = useState("");
@@ -116,7 +95,7 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ADMIN_PAGE_TABS_ENABLED) return;
-    window.localStorage.setItem(storageKey, JSON.stringify(tabs));
+    writeStoredPageTabs(tabs);
   }, [tabs]);
 
   if (!ADMIN_PAGE_TABS_ENABLED) {
@@ -145,7 +124,9 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
     if (index < 0) return;
     const next = tabs.filter((item, itemIndex) => itemIndex <= index || !item.closable);
     setTabs(next);
-    setMountedPaths((current) => current.filter((mountedPath) => next.some((item) => item.path === mountedPath)));
+    setMountedPaths((current) =>
+      current.filter((mountedPath) => next.some((item) => item.path === mountedPath)),
+    );
     if (!next.some((item) => item.path === pathname)) {
       navigation.replace(tabs[index]?.href || ADMIN_PAGE_HOME_PATH);
     }
@@ -155,7 +136,9 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
     const target = tabs.find((item) => item.path === path);
     const next = tabs.filter((item) => !item.closable || item.path === path);
     setTabs(next);
-    setMountedPaths((current) => current.filter((mountedPath) => next.some((item) => item.path === mountedPath)));
+    setMountedPaths((current) =>
+      current.filter((mountedPath) => next.some((item) => item.path === mountedPath)),
+    );
     if (!next.some((item) => item.path === pathname)) {
       navigation.replace(target?.href || ADMIN_PAGE_HOME_PATH);
     }
@@ -164,7 +147,9 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
   function closeAllTabs() {
     const next = tabs.filter((item) => !item.closable);
     setTabs(next);
-    setMountedPaths((current) => current.filter((mountedPath) => next.some((item) => item.path === mountedPath)));
+    setMountedPaths((current) =>
+      current.filter((mountedPath) => next.some((item) => item.path === mountedPath)),
+    );
     if (!next.some((item) => item.path === pathname)) {
       navigation.replace(next[0]?.href || ADMIN_PAGE_HOME_PATH);
     }
@@ -273,7 +258,11 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
                   label: "关闭其他页签",
                   disabled: !tabs.some((item) => item.closable && item.path !== pathname),
                 },
-                { key: "all", label: "关闭全部页签", disabled: tabs.every((item) => !item.closable) },
+                {
+                  key: "all",
+                  label: "关闭全部页签",
+                  disabled: tabs.every((item) => !item.closable),
+                },
               ],
               onClick: ({ key }) => {
                 if (key === "others") closeOtherTabs(pathname);
@@ -287,8 +276,10 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
       </div>
 
       <div className="xin-page-cache">
-        {ADMIN_PAGE_CACHE_ENABLED
-          ? tabs.filter((tab) => mountedPaths.includes(tab.path)).map((tab) => {
+        {ADMIN_PAGE_CACHE_ENABLED ? (
+          tabs
+            .filter((tab) => mountedPaths.includes(tab.path))
+            .map((tab) => {
               const route = adminRoutes.find((item) => item.path === tab.path);
               const Component = route?.component;
               if (!Component && tab.path !== pathname) return null;
@@ -305,7 +296,9 @@ export function AdminPageWorkspace({ children }: { children: ReactNode }) {
                 </div>
               );
             })
-          : <div className="xin-page-cache-entry">{children}</div>}
+        ) : (
+          <div className="xin-page-cache-entry">{children}</div>
+        )}
       </div>
     </div>
   );

@@ -9,7 +9,18 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs from "dayjs";
-import { Button, Drawer, Input, Select, Space, Statistic, Table, Tag, Tooltip, Typography } from "antd";
+import {
+  Button,
+  Drawer,
+  Input,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import { useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn, FieldOption } from "@/components/admin-fields/types";
@@ -381,7 +392,7 @@ export function NoticePage() {
   ];
 
   return (
-    <PageScaffold title="通知公告" description="发布后台公告并维护用户已读状态">
+    <PageScaffold title="通知公告" description="发布后台公告并维护用户已读状态" hideHeader>
       <AdminDataTable
         api="/api/system/notice"
         accessName="system.notice"
@@ -468,9 +479,21 @@ export function NoticePage() {
       >
         <Space orientation="vertical" size={16} style={{ width: "100%" }}>
           <Space size={24}>
-            <Statistic title="目标人数" value={statsQuery.data?.targetTotal ?? 0} loading={statsQuery.isFetching} />
-            <Statistic title="已读人数" value={statsQuery.data?.readTotal ?? 0} loading={statsQuery.isFetching} />
-            <Statistic title="未读人数" value={statsQuery.data?.unreadTotal ?? 0} loading={statsQuery.isFetching} />
+            <Statistic
+              title="目标人数"
+              value={statsQuery.data?.targetTotal ?? 0}
+              loading={statsQuery.isFetching}
+            />
+            <Statistic
+              title="已读人数"
+              value={statsQuery.data?.readTotal ?? 0}
+              loading={statsQuery.isFetching}
+            />
+            <Statistic
+              title="未读人数"
+              value={statsQuery.data?.unreadTotal ?? 0}
+              loading={statsQuery.isFetching}
+            />
           </Space>
           <Space wrap>
             <Select
@@ -550,7 +573,8 @@ export function NoticePage() {
                 title: "读取时间",
                 dataIndex: "readAt",
                 width: 180,
-                render: (value) => (value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-"),
+                render: (value) =>
+                  value ? dayjs(String(value)).format("YYYY-MM-DD HH:mm:ss") : "-",
               },
             ]}
           />

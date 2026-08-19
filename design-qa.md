@@ -58,7 +58,6 @@
 - P3: The generated settings concept is taller and more spacious than the production 420px drawer. The implementation intentionally uses a denser preview and controls so the full settings surface fits common desktop heights without unnecessary scrolling.
 
 final result: passed
-
 ---
 
 **Current Audit: Route And Table UX System**
@@ -184,5 +183,65 @@ final result: passed
 - `corepack pnpm admin:check-routes`: passed.
 - `/usr/bin/git diff --check`: passed.
 - `corepack pnpm build`: passed, all 30 static pages generated.
+
+final result: passed
+
+---
+
+# AdminDataTable Workspace Design QA
+
+## Evidence
+
+- Source visual truth: `/Users/apple/.codex/generated_images/019ef2ad-771c-7241-b4d5-19eb4771056c/exec-045a1632-9ae4-4241-a027-2f93858c9968.png`
+- Implementation: `http://127.0.0.1:3000/system/ai/model`
+- Implementation screenshot: `/tmp/admin-base-table-workspace-final.png`
+- Focused source crop: `/tmp/admin-table-source-toolbar.png`
+- Focused implementation crop: `/tmp/admin-table-implementation-toolbar.png`
+- Viewport and pixels: source and implementation are both `1440 x 1024`; CSS viewport is `1440 x 1024`; device density is normalized at 1:1 for this comparison.
+- State: authenticated light theme, model list, filter panel open, four records, standard row density.
+
+## Findings
+
+No actionable P0, P1, or P2 mismatch remains.
+
+- The implementation preserves the selected visual hierarchy: table identity and total at upper left; filter, page size, refresh, row spacing, border, and column settings at upper right; filters directly below; quick filters and business commands above the table.
+- The page-level visible heading is removed while the semantic `h1` remains available to assistive technology through `PageScaffold hideHeader`.
+- The table occupies the full remaining workspace. Header, body, empty space, bottom boundary, and pagination remain within one bounded surface.
+- Typography uses the existing Admin Base family and 13-14px table scale. Weight, line height, and spacing remain consistent with the source and current shell.
+- Colors use shared semantic surface, border, text, muted, and primary tokens. No light-only table surface was introduced.
+- Icons continue to use Ant Design's installed icon set. The screen has no new raster assets to compare.
+- Copy is business-specific and concise. Actual model fields are retained instead of replacing the page with mock-only compound columns.
+
+## Intentional Differences
+
+- Row density remains the familiar Ant Design icon dropdown requested by the user instead of the mock's visible three-part segmented control.
+- Quick filters show labels without per-state totals because the current API returns the filtered collection total, not aggregate totals for every quick-filter state. The authoritative total remains beside the table title.
+- The implementation keeps the current model columns and horizontal-scroll behavior. The shared table redesign does not silently redefine each module's business schema.
+
+## Focused Comparison
+
+The focused toolbar crops confirm that control grouping, filter alignment, command placement, border rhythm, and table-header transition match the selected direction. A separate row crop was unnecessary because row spacing was measured directly through the browser after each density change.
+
+## Interaction Evidence
+
+- Filter panel closes and reopens without clearing URL state.
+- Quick filter `已启用` writes `status=1` to the URL; `全部` removes it.
+- Border control toggles between `显示边框` and `隐藏边框`.
+- Row density produces distinct measured row heights: compact `61px`, standard `69px`, relaxed `77px` for the current compound model row.
+- Column settings popover opens successfully.
+- Browser console warnings/errors: none.
+
+## Comparison History
+
+1. Initial implementation matched the workspace composition, but the row-density menu did not change visible row height because global table-cell padding used `!important`. This was a P2 functional visual mismatch.
+2. The table now emits an explicit density class and CSS maps compact, standard, and relaxed padding to that class. Browser measurements confirmed three distinct row heights.
+3. The final full-view and focused-toolbar comparison found no remaining P0/P1/P2 issue.
+
+## Follow-up Polish
+
+- P3: Add aggregate quick-filter counts only when list APIs expose a stable summary contract; do not derive misleading totals from the current page.
+- P3: Individual high-frequency modules may adopt compound identity columns after their field hierarchy is reviewed separately.
+
+## Final Result
 
 final result: passed

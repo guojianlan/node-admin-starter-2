@@ -1,12 +1,24 @@
 import type { AiChatMessageRow } from "./ai-chat-service";
 import type { AiRuntimeMessage } from "./ai-runtime-service";
 
-const charsPerToken = 4;
 const minimumContextBudget = 2048;
 const summaryCharacterLimit = 6000;
 
 export function estimateAiTokens(value: string) {
-  return Math.max(Math.ceil(value.length / charsPerToken), value ? 1 : 0);
+  if (!value) return 0;
+  let cjk = 0;
+  let latin = 0;
+  let punctuation = 0;
+  for (const character of value) {
+    if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(character)) {
+      cjk += 1;
+    } else if (/\p{Letter}|\p{Number}|\s/u.test(character)) {
+      latin += 1;
+    } else {
+      punctuation += 1;
+    }
+  }
+  return Math.max(Math.ceil(cjk + latin / 4 + punctuation / 2), 1);
 }
 
 function summarizeMessages(messages: AiChatMessageRow[], previousSummary?: string | null) {

@@ -78,7 +78,9 @@ export function SmsTemplatePage() {
   }));
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/sms/template"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["admin-data-table", "/api/system/sms/template"],
+    });
   };
 
   const statusMutation = useMutation({
@@ -94,7 +96,15 @@ export function SmsTemplatePage() {
   });
 
   const testMutation = useMutation({
-    mutationFn: ({ id, to, variables }: { id: number; to: string; variables: Record<string, unknown> }) =>
+    mutationFn: ({
+      id,
+      to,
+      variables,
+    }: {
+      id: number;
+      to: string;
+      variables: Record<string, unknown>;
+    }) =>
       request("/api/system/sms/template/test", {
         method: "POST",
         body: { id, to, variables },
@@ -206,12 +216,13 @@ export function SmsTemplatePage() {
   ];
 
   return (
-    <PageScaffold title="短信模板" description="维护业务短信模板、变量说明和测试发送">
+    <PageScaffold title="短信模板" description="维护业务短信模板、变量说明和测试发送" hideHeader>
       <AdminDataTable
         api="/api/system/sms/template"
         accessName="system.smsTemplate"
         rowKey="id"
         columns={columns}
+        toolbarTitle="短信模板"
         createTitle="新增短信模板"
         updateTitle="编辑短信模板"
         actionColumnWidth={176}
@@ -268,7 +279,11 @@ export function SmsTemplatePage() {
               </Typography.Text>
             </div>
           </div>
-          <Input value={testTo} onChange={(event) => setTestTo(event.target.value)} placeholder="接收手机号" />
+          <Input
+            value={testTo}
+            onChange={(event) => setTestTo(event.target.value)}
+            placeholder="接收手机号"
+          />
           <Input.TextArea
             value={testVariables}
             rows={5}

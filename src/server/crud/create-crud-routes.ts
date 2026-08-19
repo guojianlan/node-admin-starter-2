@@ -1,4 +1,4 @@
-import { eq, inArray, type SQL } from "drizzle-orm";
+import { and, inArray, isNotNull, isNull, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
@@ -41,6 +41,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function getColumn(table: unknown, field: string) {
   return asRecord(table)[field];
+}
+
+function getColumnField(table: unknown, column: unknown) {
+  return Object.entries(asRecord(table)).find(([, value]) => value === column)?.[0];
 }
 
 function mapValuesToColumns(table: unknown, values: Record<string, unknown>) {
@@ -93,6 +97,102 @@ async function resolveCrudDataScopeWhere(
   if (!dataScope) return [];
   const scope = await resolveDataScope(ctx.c);
   return normalizeWhere(buildDataScopeCondition(scope, dataScope));
+}
+
+class CrudRecordAccessError extends Error {
+  status = 404;
+
+  constructor() {
+    super("记录不存在或无数据权限");
+  }
+}
+
+class CrudAssignmentAccessError extends Error {
+  status = 403;
+
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+type CrudRecordState = "active" | "deleted" | "any";
+
+async function assertScopedAssignments<
+  TCreate extends Record<string, unknown>,
+  TUpdate extends Record<string, unknown>,
+>(input: {
+  config: CrudConfig<TCreate, TUpdate>;
+  ctx: CrudContext;
+  values: Record<string, unknown>;
+}) {
+  const { config, ctx, values } = input;
+  if (!config.dataScope) return;
+  const scope = await resolveDataScope(ctx.c);
+  if (scope.kind === "all") return;
+
+  const deptField = config.dataScope.deptId
+    ? getColumnField(config.table, config.dataScope.deptId)
+    : undefined;
+  if (deptField && Object.hasOwn(values, deptField)) {
+    const deptId = Number(values[deptField]);
+    if (!Number.isFinite(deptId) || !scope.deptIds.includes(deptId)) {
+      throw new CrudAssignmentAccessError("目标部门不在当前数据范围内");
+    }
+  }
+
+  const ownerColumn = config.dataScope.ownerId ?? config.dataScope.userId;
+  const ownerField = ownerColumn ? getColumnField(config.table, ownerColumn) : undefined;
+  if (!ownerField || !Object.hasOwn(values, ownerField)) return;
+
+  const ownerId = Number(values[ownerField]);
+  if (!Number.isFinite(ownerId)) {
+    throw new CrudAssignmentAccessError("目标负责人不在当前数据范围内");
+  }
+  if (scope.selfOnly && ownerId === scope.userId) return;
+  if (!scope.deptIds.length) {
+    throw new CrudAssignmentAccessError("目标负责人不在当前数据范围内");
+  }
+  const placeholders = scope.deptIds.map(() => "?").join(", ");
+  const owner = await ctx.sql
+    .prepare(
+      `SELECT id
+       FROM sys_user
+       WHERE id = ?
+         AND dept_id IN (${placeholders})
+         AND deleted_at IS NULL
+       LIMIT 1`,
+    )
+    .get(ownerId, ...scope.deptIds);
+  if (!owner) throw new CrudAssignmentAccessError("目标负责人不在当前数据范围内");
+}
+
+async function resolveScopedRecords<
+  TCreate extends Record<string, unknown>,
+  TUpdate extends Record<string, unknown>,
+>(input: {
+  config: CrudConfig<TCreate, TUpdate>;
+  ctx: CrudContext;
+  ids: number[];
+  softDeleteColumn: AnyPgColumn | null;
+  state?: CrudRecordState;
+}) {
+  const { config, ctx, ids, softDeleteColumn, state = "active" } = input;
+  const scopeWhere = await resolveCrudDataScopeWhere(ctx, config.dataScope);
+  const stateWhere =
+    !softDeleteColumn || state === "any"
+      ? []
+      : [state === "deleted" ? isNotNull(softDeleteColumn) : isNull(softDeleteColumn)];
+  const where = and(inArray(config.idColumn, ids), ...scopeWhere, ...stateWhere) as SQL;
+  const rows = (await ctx.db.select().from(config.table).where(where)) as Array<
+    Record<string, unknown>
+  >;
+  const idField = getColumnField(config.table, config.idColumn);
+  if (!idField) throw new Error(`CRUD ${config.basePath}: id column is not part of the table`);
+  const rowIds = new Set(rows.map((row) => Number(row[idField])));
+  if (rowIds.size !== ids.length || ids.some((id) => !rowIds.has(id))) {
+    throw new CrudRecordAccessError();
+  }
+  return { rows, where };
 }
 
 function operationModule<
@@ -212,6 +312,7 @@ export function createCrudRoutes<
             const hookValues = config.hooks?.beforeCreate
               ? await config.hooks.beforeCreate(ctx, rawValues)
               : rawValues;
+            await assertScopedAssignments({ config, ctx, values: hookValues });
             const values = mapValuesToColumns(
               config.table,
               addAuditValues({
@@ -259,14 +360,16 @@ export function createCrudRoutes<
         async () => {
           await runMutation(config, async (activeDb, activeSql) => {
             const ctx = crudContext(c, activeDb, activeSql);
-            const current = (await activeDb
-              .select()
-              .from(config.table)
-              .where(eq(config.idColumn, id))
-              .limit(1)) as Array<Record<string, unknown>>;
+            const { rows: current, where } = await resolveScopedRecords({
+              config,
+              ctx,
+              ids: [id],
+              softDeleteColumn,
+            });
             const hookValues = config.hooks?.beforeUpdate
               ? await config.hooks.beforeUpdate(ctx, id, rawValues)
               : rawValues;
+            await assertScopedAssignments({ config, ctx, values: hookValues });
             operationDetails.changedFields = changedFields(current[0] ?? {}, hookValues);
             const values = mapValuesToColumns(
               config.table,
@@ -282,7 +385,7 @@ export function createCrudRoutes<
               await activeDb
                 .update(config.table)
                 .set(values as never)
-                .where(eq(config.idColumn, id));
+                .where(where);
             }
             await config.hooks?.afterUpdate?.(ctx, id, hookValues);
           });
@@ -306,6 +409,12 @@ export function createCrudRoutes<
         async () => {
           await runMutation(config, async (activeDb, activeSql) => {
             const ctx = crudContext(c, activeDb, activeSql);
+            const { where } = await resolveScopedRecords({
+              config,
+              ctx,
+              ids: [id],
+              softDeleteColumn,
+            });
             await config.hooks?.beforeDelete?.(ctx, [id]);
 
             if (softDeleteColumn) {
@@ -322,9 +431,9 @@ export function createCrudRoutes<
               await activeDb
                 .update(config.table)
                 .set(values as never)
-                .where(eq(config.idColumn, id));
+                .where(where);
             } else {
-              await activeDb.delete(config.table).where(eq(config.idColumn, id));
+              await activeDb.delete(config.table).where(where);
             }
 
             await config.hooks?.afterDelete?.(ctx, [id]);
@@ -352,6 +461,12 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids,
+                softDeleteColumn,
+              });
               await config.hooks?.beforeDelete?.(ctx, ids);
 
               if (softDeleteColumn) {
@@ -368,9 +483,9 @@ export function createCrudRoutes<
                 await activeDb
                   .update(config.table)
                   .set(values as never)
-                  .where(inArray(config.idColumn, ids));
+                  .where(where);
               } else {
-                await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
+                await activeDb.delete(config.table).where(where);
               }
 
               await config.hooks?.afterDelete?.(ctx, ids);
@@ -402,6 +517,13 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids: [id],
+                softDeleteColumn,
+                state: "deleted",
+              });
               await config.hooks?.beforeRestore?.(ctx, [id]);
               const values = mapValuesToColumns(
                 config.table,
@@ -416,7 +538,7 @@ export function createCrudRoutes<
               await activeDb
                 .update(config.table)
                 .set(values as never)
-                .where(eq(config.idColumn, id));
+                .where(where);
               await config.hooks?.afterRestore?.(ctx, [id]);
             });
           },
@@ -441,6 +563,13 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids,
+                softDeleteColumn,
+                state: "deleted",
+              });
               await config.hooks?.beforeRestore?.(ctx, ids);
               const values = mapValuesToColumns(
                 config.table,
@@ -455,7 +584,7 @@ export function createCrudRoutes<
               await activeDb
                 .update(config.table)
                 .set(values as never)
-                .where(inArray(config.idColumn, ids));
+                .where(where);
               await config.hooks?.afterRestore?.(ctx, ids);
             });
           },
@@ -482,8 +611,15 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids: [id],
+                softDeleteColumn,
+                state: "any",
+              });
               await config.hooks?.beforeForceDelete?.(ctx, [id]);
-              await activeDb.delete(config.table).where(eq(config.idColumn, id));
+              await activeDb.delete(config.table).where(where);
               await config.hooks?.afterForceDelete?.(ctx, [id]);
             });
           },
@@ -508,8 +644,15 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids,
+                softDeleteColumn,
+                state: "any",
+              });
               await config.hooks?.beforeForceDelete?.(ctx, ids);
-              await activeDb.delete(config.table).where(inArray(config.idColumn, ids));
+              await activeDb.delete(config.table).where(where);
               await config.hooks?.afterForceDelete?.(ctx, ids);
             });
           },
@@ -540,6 +683,12 @@ export function createCrudRoutes<
           async () => {
             await runMutation(config, async (activeDb, activeSql) => {
               const ctx = crudContext(c, activeDb, activeSql);
+              const { where } = await resolveScopedRecords({
+                config,
+                ctx,
+                ids: [id],
+                softDeleteColumn,
+              });
               const values = mapValuesToColumns(
                 config.table,
                 addAuditValues({
@@ -553,7 +702,7 @@ export function createCrudRoutes<
               await activeDb
                 .update(config.table)
                 .set(values as never)
-                .where(eq(config.idColumn, id));
+                .where(where);
             });
           },
         );

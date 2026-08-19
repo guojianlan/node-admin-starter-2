@@ -726,6 +726,7 @@ export const sysAiProvider = pgTable(
     apiKeyEncrypted: text("api_key_encrypted"),
     organization: text("organization"),
     project: text("project"),
+    timeoutMs: integer("timeout_ms").notNull().default(300000),
     isDefault: boolean("is_default").notNull().default(false),
     status: integer("status").notNull().default(1),
     sort: integer("sort").notNull().default(0),
@@ -745,6 +746,34 @@ export const sysAiProvider = pgTable(
       .where(sql`${table.deletedAt} IS NULL AND ${table.isDefault} = true`),
     index("sys_ai_provider_type_status_idx").on(table.providerType, table.status),
     index("sys_ai_provider_status_sort_idx").on(table.status, table.sort),
+  ],
+);
+
+export const sysAiWebSearchProvider = pgTable(
+  "sys_ai_web_search_provider",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    providerType: text("provider_type", { enum: ["tavily", "brave", "searxng"] }).notNull(),
+    endpoint: text("endpoint").notNull(),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    timeoutMs: integer("timeout_ms").notNull().default(10000),
+    maxResults: integer("max_results").notNull().default(8),
+    status: integer("status").notNull().default(0),
+    sort: integer("sort").notNull().default(0),
+    remark: text("remark"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_web_search_provider_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_web_search_provider_type_status_idx").on(table.providerType, table.status),
+    index("sys_ai_web_search_provider_status_sort_idx").on(table.status, table.sort),
   ],
 );
 
@@ -959,12 +988,22 @@ export const sysAiAgentRun = pgTable(
       .notNull()
       .references(() => sysUser.id, { onDelete: "cascade" }),
     status: text("status", {
-      enum: ["queued", "running", "waiting_approval", "completed", "stopped", "failed"],
+      enum: [
+        "queued",
+        "running",
+        "waiting_approval",
+        "waiting_continuation",
+        "completed",
+        "stopped",
+        "failed",
+      ],
     })
       .notNull()
       .default("queued"),
     inputMessageId: integer("input_message_id"),
     outputMessageId: integer("output_message_id"),
+    parentRunId: integer("parent_run_id"),
+    sourceApprovalId: integer("source_approval_id"),
     totalSteps: integer("total_steps").notNull().default(0),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
@@ -977,6 +1016,7 @@ export const sysAiAgentRun = pgTable(
   (table) => [
     index("sys_ai_agent_run_session_id_idx").on(table.sessionId, table.id),
     index("sys_ai_agent_run_user_status_idx").on(table.userId, table.status),
+    uniqueIndex("sys_ai_agent_run_source_approval_unique").on(table.sourceApprovalId),
   ],
 );
 
@@ -1036,7 +1076,7 @@ export const sysAiToolApproval = pgTable(
     validationJson: text("validation_json"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     status: text("status", {
-      enum: ["pending", "approved", "denied", "expired", "executed", "failed"],
+      enum: ["pending", "executing", "approved", "denied", "expired", "executed", "failed"],
     })
       .notNull()
       .default("pending"),
@@ -1051,6 +1091,67 @@ export const sysAiToolApproval = pgTable(
     index("sys_ai_tool_approval_session_status_idx").on(table.sessionId, table.status),
     index("sys_ai_tool_approval_user_status_idx").on(table.userId, table.status),
     index("sys_ai_tool_approval_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+export const sysAiWorkflowRun = pgTable(
+  "sys_ai_workflow_run",
+  {
+    id: serial("id").primaryKey(),
+    workflowCode: text("workflow_code").notNull(),
+    orchestratorRunId: text("orchestrator_run_id").notNull(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["queued", "running", "suspended", "completed", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    requestId: text("request_id"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    inputJson: text("input_json"),
+    outputJson: text("output_json"),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_workflow_run_orchestrator_unique").on(table.orchestratorRunId),
+    index("sys_ai_workflow_run_user_status_idx").on(table.userId, table.status),
+    index("sys_ai_workflow_run_code_created_idx").on(table.workflowCode, table.createdAt),
+    index("sys_ai_workflow_run_request_id_idx").on(table.requestId),
+  ],
+);
+
+export const sysAiWorkflowRunStep = pgTable(
+  "sys_ai_workflow_run_step",
+  {
+    id: serial("id").primaryKey(),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => sysAiWorkflowRun.id, { onDelete: "cascade" }),
+    stepNo: integer("step_no").notNull(),
+    stepCode: text("step_code").notNull(),
+    status: text("status", {
+      enum: ["running", "suspended", "completed", "failed", "skipped"],
+    })
+      .notNull()
+      .default("running"),
+    inputJson: text("input_json"),
+    outputJson: text("output_json"),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_workflow_run_step_run_no_unique").on(table.runId, table.stepNo),
+    index("sys_ai_workflow_run_step_code_idx").on(table.stepCode),
   ],
 );
 

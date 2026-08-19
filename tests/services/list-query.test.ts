@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildTree } from "@/lib/tree";
 import { getUserAccess, getUserMenus } from "@/server/services/auth-service";
-import { buildListQuery } from "@/server/services/list-query";
+import { buildListQuery, resolveListOrder } from "@/server/services/list-query";
 import { resetTestDatabase } from "../helpers/db";
 
 describe("service helpers", () => {
@@ -53,5 +53,58 @@ describe("service helpers", () => {
     expect(page.pageSize).toBe(10);
     expect(page.total).toBe(1);
     expect(page.data[0]?.username).toBe("admin");
+  });
+
+  it("resolves conventional server-side list sorting with a stable ID tie-breaker", () => {
+    const fieldMap = {
+      id: "u.id",
+      createdAt: "u.created_at",
+      updatedAt: "u.updated_at",
+      username: "u.username",
+    };
+
+    expect(
+      resolveListOrder({
+        params: new URLSearchParams("sort=id.asc"),
+        fieldMap,
+      }),
+    ).toMatchObject({ field: "id", order: "asc", sql: "ORDER BY u.id ASC" });
+    expect(
+      resolveListOrder({
+        params: new URLSearchParams("sort=id.desc"),
+        fieldMap,
+      }),
+    ).toMatchObject({ field: "id", order: "desc", sql: "ORDER BY u.id DESC" });
+    expect(
+      resolveListOrder({
+        params: new URLSearchParams("sort=createdAt.asc"),
+        fieldMap,
+      }),
+    ).toMatchObject({
+      field: "createdAt",
+      order: "asc",
+      sql: "ORDER BY u.created_at ASC, u.id ASC",
+    });
+    expect(
+      resolveListOrder({
+        params: new URLSearchParams("sort=createdAt.desc"),
+        fieldMap,
+      }),
+    ).toMatchObject({
+      field: "createdAt",
+      order: "desc",
+      sql: "ORDER BY u.created_at DESC, u.id DESC",
+    });
+    expect(
+      resolveListOrder({
+        params: new URLSearchParams("sort=username.asc"),
+        fieldMap,
+        defaultSort: { field: "createdAt", order: "desc" },
+      }),
+    ).toMatchObject({
+      field: "createdAt",
+      order: "desc",
+      sql: "ORDER BY u.created_at DESC, u.id DESC",
+    });
   });
 });

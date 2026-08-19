@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  BulbOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseOutlined,
   CodeOutlined,
   CopyOutlined,
@@ -9,7 +11,9 @@ import {
   DeploymentUnitOutlined,
   DownloadOutlined,
   EditOutlined,
+  EnvironmentOutlined,
   ExclamationCircleOutlined,
+  GlobalOutlined,
   LoadingOutlined,
   MessageOutlined,
   PlusOutlined,
@@ -44,7 +48,12 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
 import { getAuthToken } from "@/lib/auth-token";
-import { buildQueryString, request, requestEventStream, type EventStreamMessage } from "@/lib/request";
+import {
+  buildQueryString,
+  request,
+  requestEventStream,
+  type EventStreamMessage,
+} from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { useAuthStore } from "@/stores/auth";
 import { feedback } from "@/ui/feedback/feedback";
@@ -84,7 +93,6 @@ type ChatSession = {
   agentName?: string | null;
   systemPrompt?: string | null;
   temperatureMilli: number;
-  maxOutputTokens?: number | null;
   contextSummary?: string | null;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -103,10 +111,30 @@ type ChatMessage = {
   parentMessageId?: number | null;
   finishReason?: string | null;
   usageJson?: string | null;
+  metadataJson?: string | null;
   durationMs?: number | null;
   createdAt?: string;
   streaming?: boolean;
   error?: string;
+  sources?: AiChatSource[];
+  timing?: ChatMessageTiming;
+};
+
+type ChatMessageTiming = {
+  totalMs?: number | null;
+  firstResponseMs?: number | null;
+  firstTextMs?: number | null;
+  reasoningMs?: number | null;
+  generationMs?: number | null;
+  reasoningObserved?: boolean;
+};
+
+type AiChatSource = {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedAt?: string;
+  source: string;
 };
 
 type StreamFinish = {
@@ -116,6 +144,7 @@ type StreamFinish = {
   durationMs?: number;
   waitingApproval?: boolean;
   context?: Record<string, unknown>;
+  timing?: ChatMessageTiming;
 };
 
 type ChatOptions = {
@@ -128,7 +157,14 @@ type ChatOptions = {
     maxOutputTokens?: number | null;
     isDefault?: boolean;
   }>;
-  agents: Array<{ id: number; name: string; code: string; description?: string | null; modelName?: string | null }>;
+  agents: Array<{
+    id: number;
+    name: string;
+    code: string;
+    description?: string | null;
+    modelName?: string | null;
+    toolCodes: string[];
+  }>;
 };
 
 type ChatProfile = {
@@ -149,9 +185,29 @@ type ToolApproval = {
   affectedFilesJson?: string | null;
   validationJson?: string | null;
   expiresAt?: string | null;
-  status: "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
+  status: "pending" | "executing" | "approved" | "denied" | "expired" | "executed" | "failed";
   reason?: string | null;
+  continuationRunId?: number | null;
+  continuationRunStatus?: string | null;
   createdAt: string;
+};
+
+type BrowserLocationResult =
+  | {
+      status: "granted";
+      latitude: number;
+      longitude: number;
+      accuracy?: number;
+    }
+  | {
+      status: "denied" | "unavailable" | "error";
+      reason: string;
+    };
+
+type BrowserLocationNotice = {
+  status: "granted" | "denied" | "unavailable" | "timeout" | "error" | "expired";
+  title: string;
+  description: string;
 };
 
 type AgentRunStep = {
@@ -176,7 +232,14 @@ type AgentRunDetail = {
   agentCode: string;
   modelName?: string | null;
   modelIdentifier?: string | null;
-  status: "queued" | "running" | "waiting_approval" | "completed" | "stopped" | "failed";
+  status:
+    | "queued"
+    | "running"
+    | "waiting_approval"
+    | "waiting_continuation"
+    | "completed"
+    | "stopped"
+    | "failed";
   totalSteps: number;
   inputTokens: number;
   outputTokens: number;
@@ -189,12 +252,17 @@ type AgentRunDetail = {
 
 type LiveRunEvent = {
   id: number;
+  eventKey: string;
   kind: "model" | "tool" | "approval" | "finish" | "error";
   title: string;
   description?: string;
   status: "running" | "waiting" | "completed" | "failed";
   createdAt: string;
-  data?: unknown;
+  durationMs?: number | null;
+  input?: unknown;
+  output?: unknown;
+  usage?: unknown;
+  error?: string | null;
 };
 
 const approvalRiskColors = {
@@ -211,6 +279,60 @@ function formatJsonText(value?: string | null) {
   } catch {
     return value;
   }
+}
+
+function parseMessageSources(message: ChatMessage) {
+  if (message.sources?.length) return message.sources;
+  if (!message.metadataJson) return [];
+  try {
+    const metadata = JSON.parse(message.metadataJson) as { sources?: unknown };
+    if (!Array.isArray(metadata.sources)) return [];
+    return metadata.sources.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const source = item as Record<string, unknown>;
+      const url = String(source.url || "");
+      if (!/^https?:\/\//.test(url)) return [];
+      return [
+        {
+          title: String(source.title || url),
+          url,
+          snippet: String(source.snippet || ""),
+          ...(source.publishedAt ? { publishedAt: String(source.publishedAt) } : {}),
+          source: String(source.source || "web"),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function parseMessageMetadata(message: ChatMessage) {
+  if (!message.metadataJson) return null;
+  try {
+    return asRecord(JSON.parse(message.metadataJson));
+  } catch {
+    return null;
+  }
+}
+
+function optionalMetric(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function parseMessageTiming(message: ChatMessage): ChatMessageTiming | null {
+  const raw = message.timing ?? asRecord(parseMessageMetadata(message)?.timing);
+  const timing = raw ? asRecord(raw) : null;
+  const totalMs = optionalMetric(timing?.totalMs) ?? optionalMetric(message.durationMs);
+  const parsed: ChatMessageTiming = {
+    totalMs,
+    firstResponseMs: optionalMetric(timing?.firstResponseMs),
+    firstTextMs: optionalMetric(timing?.firstTextMs),
+    reasoningMs: optionalMetric(timing?.reasoningMs),
+    generationMs: optionalMetric(timing?.generationMs),
+    reasoningObserved: timing?.reasoningObserved === true,
+  };
+  return Object.values(parsed).some((value) => value != null && value !== false) ? parsed : null;
 }
 
 function parseJsonText(value?: string | null) {
@@ -235,6 +357,144 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function getBrowserLocation(): Promise<BrowserLocationResult> {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return Promise.resolve({ status: "unavailable", reason: "当前环境不支持浏览器定位" });
+  }
+  if (!window.isSecureContext) {
+    return Promise.resolve({
+      status: "unavailable",
+      reason: "浏览器只允许在 HTTPS 或 localhost 中使用定位",
+    });
+  }
+  if (!navigator.geolocation) {
+    return Promise.resolve({ status: "unavailable", reason: "当前浏览器不支持定位" });
+  }
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const round = (value: number) => Math.round(value * 100) / 100;
+        resolve({
+          status: "granted",
+          latitude: round(position.coords.latitude),
+          longitude: round(position.coords.longitude),
+          accuracy: Math.round(position.coords.accuracy),
+        });
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          resolve({ status: "denied", reason: "浏览器位置权限未授权" });
+          return;
+        }
+        if (error.code === error.POSITION_UNAVAILABLE) {
+          resolve({ status: "unavailable", reason: "浏览器暂时无法获取当前位置" });
+          return;
+        }
+        if (error.code === error.TIMEOUT) {
+          resolve({ status: "error", reason: "获取位置超时，请手动输入城市" });
+          return;
+        }
+        resolve({ status: "error", reason: "浏览器定位失败，请手动输入城市" });
+      },
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
+    );
+  });
+}
+
+function parseBrowserLocationNotice(content: string): BrowserLocationNotice | null {
+  if (!content.startsWith("[浏览器位置结果]")) return null;
+  if (content.includes("用户已允许本次使用大致位置")) {
+    return {
+      status: "granted",
+      title: "已使用本次大致位置",
+      description: "位置已粗化后交给 Agent，正在继续处理当前问题。",
+    };
+  }
+  if (content.includes("位置授权已过期") || content.includes("本次位置授权已过期")) {
+    return {
+      status: "expired",
+      title: "位置授权已过期",
+      description: "本次请求没有读取位置，可以重新提问或直接输入城市。",
+    };
+  }
+  const reason = content.match(/用户未提供位置：(.+?)。请继续/)?.[1] || "没有获得位置";
+  if (reason.includes("超时")) {
+    return {
+      status: "timeout",
+      title: "没有在规定时间内获得位置",
+      description: "已停止等待定位，Agent 会改为询问城市。",
+    };
+  }
+  if (reason.includes("权限") || reason.includes("未授权")) {
+    return {
+      status: "denied",
+      title: "位置权限未授权",
+      description: "没有读取设备位置，Agent 会改为询问城市。",
+    };
+  }
+  if (reason.includes("不支持") || reason.includes("无法获取") || reason.includes("HTTPS")) {
+    return {
+      status: "unavailable",
+      title: "当前位置不可用",
+      description: "当前浏览器或系统没有返回位置，Agent 会改为询问城市。",
+    };
+  }
+  return {
+    status: "error",
+    title: "浏览器定位未完成",
+    description: "没有读取设备位置，Agent 会改为询问城市。",
+  };
+}
+
+function BrowserLocationHelpIcons() {
+  return (
+    <span className="ai-chat-location-help" aria-label="定位条件说明">
+      <Tooltip title="只有点击“允许一次”后才会请求浏览器位置；页面加载和 Agent 都不能直接读取。">
+        <span className="ai-chat-location-help-icon" tabIndex={0} aria-label="授权触发条件">
+          <SafetyCertificateOutlined />
+        </span>
+      </Tooltip>
+      <Tooltip title="浏览器定位需要 HTTPS 或 localhost，并且浏览器和操作系统的定位服务可用。">
+        <span className="ai-chat-location-help-icon" tabIndex={0} aria-label="定位环境要求">
+          <EnvironmentOutlined />
+        </span>
+      </Tooltip>
+      <Tooltip title="最多等待 10 秒，并允许使用 60 秒内的缓存位置；超时后会改为让你输入城市。">
+        <span className="ai-chat-location-help-icon" tabIndex={0} aria-label="定位等待时间">
+          <ClockCircleOutlined />
+        </span>
+      </Tooltip>
+    </span>
+  );
+}
+
+function BrowserLocationStatus({ notice }: { notice: BrowserLocationNotice }) {
+  const icon =
+    notice.status === "granted" ? (
+      <CheckCircleOutlined />
+    ) : notice.status === "timeout" || notice.status === "expired" ? (
+      <ClockCircleOutlined />
+    ) : notice.status === "denied" ? (
+      <SafetyCertificateOutlined />
+    ) : notice.status === "unavailable" ? (
+      <EnvironmentOutlined />
+    ) : (
+      <ExclamationCircleOutlined />
+    );
+  return (
+    <div className="ai-chat-location-status" data-status={notice.status}>
+      <span className="ai-chat-location-status-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="ai-chat-location-status-copy">
+        <Typography.Text strong>{notice.title}</Typography.Text>
+        <Typography.Text type="secondary">{notice.description}</Typography.Text>
+      </span>
+      <BrowserLocationHelpIcons />
+    </div>
+  );
+}
+
 function formatTime(value?: string | null) {
   if (!value) return "暂无消息";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -253,10 +513,82 @@ function finishColor(finishReason?: string | null) {
   return "blue";
 }
 
-function messageMeta(message: ChatMessage) {
-  const parts: string[] = [];
-  if (message.durationMs) parts.push(`${message.durationMs} ms`);
-  return parts.join(" / ");
+function formatDuration(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "-";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} 秒`;
+  const minutes = Math.floor(value / 60_000);
+  const seconds = Math.round((value % 60_000) / 1000);
+  return `${minutes}分 ${String(seconds).padStart(2, "0")}秒`;
+}
+
+function MessageTiming({ timing }: { timing: ChatMessageTiming | null }) {
+  if (!timing) return null;
+  const details = [
+    timing.firstResponseMs != null
+      ? { label: "首次响应", value: formatDuration(timing.firstResponseMs), tone: "info" }
+      : null,
+    timing.firstTextMs != null
+      ? { label: "首字", value: formatDuration(timing.firstTextMs) }
+      : null,
+    timing.generationMs != null
+      ? { label: "回答生成", value: formatDuration(timing.generationMs) }
+      : null,
+    timing.totalMs != null ? { label: "总耗时", value: formatDuration(timing.totalMs) } : null,
+  ].filter((item): item is { label: string; value: string; tone?: "info" } => Boolean(item));
+
+  return (
+    <div className="ai-chat-timing" aria-label="回答时序">
+      {timing.reasoningObserved && timing.reasoningMs != null ? (
+        <Tooltip title="Provider 返回了可观测的 reasoning 流事件">
+          <span className="ai-chat-timing-primary">
+            <BulbOutlined /> 已思考 {formatDuration(timing.reasoningMs)}
+          </span>
+        </Tooltip>
+      ) : null}
+      {details.length ? (
+        <span className="ai-chat-timing-details">
+          <ClockCircleOutlined />
+          {details.map((item) => (
+            <span key={item.label} className="ai-chat-timing-item" data-tone={item.tone}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function AssistantThinkingState({ agent }: { agent: boolean }) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    const startedAt = performance.now();
+    const updateElapsed = () => setElapsedMs(Math.max(performance.now() - startedAt, 0));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 250);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div
+      className="ai-chat-thinking"
+      role="status"
+      aria-live="polite"
+      aria-label={agent ? "AI 正在处理任务" : "AI 正在思考"}
+    >
+      <LoadingOutlined spin className="ai-chat-thinking-icon" />
+      <span className="ai-chat-thinking-label">{agent ? "正在处理任务" : "正在思考"}</span>
+      <span className="ai-chat-thinking-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="ai-chat-thinking-elapsed">{formatDuration(elapsedMs)}</span>
+    </div>
+  );
 }
 
 const toolResultPrefix = "[已审批工具执行结果]";
@@ -280,6 +612,19 @@ function runStatusColor(status?: AgentRunDetail["status"]) {
   return "processing";
 }
 
+function runStatusLabel(status?: AgentRunDetail["status"] | "running") {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    running: "运行中",
+    waiting_approval: "等待审批",
+    waiting_continuation: "等待继续",
+    completed: "已完成",
+    stopped: "已停止",
+    failed: "失败",
+  };
+  return status ? labels[status] || status : "";
+}
+
 function stepTitle(step: AgentRunStep) {
   if (step.stepType === "approval") return "审批请求";
   if (step.stepType === "tool") return step.toolName ? `工具 · ${step.toolName}` : "工具调用";
@@ -289,8 +634,43 @@ function stepTitle(step: AgentRunStep) {
 function stepDescription(step: AgentRunStep) {
   if (step.errorMessage) return step.errorMessage;
   if (step.stepType === "approval") return "等待管理员确认后继续执行";
-  if (step.stepType === "tool") return step.status === "completed" ? "工具执行完成" : "正在执行工具";
+  if (step.stepType === "tool")
+    return step.status === "completed" ? "工具执行完成" : "正在执行工具";
   return step.status === "completed" ? "模型步骤已完成" : "模型正在生成回复";
+}
+
+function formatRunData(value: unknown) {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function RunStepDetails({ event }: { event: LiveRunEvent }) {
+  const sections: Array<{ key: string; title: string; value: unknown }> = [];
+  if (event.input !== undefined) sections.push({ key: "input", title: "输入", value: event.input });
+  if (event.output !== undefined)
+    sections.push({ key: "output", title: "输出", value: event.output });
+  if (event.usage !== undefined)
+    sections.push({ key: "usage", title: "Usage", value: event.usage });
+  if (event.error) sections.push({ key: "error", title: "错误", value: event.error });
+  if (!sections.length) return null;
+
+  return (
+    <details className="ai-chat-run-step-details">
+      <summary>查看完整数据</summary>
+      <div className="ai-chat-run-step-data-grid">
+        {sections.map((section) => (
+          <section key={section.key} className="ai-chat-run-step-data">
+            <Typography.Text type="secondary">{section.title}</Typography.Text>
+            <pre>{formatRunData(section.value)}</pre>
+          </section>
+        ))}
+      </div>
+    </details>
+  );
 }
 
 function RunInspector({
@@ -304,6 +684,7 @@ function RunInspector({
   deciding,
   onClose,
   onDecision,
+  onContinue,
 }: {
   run?: AgentRunDetail | null;
   activeRunId?: number | null;
@@ -315,9 +696,11 @@ function RunInspector({
   deciding: boolean;
   onClose: () => void;
   onDecision: (id: number, approved: boolean) => void;
+  onContinue: (id: number) => void;
 }) {
   const persistedEvents: LiveRunEvent[] = (run?.steps ?? []).map((step) => ({
     id: step.id,
+    eventKey: `persisted:${step.id}`,
     kind: step.stepType === "approval" ? "approval" : step.stepType,
     title: stepTitle(step),
     description: stepDescription(step),
@@ -330,15 +713,30 @@ function RunInspector({
             ? "waiting"
             : "running",
     createdAt: step.startedAt ? formatTime(step.startedAt) : "",
-    data: parseJsonText(step.inputJson),
+    durationMs: step.durationMs,
+    input: parseJsonText(step.inputJson),
+    output: parseJsonText(step.outputJson),
+    usage: parseJsonText(step.usageJson),
+    error: step.errorMessage,
   }));
-  const runHasFinished = run?.status === "completed" || run?.status === "failed" || run?.status === "stopped";
-  const events = !isStreaming && runHasFinished && persistedEvents.length > 0
-    ? persistedEvents
-    : liveEvents.length > 0
-      ? liveEvents
-      : persistedEvents;
-  const pendingApprovals = approvals.filter((item) => item.status === "pending");
+  const runHasFinished =
+    run?.status === "completed" || run?.status === "failed" || run?.status === "stopped";
+  const events =
+    !isStreaming && runHasFinished && persistedEvents.length > 0
+      ? persistedEvents
+      : liveEvents.length > 0
+        ? liveEvents
+        : persistedEvents;
+  const pendingApprovals = approvals.filter(
+    (item) => item.status === "pending" && item.handlerKey !== "browser_location",
+  );
+  const resumableApprovals = approvals.filter(
+    (item) =>
+      item.status === "executed" &&
+      (!item.continuationRunId ||
+        item.continuationRunStatus === "failed" ||
+        item.continuationRunStatus === "stopped"),
+  );
   const status = isStreaming ? "running" : run?.status;
 
   return (
@@ -349,8 +747,10 @@ function RunInspector({
           <Typography.Text strong>运行检查器</Typography.Text>
         </Space>
         <Space size={6}>
-          {run?.id || activeRunId ? <Typography.Text code>Run #{run?.id || activeRunId}</Typography.Text> : null}
-          {status ? <Tag color={runStatusColor(status)}>{status}</Tag> : null}
+          {run?.id || activeRunId ? (
+            <Typography.Text code>Run #{run?.id || activeRunId}</Typography.Text>
+          ) : null}
+          {status ? <Tag color={runStatusColor(status)}>{runStatusLabel(status)}</Tag> : null}
           <Tooltip title="关闭检查器">
             <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
           </Tooltip>
@@ -359,10 +759,22 @@ function RunInspector({
 
       <div className="ai-chat-inspector-scroll">
         <dl className="ai-chat-run-facts">
-          <div><dt>Agent</dt><dd>{run?.agentName || fallbackAgentName || "未绑定"}</dd></div>
-          <div><dt>模型</dt><dd>{run?.modelIdentifier || run?.modelName || fallbackModelName || "系统默认"}</dd></div>
-          <div><dt>开始时间</dt><dd>{run?.startedAt ? formatTime(run.startedAt) : isStreaming ? "刚刚" : "-"}</dd></div>
-          <div><dt>执行步骤</dt><dd>{run?.totalSteps ?? events.length}</dd></div>
+          <div>
+            <dt>Agent</dt>
+            <dd>{run?.agentName || fallbackAgentName || "未绑定"}</dd>
+          </div>
+          <div>
+            <dt>模型</dt>
+            <dd>{run?.modelIdentifier || run?.modelName || fallbackModelName || "系统默认"}</dd>
+          </div>
+          <div>
+            <dt>开始时间</dt>
+            <dd>{run?.startedAt ? formatTime(run.startedAt) : isStreaming ? "刚刚" : "-"}</dd>
+          </div>
+          <div>
+            <dt>执行步骤</dt>
+            <dd>{run?.totalSteps ?? events.length}</dd>
+          </div>
         </dl>
 
         <div className="ai-chat-inspector-section-title">步骤时间线</div>
@@ -371,7 +783,10 @@ function RunInspector({
         ) : (
           <div className="ai-chat-run-timeline">
             {events.map((event) => (
-              <div key={`${event.kind}-${event.id}`} className={`ai-chat-run-step ai-chat-run-step-${event.status}`}>
+              <div
+                key={`${event.kind}-${event.id}`}
+                className={`ai-chat-run-step ai-chat-run-step-${event.status}`}
+              >
                 <div className="ai-chat-run-step-icon">
                   {event.status === "running" ? <LoadingOutlined spin /> : null}
                   {event.status === "waiting" ? <SafetyCertificateOutlined /> : null}
@@ -383,13 +798,15 @@ function RunInspector({
                     <Typography.Text strong>{event.title}</Typography.Text>
                     <Typography.Text type="secondary">{event.createdAt}</Typography.Text>
                   </div>
-                  {event.description ? <Typography.Text type="secondary">{event.description}</Typography.Text> : null}
-                  {event.data != null ? (
-                    <details className="ai-chat-run-step-details">
-                      <summary>查看数据</summary>
-                      <pre>{JSON.stringify(event.data, null, 2)}</pre>
-                    </details>
+                  {event.description ? (
+                    <Typography.Text type="secondary">{event.description}</Typography.Text>
                   ) : null}
+                  {event.durationMs != null ? (
+                    <span className="ai-chat-run-step-duration">
+                      耗时 {formatDuration(event.durationMs)}
+                    </span>
+                  ) : null}
+                  <RunStepDetails event={event} />
                 </div>
               </div>
             ))}
@@ -403,28 +820,60 @@ function RunInspector({
               <Tag color={approvalRiskColors[approval.riskLevel]}>{approval.riskLevel}</Tag>
             </div>
             <dl>
-              <div><dt>工具</dt><dd>{approval.toolDisplayName || approval.toolName}</dd></div>
-              <div><dt>影响</dt><dd>{approval.toolDescription || "执行 Agent 请求的服务端工具"}</dd></div>
-              <div><dt>范围</dt><dd>当前管理员可访问数据</dd></div>
-              {approval.planHash ? <div><dt>计划</dt><dd><Typography.Text code copyable>{approval.planHash}</Typography.Text></dd></div> : null}
-              {approval.expiresAt ? <div><dt>有效期</dt><dd>{formatTime(approval.expiresAt)}</dd></div> : null}
+              <div>
+                <dt>工具</dt>
+                <dd>{approval.toolDisplayName || approval.toolName}</dd>
+              </div>
+              <div>
+                <dt>影响</dt>
+                <dd>{approval.toolDescription || "执行 Agent 请求的服务端工具"}</dd>
+              </div>
+              <div>
+                <dt>范围</dt>
+                <dd>当前管理员可访问数据</dd>
+              </div>
+              {approval.planHash ? (
+                <div>
+                  <dt>计划</dt>
+                  <dd>
+                    <Typography.Text code copyable>
+                      {approval.planHash}
+                    </Typography.Text>
+                  </dd>
+                </div>
+              ) : null}
+              {approval.expiresAt ? (
+                <div>
+                  <dt>有效期</dt>
+                  <dd>{formatTime(approval.expiresAt)}</dd>
+                </div>
+              ) : null}
             </dl>
             <Typography.Text type="secondary">参数</Typography.Text>
             <pre className="ai-chat-approval-input">{formatJsonText(approval.inputJson)}</pre>
             {approval.affectedFilesJson ? (
               <details className="ai-chat-approval-raw">
-                <summary><CodeOutlined /> 受影响文件</summary>
+                <summary>
+                  <CodeOutlined /> 受影响文件
+                </summary>
                 <pre>{formatJsonText(approval.affectedFilesJson)}</pre>
               </details>
             ) : null}
             {approval.validationJson ? (
               <details className="ai-chat-approval-raw">
-                <summary><SafetyCertificateOutlined /> 隔离验证结果</summary>
+                <summary>
+                  <SafetyCertificateOutlined /> 隔离验证结果
+                </summary>
                 <pre>{formatJsonText(approval.validationJson)}</pre>
               </details>
             ) : null}
             <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-              <Button type="primary" block loading={deciding} onClick={() => onDecision(approval.id, true)}>
+              <Button
+                type="primary"
+                block
+                loading={deciding}
+                onClick={() => onDecision(approval.id, true)}
+              >
                 批准并继续
               </Button>
               <Button block loading={deciding} onClick={() => onDecision(approval.id, false)}>
@@ -432,15 +881,32 @@ function RunInspector({
               </Button>
             </Space>
             <details className="ai-chat-approval-raw">
-              <summary><CodeOutlined /> 原始参数 JSON</summary>
+              <summary>
+                <CodeOutlined /> 原始参数 JSON
+              </summary>
               <pre>{formatJsonText(approval.inputJson)}</pre>
             </details>
+          </section>
+        ))}
+        {resumableApprovals.map((approval) => (
+          <section key={`resume-${approval.id}`} className="ai-chat-inspector-approval">
+            <div className="ai-chat-inspector-approval-title">
+              <Typography.Text strong>工具已执行，等待 Agent 继续</Typography.Text>
+              <Tag color="processing">可恢复</Tag>
+            </div>
+            <Typography.Paragraph type="secondary">
+              工具 {approval.toolDisplayName || approval.toolName}{" "}
+              已完成。刷新或调用中断后，可从该审批恢复后续模型处理。
+            </Typography.Paragraph>
+            <Button type="primary" block loading={deciding} onClick={() => onContinue(approval.id)}>
+              继续 Agent
+            </Button>
           </section>
         ))}
       </div>
 
       <div className="ai-chat-inspector-footer">
-        <span>总耗时 {run?.durationMs ? `${run.durationMs} ms` : "-"}</span>
+        <span>总耗时 {formatDuration(run?.durationMs)}</span>
         <span>输入 {run?.inputTokens ?? 0}</span>
         <span>输出 {run?.outputTokens ?? 0}</span>
       </div>
@@ -460,15 +926,13 @@ export function AiChatPage() {
   const [keyword, setKeyword] = useState("");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [maxOutputTokens, setMaxOutputTokens] = useState(16384);
-  const [timeoutMs, setTimeoutMs] = useState(60000);
   const [streamFinish, setStreamFinish] = useState<StreamFinish | null>(null);
   const [streamError, setStreamError] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [liveRunEvents, setLiveRunEvents] = useState<LiveRunEvent[]>([]);
   const controllerRef = useRef<AbortController | null>(null);
@@ -515,13 +979,15 @@ export function AiChatPage() {
   const approvalsQuery = useQuery({
     queryKey: ["system-ai-chat-approvals", activeSessionId],
     enabled: Boolean(activeSessionId),
-    queryFn: () => request<ToolApproval[]>(`/api/system/ai/chat/sessions/${activeSessionId}/approvals`),
+    queryFn: () =>
+      request<ToolApproval[]>(`/api/system/ai/chat/sessions/${activeSessionId}/approvals`),
   });
 
   const latestRunQuery = useQuery({
     queryKey: ["system-ai-chat-latest-run", activeSessionId],
     enabled: Boolean(activeSessionId),
-    queryFn: () => request<AgentRunDetail | null>(`/api/system/ai/chat/sessions/${activeSessionId}/run/latest`),
+    queryFn: () =>
+      request<AgentRunDetail | null>(`/api/system/ai/chat/sessions/${activeSessionId}/run/latest`),
   });
 
   const displayedMessages = useMemo(
@@ -545,16 +1011,24 @@ export function AiChatPage() {
     () => optionsQuery.data?.agents.find((agent) => agent.id === activeSession?.agentId) ?? null,
     [activeSession?.agentId, optionsQuery.data?.agents],
   );
+  const defaultAgent = useMemo(
+    () => optionsQuery.data?.agents.find((agent) => agent.code === "general-assistant") ?? null,
+    [optionsQuery.data?.agents],
+  );
 
   const createSessionMutation = useMutation({
-    mutationFn: (title?: string) =>
-      request<{ id: number }>("/api/system/ai/chat/sessions", {
+    mutationFn: async (title?: string) => {
+      const options = optionsQuery.data ?? (await optionsQuery.refetch()).data;
+      const agentId = options?.agents.find((agent) => agent.code === "general-assistant")?.id;
+      return request<{ id: number }>("/api/system/ai/chat/sessions", {
         method: "POST",
-        body: { title },
-      }),
+        body: { title, agentId: agentId ?? null },
+      });
+    },
     onSuccess: async (result) => {
       setActiveSessionId(result.id);
       setMessages([]);
+      setInspectorOpen(false);
       setActiveRunId(null);
       setLiveRunEvents([]);
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
@@ -577,12 +1051,24 @@ export function AiChatPage() {
   const settingsMutation = useMutation({
     mutationFn: ({ id, values }: { id: number; values: Record<string, unknown> }) =>
       request(`/api/system/ai/chat/sessions/${id}`, { method: "PUT", body: values }),
-    onSuccess: async (_, variables) => {
+    onSuccess: async () => {
       feedback.success("会话设置已保存");
-      if (typeof variables.values.maxOutputTokens === "number") {
-        setMaxOutputTokens(variables.values.maxOutputTokens);
-      }
       setSettingsOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
+    },
+  });
+
+  const modeMutation = useMutation({
+    mutationFn: ({ id, agentId }: { id: number; agentId: number | null }) =>
+      request(`/api/system/ai/chat/sessions/${id}`, {
+        method: "PUT",
+        body: { agentId },
+      }),
+    onSuccess: async (_, variables) => {
+      feedback.success(variables.agentId ? "已切换到 Agent 模式" : "已切换到直接对话");
+      setInspectorOpen(false);
+      setActiveRunId(null);
+      setLiveRunEvents([]);
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
     },
   });
@@ -597,6 +1083,7 @@ export function AiChatPage() {
       if (activeSessionId === id) {
         setActiveSessionId(null);
         setMessages([]);
+        setInspectorOpen(false);
         setActiveRunId(null);
         setLiveRunEvents([]);
       }
@@ -610,16 +1097,38 @@ export function AiChatPage() {
     return result.id;
   };
 
-  const appendLiveRunEvent = (event: Omit<LiveRunEvent, "id" | "createdAt">) => {
-    liveRunEventIdRef.current += 1;
-    setLiveRunEvents((current) => [
-      ...current,
-      {
-        ...event,
-        id: liveRunEventIdRef.current,
-        createdAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }),
-      },
-    ]);
+  const upsertLiveRunEvent = (event: Omit<LiveRunEvent, "id" | "createdAt">) => {
+    setLiveRunEvents((current) => {
+      const existingIndex = current.findIndex((item) => item.eventKey === event.eventKey);
+      if (existingIndex >= 0) {
+        return current.map((item, index) =>
+          index === existingIndex
+            ? {
+                ...item,
+                ...event,
+                input: event.input ?? item.input,
+                output: event.output ?? item.output,
+                usage: event.usage ?? item.usage,
+                error: event.error ?? item.error,
+              }
+            : item,
+        );
+      }
+      liveRunEventIdRef.current += 1;
+      return [
+        ...current,
+        {
+          ...event,
+          id: liveRunEventIdRef.current,
+          createdAt: new Date().toLocaleTimeString("zh-CN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          }),
+        },
+      ];
+    });
   };
 
   const handleStreamEvent = (message: EventStreamMessage) => {
@@ -627,38 +1136,70 @@ export function AiChatPage() {
     if (message.event === "meta" && data) {
       if (typeof data.runId === "number") {
         setActiveRunId(data.runId);
-        setInspectorOpen(true);
+        upsertLiveRunEvent({
+          eventKey: "model:active",
+          kind: "model",
+          title: "模型处理",
+          description: "正在分析用户问题并选择执行路径",
+          status: "running",
+          input: {
+            model: asRecord(data.model)?.modelId,
+            endpoint: data.endpoint,
+          },
+        });
       }
-      appendLiveRunEvent({
-        kind: "model",
-        title: "模型处理",
-        description: "正在分析用户问题并选择执行路径",
-        status: "running",
-        data: {
-          model: asRecord(data.model)?.modelId,
-          endpoint: data.endpoint,
-        },
-      });
       return;
     }
     if (message.event === "tool-call" && data) {
-      appendLiveRunEvent({
+      upsertLiveRunEvent({
+        eventKey: `tool:${String(data.toolCallId || "unknown")}`,
         kind: "tool",
         title: `工具调用 · ${String(data.toolName || "unknown")}`,
         description: "模型请求执行服务端工具",
         status: "running",
-        data: data.input,
+        input: data.input,
       });
       return;
     }
     if (message.event === "tool-result" && data) {
-      appendLiveRunEvent({
+      upsertLiveRunEvent({
+        eventKey: `tool:${String(data.toolCallId || "unknown")}`,
         kind: "tool",
-        title: `工具结果 · ${String(data.toolName || "unknown")}`,
+        title: `工具 · ${String(data.toolName || "unknown")}`,
         description: "服务端工具执行完成",
         status: "completed",
-        data: data.output,
+        output: data.output,
       });
+      return;
+    }
+    if (message.event === "sources" && data) {
+      const rows = Array.isArray(data.sources) ? data.sources : [];
+      const sources = rows.flatMap((item) => {
+        const row = asRecord(item);
+        if (!row || typeof row.url !== "string" || !/^https?:\/\//.test(row.url)) return [];
+        return [
+          {
+            title: String(row.title || row.url),
+            url: row.url,
+            snippet: String(row.snippet || ""),
+            ...(row.publishedAt ? { publishedAt: String(row.publishedAt) } : {}),
+            source: String(row.source || "web"),
+          },
+        ];
+      });
+      setMessages((previous) =>
+        previous.map((item) => {
+          if (item.id !== "streaming-assistant") return item;
+          const merged = [...(item.sources ?? []), ...sources];
+          return {
+            ...item,
+            sources: merged.filter(
+              (source, index) =>
+                merged.findIndex((candidate) => candidate.url === source.url) === index,
+            ),
+          };
+        }),
+      );
       return;
     }
     if (message.event === "finish" && data) {
@@ -669,6 +1210,7 @@ export function AiChatPage() {
         durationMs: typeof data.durationMs === "number" ? data.durationMs : undefined,
         waitingApproval: data.waitingApproval === true,
         context: asRecord(data.context) ?? undefined,
+        timing: asRecord(data.timing) as ChatMessageTiming | undefined,
       });
       setMessages((previous) =>
         previous.map((item) =>
@@ -676,22 +1218,29 @@ export function AiChatPage() {
             ? {
                 ...item,
                 id: typeof data.messageId === "number" ? data.messageId : item.id,
-                finishReason: typeof data.finishReason === "string" ? data.finishReason : item.finishReason,
+                finishReason:
+                  typeof data.finishReason === "string" ? data.finishReason : item.finishReason,
                 durationMs: typeof data.durationMs === "number" ? data.durationMs : item.durationMs,
                 usageJson: data.usage ? JSON.stringify(data.usage) : item.usageJson,
+                timing: (asRecord(data.timing) as ChatMessageTiming | null) ?? item.timing,
                 status: "completed",
                 streaming: false,
               }
             : item,
         ),
       );
-      appendLiveRunEvent({
-        kind: "finish",
-        title: data.waitingApproval === true ? "等待审批" : "最终回复",
-        description: data.waitingApproval === true ? "需要管理员确认工具调用" : "本次 Agent 运行已完成",
-        status: data.waitingApproval === true ? "waiting" : "completed",
-        data: data.usage,
-      });
+      if (activeSession?.agentId || activeRunId) {
+        upsertLiveRunEvent({
+          eventKey: "model:active",
+          kind: "model",
+          title: "模型处理",
+          description:
+            data.waitingApproval === true ? "模型步骤完成，等待工具审批" : "模型步骤已完成",
+          status: "completed",
+          durationMs: typeof data.durationMs === "number" ? data.durationMs : null,
+          usage: data.usage,
+        });
+      }
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-latest-run"] }),
@@ -699,14 +1248,19 @@ export function AiChatPage() {
       return;
     }
     if (message.event === "approval") {
-      appendLiveRunEvent({
+      const isBrowserLocation =
+        data?.handlerKey === "browser_location" || data?.toolName === "browser-location";
+      upsertLiveRunEvent({
+        eventKey: `approval:${String(data?.id || "pending")}`,
         kind: "approval",
-        title: "审批请求",
-        description: `等待确认工具 ${String(data?.toolName || "unknown")}`,
+        title: isBrowserLocation ? "位置授权" : "审批请求",
+        description: isBrowserLocation
+          ? "等待用户授权浏览器大致位置"
+          : `等待确认工具 ${String(data?.toolName || "unknown")}`,
         status: "waiting",
-        data: data?.input,
+        input: data?.input,
       });
-      setInspectorOpen(true);
+      if (!isBrowserLocation) setInspectorOpen(true);
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-latest-run"] }),
@@ -716,12 +1270,18 @@ export function AiChatPage() {
     if (message.event === "error" && data) {
       const error = friendlyStreamError(String(data.message || "AI Chat 流式调用失败"));
       setStreamError(error);
-      appendLiveRunEvent({
-        kind: "error",
-        title: "运行失败",
-        description: error,
-        status: "failed",
-      });
+      if (activeSession?.agentId || activeRunId) {
+        upsertLiveRunEvent({
+          eventKey: "model:active",
+          kind: "error",
+          title: "运行失败",
+          description: error,
+          status: "failed",
+          durationMs: typeof data.durationMs === "number" ? data.durationMs : null,
+          error,
+        });
+        setInspectorOpen(true);
+      }
       setMessages((previous) =>
         previous.map((item) =>
           item.id === "streaming-assistant"
@@ -769,14 +1329,20 @@ export function AiChatPage() {
       if (controller.signal.aborted) {
         feedback.info("已停止生成");
       } else {
-        const message = friendlyStreamError(error instanceof Error ? error.message : "AI Chat 发送失败");
+        const message = friendlyStreamError(
+          error instanceof Error ? error.message : "AI Chat 发送失败",
+        );
         setStreamError(message);
         feedback.error(message);
       }
       setMessages((previous) =>
         previous.map((item) =>
           item.id === "streaming-assistant"
-            ? { ...item, streaming: false, status: controller.signal.aborted ? "stopped" : "failed" }
+            ? {
+                ...item,
+                streaming: false,
+                status: controller.signal.aborted ? "stopped" : "failed",
+              }
             : item,
         ),
       );
@@ -811,11 +1377,18 @@ export function AiChatPage() {
     await executeStream({
       sessionId,
       path: `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
-      body: { content, maxOutputTokens, timeoutMs },
+      body: { content },
       nextMessages: [
         ...baseMessages,
         { id: `local-user-${Date.now()}`, sessionId, role: "user", content, status: "completed" },
-        { id: "streaming-assistant", sessionId, role: "assistant", content: "", status: "streaming", streaming: true },
+        {
+          id: "streaming-assistant",
+          sessionId,
+          role: "assistant",
+          content: "",
+          status: "streaming",
+          streaming: true,
+        },
       ],
     });
   };
@@ -827,22 +1400,40 @@ export function AiChatPage() {
     await executeStream({
       sessionId: activeSessionId,
       path: `/api/system/ai/chat/sessions/${activeSessionId}/messages/${messageId}/regenerate`,
-      body: { maxOutputTokens, timeoutMs },
+      body: {},
       nextMessages: [
         ...displayedMessages.slice(0, index),
-        { id: "streaming-assistant", sessionId: activeSessionId, role: "assistant", content: "", status: "streaming", streaming: true },
+        {
+          id: "streaming-assistant",
+          sessionId: activeSessionId,
+          role: "assistant",
+          content: "",
+          status: "streaming",
+          streaming: true,
+        },
       ],
     });
   };
 
-  const resumeAgent = async (sessionId: number, baseMessages: ChatMessage[]) => {
+  const resumeAgent = async (
+    sessionId: number,
+    approvalId: number,
+    baseMessages: ChatMessage[],
+  ) => {
     await executeStream({
       sessionId,
       path: `/api/system/ai/chat/sessions/${sessionId}/messages/stream`,
-      body: { resume: true, maxOutputTokens, timeoutMs },
+      body: { resumeApprovalId: approvalId },
       nextMessages: [
         ...baseMessages,
-        { id: "streaming-assistant", sessionId, role: "assistant", content: "", status: "streaming", streaming: true },
+        {
+          id: "streaming-assistant",
+          sessionId,
+          role: "assistant",
+          content: "",
+          status: "streaming",
+          streaming: true,
+        },
       ],
     });
   };
@@ -853,7 +1444,7 @@ export function AiChatPage() {
         method: "POST",
         body: { approved },
       }),
-    onSuccess: async (result) => {
+    onSuccess: async (result, variables) => {
       feedback.success(result.status === "executed" ? "工具已批准并执行" : "工具调用已拒绝");
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] });
       const durableMessages = await request<ChatMessage[]>(
@@ -862,7 +1453,54 @@ export function AiChatPage() {
       );
       queryClient.setQueryData(["system-ai-chat-messages", result.sessionId], durableMessages);
       setMessages(durableMessages);
-      await resumeAgent(result.sessionId, durableMessages);
+      if (result.status === "executed") {
+        await resumeAgent(result.sessionId, variables.id, durableMessages);
+      }
+    },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["system-ai-chat-latest-run"] }),
+      ]);
+    },
+  });
+
+  const clientLocationMutation = useMutation({
+    mutationFn: async ({
+      id,
+      sessionId,
+      action,
+    }: {
+      id: number;
+      sessionId: number;
+      action: "allow" | "deny";
+    }) => {
+      const result: BrowserLocationResult =
+        action === "allow"
+          ? await getBrowserLocation()
+          : { status: "denied", reason: "用户选择手动输入城市" };
+      return request<{
+        status: "executed";
+        sessionId: number;
+        output: BrowserLocationResult;
+      }>(`/api/system/ai/chat/sessions/${sessionId}/client-actions/${id}/result`, {
+        method: "POST",
+        body: result,
+      });
+    },
+    onSuccess: async (result, variables) => {
+      feedback.success(
+        result.output.status === "granted" ? "已提供本次大致位置" : "将改为询问城市",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] });
+      const durableMessages = await request<ChatMessage[]>(
+        `/api/system/ai/chat/sessions/${result.sessionId}/messages`,
+        { silent: true },
+      );
+      queryClient.setQueryData(["system-ai-chat-messages", result.sessionId], durableMessages);
+      setMessages(durableMessages);
+      await resumeAgent(result.sessionId, variables.id, durableMessages);
     },
     onSettled: async () => {
       await Promise.all([
@@ -875,9 +1513,12 @@ export function AiChatPage() {
 
   const exportSession = async (format: "markdown" | "json") => {
     if (!activeSessionId) return;
-    const response = await fetch(`/api/system/ai/chat/sessions/${activeSessionId}/export?format=${format}`, {
-      headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : undefined,
-    });
+    const response = await fetch(
+      `/api/system/ai/chat/sessions/${activeSessionId}/export?format=${format}`,
+      {
+        headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : undefined,
+      },
+    );
     if (!response.ok) {
       feedback.error("导出会话失败");
       return;
@@ -892,17 +1533,41 @@ export function AiChatPage() {
   };
 
   const runtime = runtimeQuery.data?.ready ? runtimeQuery.data : null;
-  const displayModelId = activeModel?.modelId || activeSession?.modelIdentifier || runtime?.model.modelId;
-  const displayModelName = activeModel?.name || activeAgent?.modelName || activeSession?.modelName || runtime?.model.name;
-  const displayProviderName = activeModel?.providerName || activeSession?.providerCode || runtime?.provider.name;
+  const displayModelId =
+    activeModel?.modelId || activeSession?.modelIdentifier || runtime?.model.modelId;
+  const displayModelName =
+    activeModel?.name || activeAgent?.modelName || activeSession?.modelName || runtime?.model.name;
+  const displayProviderName =
+    activeModel?.providerName || activeSession?.providerCode || runtime?.provider.name;
+  const webSearchAvailable = Boolean(activeAgent?.toolCodes.includes("web-search"));
+  const pendingLocationApproval = (approvalsQuery.data ?? []).find(
+    (approval) => approval.status === "pending" && approval.handlerKey === "browser_location",
+  );
+  const pendingLocationReason = pendingLocationApproval
+    ? String(
+        asRecord(parseJsonText(pendingLocationApproval.inputJson))?.reason ||
+          "当前问题需要大致位置才能继续",
+      )
+    : "";
+  const modeValue = activeSession
+    ? (activeSession.agentId ?? "direct")
+    : (defaultAgent?.id ?? "direct");
+  const canInspectRun = Boolean(
+    activeSession?.agentId ||
+    activeRunId ||
+    latestRunQuery.data ||
+    liveRunEvents.length ||
+    approvalsQuery.data?.length,
+  );
+  const showInspector = inspectorOpen && canInspectRun;
 
   return (
     <PageScaffold
       title="AI Chat"
-      description="使用会话模型或 Agent 进行连续对话，保存消息、运行状态和审批记录"
+      description="面向使用者的连续对话入口，可选择普通模型或 Agent，并保存消息、用量与运行状态"
       className="ai-chat-page"
     >
-      <div className={inspectorOpen ? "ai-chat-layout ai-chat-layout-inspector" : "ai-chat-layout"}>
+      <div className={showInspector ? "ai-chat-layout ai-chat-layout-inspector" : "ai-chat-layout"}>
         <Card
           className="admin-card ai-chat-sidebar"
           variant="borderless"
@@ -929,7 +1594,7 @@ export function AiChatPage() {
             />
             {sessionsQuery.isLoading ? (
               <Spin />
-            ) : !(sessionsQuery.data?.data.length) ? (
+            ) : !sessionsQuery.data?.data.length ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话" />
             ) : (
               <div className="ai-chat-session-list" role="list">
@@ -945,11 +1610,11 @@ export function AiChatPage() {
                     onClick={() => {
                       setActiveSessionId(session.id);
                       setMessages([]);
+                      setInspectorOpen(false);
                       setStreamError("");
                       setStreamFinish(null);
                       setActiveRunId(null);
                       setLiveRunEvents([]);
-                      setMaxOutputTokens(session.maxOutputTokens ?? 16384);
                     }}
                   >
                     <MessageOutlined className="ai-chat-session-icon" />
@@ -963,7 +1628,8 @@ export function AiChatPage() {
                         {session.modelIdentifier || session.modelName || "未调用模型"}
                       </Typography.Text>
                       <Typography.Text type="secondary">
-                        {session.messageCount} 条消息 / {formatTime(session.lastMessageAt || session.updatedAt)}
+                        {session.messageCount} 条消息 /{" "}
+                        {formatTime(session.lastMessageAt || session.updatedAt)}
                       </Typography.Text>
                     </span>
                   </button>
@@ -980,13 +1646,17 @@ export function AiChatPage() {
             <Space size={8} wrap>
               <Typography.Text strong>{activeSession?.title ?? "新的聊天"}</Typography.Text>
               {displayModelId ? <Tag color="blue">{displayModelId}</Tag> : null}
-              {activeSession?.agentName ? <Tag icon={<RobotOutlined />} color="cyan">{activeSession.agentName}</Tag> : null}
+              {activeSession?.agentName ? (
+                <Tag icon={<RobotOutlined />} color="cyan">
+                  {activeSession.agentName}
+                </Tag>
+              ) : null}
               {isStreaming ? <Tag color="processing">生成中</Tag> : null}
             </Space>
           }
           extra={
             <Space>
-              {!inspectorOpen ? (
+              {canInspectRun && !showInspector ? (
                 <Tooltip title="打开运行检查器">
                   <Button
                     size="small"
@@ -1019,7 +1689,6 @@ export function AiChatPage() {
                       agentId: activeSession.agentId ?? undefined,
                       systemPrompt: activeSession.systemPrompt ?? "",
                       temperature: activeSession.temperatureMilli / 1000,
-                      maxOutputTokens: activeSession.maxOutputTokens ?? 16384,
                     });
                     setSettingsOpen(true);
                   }}
@@ -1064,7 +1733,9 @@ export function AiChatPage() {
             </Space>
           }
         >
-          {(runtimeQuery.error || (!runtimeQuery.isLoading && !runtime)) && !activeModel && !activeSession?.modelIdentifier ? (
+          {(runtimeQuery.error || (!runtimeQuery.isLoading && !runtime)) &&
+          !activeModel &&
+          !activeSession?.modelIdentifier ? (
             <Alert
               showIcon
               type="warning"
@@ -1073,15 +1744,60 @@ export function AiChatPage() {
             />
           ) : (
             <div className="ai-chat-runtime-strip">
-              <Space size={8} wrap>
-                <RobotOutlined />
-                <Typography.Text strong>{activeSession?.agentName || "直接对话"}</Typography.Text>
-                <Typography.Text type="secondary">{displayProviderName || "AI Provider"}</Typography.Text>
-                <Tag color="blue">{displayModelId || displayModelName || "默认模型"}</Tag>
-              </Space>
-              <Typography.Text type="secondary">
-                累计 {(activeSession?.totalInputTokens ?? 0).toLocaleString()} 输入 / {(activeSession?.totalOutputTokens ?? 0).toLocaleString()} 输出
-              </Typography.Text>
+              <div className="ai-chat-mode-control">
+                <Typography.Text type="secondary" className="ai-chat-mode-label">
+                  对话模式
+                </Typography.Text>
+                <Select
+                  aria-label="对话模式"
+                  className="ai-chat-mode-select"
+                  value={modeValue}
+                  loading={optionsQuery.isLoading || modeMutation.isPending}
+                  disabled={!activeSession || isStreaming || modeMutation.isPending}
+                  popupMatchSelectWidth={false}
+                  onChange={(value) => {
+                    if (!activeSession) return;
+                    modeMutation.mutate({
+                      id: activeSession.id,
+                      agentId: value === "direct" ? null : Number(value),
+                    });
+                  }}
+                  options={[
+                    { value: "direct", label: "直接对话 · 仅模型" },
+                    ...(optionsQuery.data?.agents ?? []).map((agent) => ({
+                      value: agent.id,
+                      label: agent.name,
+                    })),
+                  ]}
+                />
+                {activeSession?.agentId ? (
+                  webSearchAvailable ? (
+                    <Tag icon={<GlobalOutlined />} color="success">
+                      联网搜索可用
+                    </Tag>
+                  ) : (
+                    <Tooltip title="当前 Agent 没有关联可用的联网搜索工具，或搜索服务尚未启用">
+                      <Tag color="warning">联网搜索不可用</Tag>
+                    </Tooltip>
+                  )
+                ) : (
+                  <Tooltip title="直接对话只调用当前模型，不会使用联网搜索或其他 Agent 工具">
+                    <Tag color="default">仅模型 · 不联网</Tag>
+                  </Tooltip>
+                )}
+              </div>
+              <div className="ai-chat-runtime-meta">
+                <Space size={6} wrap>
+                  <Typography.Text type="secondary">
+                    {displayProviderName || "AI Provider"}
+                  </Typography.Text>
+                  <Tag color="blue">{displayModelId || displayModelName || "默认模型"}</Tag>
+                </Space>
+                <Typography.Text type="secondary">
+                  累计 {(activeSession?.totalInputTokens ?? 0).toLocaleString()} 输入 /{" "}
+                  {(activeSession?.totalOutputTokens ?? 0).toLocaleString()} 输出
+                </Typography.Text>
+              </div>
             </div>
           )}
 
@@ -1096,13 +1812,22 @@ export function AiChatPage() {
                   const isUser = message.role === "user";
                   const isSystem = message.role === "system";
                   const toolResult = isSystem ? parseToolResultMessage(message.content) : null;
-                  const lastAssistantId = [...displayedMessages].reverse().find((item) => item.role === "assistant")?.id;
-                  const assistantStatus = message.streaming || message.status === "streaming"
-                    ? "streaming"
-                    : message.status && message.status !== "completed"
-                      ? message.status
-                      : null;
-                  const userDisplayName = currentUser?.nickname || currentUser?.username || "当前用户";
+                  const locationNotice = isSystem
+                    ? parseBrowserLocationNotice(message.content)
+                    : null;
+                  const lastAssistantId = [...displayedMessages]
+                    .reverse()
+                    .find((item) => item.role === "assistant")?.id;
+                  const assistantStatus =
+                    message.streaming || message.status === "streaming"
+                      ? "streaming"
+                      : message.status && message.status !== "completed"
+                        ? message.status
+                        : null;
+                  const messageSources = parseMessageSources(message);
+                  const messageTiming = parseMessageTiming(message);
+                  const userDisplayName =
+                    currentUser?.nickname || currentUser?.username || "当前用户";
                   const userAvatarFallback = userDisplayName.trim().slice(0, 1).toUpperCase();
                   return (
                     <div
@@ -1123,10 +1848,14 @@ export function AiChatPage() {
                         />
                       ) : null}
 
-                      {toolResult ? (
+                      {locationNotice ? (
+                        <BrowserLocationStatus notice={locationNotice} />
+                      ) : toolResult ? (
                         <details className="ai-chat-tool-result">
                           <summary>
-                            <span className="ai-chat-tool-result-icon"><CodeOutlined /></span>
+                            <span className="ai-chat-tool-result-icon">
+                              <CodeOutlined />
+                            </span>
                             <span className="ai-chat-tool-result-copy">
                               <strong>工具执行完成</strong>
                               <span>{toolResult.toolName}，结果已写入对话上下文</span>
@@ -1139,7 +1868,11 @@ export function AiChatPage() {
                         <div className="ai-chat-message-column">
                           <div className="ai-chat-message-meta">
                             <Typography.Text strong>
-                              {isUser ? userDisplayName : isSystem ? "系统消息" : activeSession?.agentName || "AI 助手"}
+                              {isUser
+                                ? userDisplayName
+                                : isSystem
+                                  ? "系统消息"
+                                  : activeSession?.agentName || "AI 助手"}
                             </Typography.Text>
                             {!isUser && !isSystem ? (
                               <Typography.Text type="secondary">
@@ -1147,7 +1880,9 @@ export function AiChatPage() {
                               </Typography.Text>
                             ) : null}
                             {message.createdAt ? (
-                              <Typography.Text type="secondary">{formatTime(message.createdAt)}</Typography.Text>
+                              <Typography.Text type="secondary">
+                                {formatTime(message.createdAt)}
+                              </Typography.Text>
                             ) : null}
                           </div>
 
@@ -1170,54 +1905,116 @@ export function AiChatPage() {
                                 <div>
                                   <Typography.Text strong>本次生成未完成</Typography.Text>
                                   <Typography.Text type="secondary">
-                                    {friendlyStreamError(message.error || message.errorMessage || "请稍后重试")}
+                                    {friendlyStreamError(
+                                      message.error || message.errorMessage || "请稍后重试",
+                                    )}
                                   </Typography.Text>
                                 </div>
                               </div>
+                            ) : assistantStatus === "streaming" && !message.content.trim() ? (
+                              <AssistantThinkingState agent={Boolean(activeSession?.agentId)} />
                             ) : (
                               <StreamingMarkdown
                                 content={message.content}
-                                minHeight={message.content ? 0 : assistantStatus === "streaming" ? 24 : 72}
+                                minHeight={message.content.trim() ? 0 : 72}
                                 maxHeight={null}
-                                placeholder={assistantStatus === "streaming" ? "" : "回答未生成"}
+                                placeholder="回答未生成"
                               />
                             )}
                           </div>
 
-                          {!isUser && !isSystem ? (
-                            <Space className="ai-chat-message-actions" size={6} wrap>
-                              {assistantStatus && assistantStatus !== "streaming" ? (
-                                <Tag color={assistantStatus === "failed" ? "error" : assistantStatus === "stopped" ? "warning" : "processing"}>
-                                  {assistantStatus}
-                                </Tag>
-                              ) : null}
-                              {message.finishReason && message.finishReason !== "stop" && message.finishReason !== "error" ? (
-                                <Tag color={finishColor(message.finishReason)}>
-                                  {message.finishReason}
-                                </Tag>
-                              ) : null}
-                              {messageMeta(message) ? (
-                                <Typography.Text type="secondary">{messageMeta(message)}</Typography.Text>
-                              ) : null}
-                              {(message.error || message.errorMessage) && message.content ? (
-                                <Typography.Text type="danger">{message.error || message.errorMessage}</Typography.Text>
-                              ) : null}
-                              {message.content ? (
-                                <Tooltip title="复制回答">
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<CopyOutlined />}
-                                    onClick={() => void navigator.clipboard.writeText(message.content).then(() => feedback.success("已复制"))}
-                                  />
-                                </Tooltip>
-                              ) : null}
-                              {message.id === lastAssistantId && typeof message.id === "number" && !isStreaming ? (
-                                <Tooltip title="重新生成">
-                                  <Button type="text" size="small" icon={<RedoOutlined />} onClick={() => void regenerateMessage(message.id as number)} />
-                                </Tooltip>
-                              ) : null}
-                            </Space>
+                          {!isUser && !isSystem && messageSources.length ? (
+                            <div className="ai-chat-sources" aria-label="联网搜索来源">
+                              <div className="ai-chat-sources-heading">
+                                <GlobalOutlined />
+                                <Typography.Text strong>联网来源</Typography.Text>
+                                <Typography.Text type="secondary">
+                                  {messageSources.length} 条
+                                </Typography.Text>
+                              </div>
+                              <div className="ai-chat-source-list">
+                                {messageSources.map((source, index) => (
+                                  <a
+                                    key={`${source.url}-${index}`}
+                                    className="ai-chat-source-item"
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                  >
+                                    <span className="ai-chat-source-index">{index + 1}</span>
+                                    <span className="ai-chat-source-copy">
+                                      <strong>{source.title}</strong>
+                                      <span>{source.snippet || source.url}</span>
+                                      <small>
+                                        {source.source}
+                                        {source.publishedAt ? ` · ${source.publishedAt}` : ""}
+                                      </small>
+                                    </span>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {!isUser && !isSystem && assistantStatus !== "streaming" ? (
+                            <div className="ai-chat-response-footer">
+                              <div className="ai-chat-response-meta">
+                                {assistantStatus ? (
+                                  <Tag
+                                    color={
+                                      assistantStatus === "failed"
+                                        ? "error"
+                                        : assistantStatus === "stopped"
+                                          ? "warning"
+                                          : "processing"
+                                    }
+                                  >
+                                    {assistantStatus}
+                                  </Tag>
+                                ) : null}
+                                {message.finishReason &&
+                                message.finishReason !== "stop" &&
+                                message.finishReason !== "error" ? (
+                                  <Tag color={finishColor(message.finishReason)}>
+                                    {message.finishReason}
+                                  </Tag>
+                                ) : null}
+                                <MessageTiming timing={messageTiming} />
+                                {(message.error || message.errorMessage) && message.content ? (
+                                  <Typography.Text type="danger">
+                                    {message.error || message.errorMessage}
+                                  </Typography.Text>
+                                ) : null}
+                              </div>
+                              <Space className="ai-chat-message-actions" size={2}>
+                                {message.content ? (
+                                  <Tooltip title="复制回答">
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<CopyOutlined />}
+                                      onClick={() =>
+                                        void navigator.clipboard
+                                          .writeText(message.content)
+                                          .then(() => feedback.success("已复制"))
+                                      }
+                                    />
+                                  </Tooltip>
+                                ) : null}
+                                {message.id === lastAssistantId &&
+                                typeof message.id === "number" &&
+                                !isStreaming ? (
+                                  <Tooltip title="重新生成">
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<RedoOutlined />}
+                                      onClick={() => void regenerateMessage(message.id as number)}
+                                    />
+                                  </Tooltip>
+                                ) : null}
+                              </Space>
+                            </div>
                           ) : null}
                         </div>
                       )}
@@ -1242,65 +2039,108 @@ export function AiChatPage() {
 
           <div className="ai-chat-composer">
             <div className="ai-chat-composer-notices">
+              {pendingLocationApproval && activeSessionId ? (
+                <section
+                  className="ai-chat-client-permission"
+                  aria-label="浏览器位置授权"
+                  aria-live="polite"
+                >
+                  <span className="ai-chat-client-permission-icon" aria-hidden="true">
+                    <EnvironmentOutlined />
+                  </span>
+                  <div className="ai-chat-client-permission-copy">
+                    <span className="ai-chat-client-permission-title">
+                      <Typography.Text strong>使用大致位置</Typography.Text>
+                      <BrowserLocationHelpIcons />
+                    </span>
+                    <Typography.Text>{pendingLocationReason}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      仅用于本次任务；发送前会将经纬度粗化，服务端不会保存精确坐标。
+                    </Typography.Text>
+                  </div>
+                  <div className="ai-chat-client-permission-actions">
+                    <Button
+                      type="primary"
+                      icon={<EnvironmentOutlined />}
+                      loading={clientLocationMutation.isPending}
+                      onClick={() =>
+                        clientLocationMutation.mutate({
+                          id: pendingLocationApproval.id,
+                          sessionId: activeSessionId,
+                          action: "allow",
+                        })
+                      }
+                    >
+                      允许一次
+                    </Button>
+                    <Button
+                      disabled={clientLocationMutation.isPending}
+                      onClick={() =>
+                        clientLocationMutation.mutate({
+                          id: pendingLocationApproval.id,
+                          sessionId: activeSessionId,
+                          action: "deny",
+                        })
+                      }
+                    >
+                      不允许，手动输入城市
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
               {streamError ? <Alert showIcon type="error" title={streamError} /> : null}
               {streamFinish?.finishReason === "length" ? (
-                <Alert showIcon type="warning" title="模型输出达到最大 tokens 限制，内容可能被截断。" />
+                <Alert
+                  showIcon
+                  type="warning"
+                  title="模型输出达到上限，内容可能未完整结束；可以继续提问让模型接着回答。"
+                />
               ) : null}
             </div>
-            <Input.TextArea
-              className="ai-chat-composer-input"
-              value={input}
-              rows={4}
-              placeholder="输入消息，Shift + Enter 换行，Enter 发送"
-              onChange={(event) => setInput(event.target.value)}
-              onPressEnter={(event) => {
-                if (event.shiftKey) return;
-                event.preventDefault();
-                if (!isStreaming) void sendMessage();
-              }}
-            />
-            <Space className="ai-chat-composer-toolbar" wrap style={{ justifyContent: "space-between", width: "100%" }}>
-              <Space wrap>
-                <Typography.Text type="secondary">输出 tokens</Typography.Text>
-                <InputNumber
-                  min={16}
-                  max={32768}
-                  step={512}
-                  value={maxOutputTokens}
-                  onChange={(value) => setMaxOutputTokens(Number(value ?? 16384))}
-                />
-                <Typography.Text type="secondary">超时 ms</Typography.Text>
-                <InputNumber
-                  min={5000}
-                  max={300000}
-                  step={5000}
-                  value={timeoutMs}
-                  onChange={(value) => setTimeoutMs(Number(value ?? 60000))}
-                />
-              </Space>
-              {isStreaming ? (
-                <Button
-                  danger
-                  icon={<StopOutlined />}
-                  onClick={() => controllerRef.current?.abort()}
-                >
-                  停止
-                </Button>
-              ) : (
-                <Button
-                  type="primary"
-                  icon={<SendOutlined />}
-                  loading={createSessionMutation.isPending}
-                  onClick={() => void sendMessage()}
-                >
-                  发送
-                </Button>
-              )}
-            </Space>
+            <div className="ai-chat-composer-shell">
+              <Input.TextArea
+                className="ai-chat-composer-input"
+                value={input}
+                variant="borderless"
+                autoSize={{ minRows: 2, maxRows: 8 }}
+                placeholder="输入消息，Shift + Enter 换行，Enter 发送"
+                onChange={(event) => setInput(event.target.value)}
+                onPressEnter={(event) => {
+                  if (event.shiftKey) return;
+                  event.preventDefault();
+                  if (!isStreaming) void sendMessage();
+                }}
+              />
+              <div className="ai-chat-composer-actions">
+                {isStreaming ? (
+                  <Tooltip title="停止生成">
+                    <Button
+                      danger
+                      shape="circle"
+                      aria-label="停止生成"
+                      icon={<StopOutlined />}
+                      onClick={() => controllerRef.current?.abort()}
+                    />
+                  </Tooltip>
+                ) : (
+                  <Tooltip title="发送消息">
+                    <Button
+                      type="primary"
+                      shape="circle"
+                      aria-label="发送消息"
+                      icon={<SendOutlined />}
+                      loading={createSessionMutation.isPending}
+                      disabled={!input.trim()}
+                      onClick={() => void sendMessage()}
+                    />
+                  </Tooltip>
+                )}
+              </div>
+            </div>
           </div>
         </Card>
 
-        {inspectorOpen ? (
+        {showInspector ? (
           <RunInspector
             run={latestRunQuery.data}
             activeRunId={activeRunId}
@@ -1312,6 +2152,9 @@ export function AiChatPage() {
             deciding={approvalMutation.isPending}
             onClose={() => setInspectorOpen(false)}
             onDecision={(id, approved) => approvalMutation.mutate({ id, approved })}
+            onContinue={(id) => {
+              if (activeSessionId) void resumeAgent(activeSessionId, id, displayedMessages);
+            }}
           />
         ) : null}
       </div>
@@ -1344,13 +2187,17 @@ export function AiChatPage() {
         onCancel={() => setSettingsOpen(false)}
         onOk={() => {
           if (!activeSession) return;
-          void settingsForm.validateFields().then((values) =>
-            settingsMutation.mutateAsync({ id: activeSession.id, values }),
-          );
+          void settingsForm
+            .validateFields()
+            .then((values) => settingsMutation.mutateAsync({ id: activeSession.id, values }));
         }}
       >
         <Form form={settingsForm} layout="vertical">
-          <Form.Item name="agentId" label="Agent">
+          <Form.Item
+            name="agentId"
+            label="Agent"
+            extra="选择 Agent 后可使用其关联的联网搜索和其他工具；清空后为仅调用模型的直接对话"
+          >
             <Select
               allowClear
               placeholder="不使用 Agent，直接与模型对话"
@@ -1372,17 +2219,15 @@ export function AiChatPage() {
               }))}
             />
           </Form.Item>
-          <Space size={16} align="start" style={{ width: "100%" }}>
-            <Form.Item name="temperature" label="Temperature">
-              <InputNumber min={0} max={2} step={0.1} />
-            </Form.Item>
-            <Form.Item name="maxOutputTokens" label="最大输出 Tokens">
-              <InputNumber min={16} max={32768} step={512} />
-            </Form.Item>
-          </Space>
+          <Form.Item name="temperature" label="Temperature">
+            <InputNumber min={0} max={2} step={0.1} />
+          </Form.Item>
           <Divider />
           <Form.Item name="systemPrompt" label="会话 System Prompt">
-            <Input.TextArea rows={7} placeholder="只对当前会话生效；选择 Agent 时会追加在 Agent Instructions 后面" />
+            <Input.TextArea
+              rows={7}
+              placeholder="只对当前会话生效；选择 Agent 时会追加在 Agent Instructions 后面"
+            />
           </Form.Item>
         </Form>
       </Modal>

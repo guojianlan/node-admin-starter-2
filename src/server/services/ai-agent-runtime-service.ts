@@ -1,5 +1,6 @@
 import { stepCountIs, streamText, tool, type ModelMessage, type ToolSet } from "ai";
-import { z } from "zod";
+import { createMastraAiAgentStream } from "@/server/mastra/agent-runtime";
+import { resolveAgentOrchestrator } from "@/server/mastra/config";
 import {
   appendAgentRunStep,
   createAgentRun,
@@ -7,50 +8,34 @@ import {
   finishAgentRun,
   getAiAgent,
   listAiTools,
-  type AiToolRow,
 } from "./ai-agent-service";
-import { getModuleAgentInputSchema, isModuleAgentHandlerKey } from "./ai-module-agent-service";
+import { isAiToolApprovalRequired } from "./ai-agent-runtime-policy";
+import { getAiToolInputSchema } from "./ai-tool-registry";
 import type { AiRuntimeMessage } from "./ai-runtime-service";
 import { createAiRuntime } from "./ai-runtime-service";
-
-function inputSchemaFor(toolRow: AiToolRow) {
-  if (isModuleAgentHandlerKey(toolRow.handlerKey)) {
-    return getModuleAgentInputSchema(toolRow.handlerKey);
-  }
-  if (toolRow.handlerKey === "calculator") {
-    return z.object({ expression: z.string().min(1).describe("要计算的四则运算表达式") });
-  }
-  if (toolRow.handlerKey === "operation_log_summary") {
-    return z.object({ hours: z.number().int().min(1).max(168).default(24) });
-  }
-  return z.object({});
-}
 
 function toModelMessages(messages: AiRuntimeMessage[]): ModelMessage[] {
   return messages.map((message) => ({ role: message.role, content: message.content }));
 }
 
-function approvalRequired(toolRow: AiToolRow) {
-  if (toolRow.handlerKey === "module_publish" || toolRow.handlerKey === "module_rollback") {
-    return true;
-  }
-  if (toolRow.approvalMode === "always") return true;
-  if (toolRow.approvalMode === "never") return false;
-  return toolRow.approvalRequired;
-}
-
-export async function createAiAgentStream(input: {
+export type CreateAiAgentStreamInput = {
   agentId: number;
   sessionId: number;
   userId: number;
   inputMessageId?: number | null;
+  parentRunId?: number | null;
+  sourceApprovalId?: number | null;
   messages: AiRuntimeMessage[];
   modelId?: number | null;
   maxOutputTokens?: number;
   temperature?: number;
   timeoutMs?: number;
   abortSignal: AbortSignal;
-}) {
+  abilities?: string[];
+  requestId?: string;
+};
+
+export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput) {
   const startedAt = performance.now();
   const agent = await getAiAgent(input.agentId);
   if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
@@ -68,6 +53,8 @@ export async function createAiAgentStream(input: {
     agentId: agent.id,
     userId: input.userId,
     inputMessageId: input.inputMessageId,
+    parentRunId: input.parentRunId,
+    sourceApprovalId: input.sourceApprovalId,
   });
   const toolRows = await listAiTools({ activeOnly: true, agentId: agent.id });
   const toolMap = new Map(toolRows.map((item) => [item.code, item]));
@@ -77,14 +64,15 @@ export async function createAiAgentStream(input: {
   for (const toolRow of toolRows) {
     tools[toolRow.code] = tool({
       description: toolRow.description,
-      inputSchema: inputSchemaFor(toolRow),
-      needsApproval: approvalRequired(toolRow),
+      inputSchema: getAiToolInputSchema(toolRow.handlerKey),
+      needsApproval: isAiToolApprovalRequired(toolRow),
       execute: async (toolInput) => {
         const startedAt = performance.now();
         stepNo += 1;
         try {
           const output = await executeAgentTool(toolRow, toolInput as Record<string, unknown>, {
             userId: input.userId,
+            requestId: input.requestId,
           });
           await appendAgentRunStep({
             runId,
@@ -139,10 +127,12 @@ export async function createAiAgentStream(input: {
   }
 
   return {
+    orchestrator: "legacy" as const,
     agent,
     runId,
     runtime: {
       ...runtime,
+      startedAt,
       endpointHint: runtime.sdkRuntime.endpointHint,
       normalizeUsage: (usage: unknown): Record<string, unknown> =>
         usage && typeof usage === "object" && !Array.isArray(usage)
@@ -160,4 +150,13 @@ export async function createAiAgentStream(input: {
     },
     currentStepNo: () => stepNo,
   };
+}
+
+export async function createAiAgentStream(input: CreateAiAgentStreamInput) {
+  const agent = await getAiAgent(input.agentId);
+  if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
+  if (resolveAgentOrchestrator(agent.code) === "mastra") {
+    return createMastraAiAgentStream(input);
+  }
+  return createLegacyAiAgentStream(input);
 }

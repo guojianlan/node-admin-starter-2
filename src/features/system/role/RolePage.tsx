@@ -1,8 +1,29 @@
 "use client";
 
-import { CopyOutlined, KeyOutlined, SaveOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
+import {
+  CopyOutlined,
+  KeyOutlined,
+  SaveOutlined,
+  SmileOutlined,
+  TeamOutlined,
+} from "@ant-design/icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Checkbox, Col, Input, Modal, Row, Space, Spin, Switch, Table, Tag, Tooltip, Tree } from "antd";
+import {
+  Button,
+  Card,
+  Checkbox,
+  Col,
+  Input,
+  Modal,
+  Row,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Tree,
+} from "antd";
 import type { TableProps, TreeProps } from "antd";
 import { useMemo, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
@@ -12,6 +33,12 @@ import type { PageResult } from "@/lib/response";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 import { statusOptions, toFieldOptions } from "../shared/options";
+import {
+  applyRuleSelection,
+  buildRuleSelectionRelations,
+  expandRuleSelection,
+  getHalfCheckedRuleKeys,
+} from "./rule-selection";
 
 type RoleRecord = {
   id: number;
@@ -85,8 +112,9 @@ export function RolePage() {
   const queryClient = useQueryClient();
   const [selectedRole, setSelectedRole] = useState<RoleRecord | null>(null);
   const [activeTab, setActiveTab] = useState("users");
-  const [checkedRuleKeys, setCheckedRuleKeys] = useState<React.Key[]>([]);
+  const [checkedRuleKeys, setCheckedRuleKeys] = useState<number[]>([]);
   const [expandedRuleKeys, setExpandedRuleKeys] = useState<React.Key[]>([]);
+  const [cascadeRuleSelection, setCascadeRuleSelection] = useState(true);
   const [roleUserPage, setRoleUserPage] = useState({ page: 1, pageSize: 10 });
   const [copyRole, setCopyRole] = useState<RoleRecord | null>(null);
   const [copyForm, setCopyForm] = useState({
@@ -130,8 +158,11 @@ export function RolePage() {
         method: "PUT",
         body: { status },
       }),
-    onSuccess: () => {
+    onSuccess: (_, input) => {
       feedback.success("状态更新成功");
+      setSelectedRole((current) =>
+        current?.id === input.id ? { ...current, status: input.status } : current,
+      );
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/role"] });
     },
   });
@@ -266,7 +297,9 @@ export function RolePage() {
           { label: "本部门及子部门", value: "current_dept_tree" },
           { label: "仅本人", value: "self" },
         ].find((item) => item.value === value);
-        return <Tag color={value === "all" ? "green" : "blue"}>{option?.label ?? String(value)}</Tag>;
+        return (
+          <Tag color={value === "all" ? "green" : "blue"}>{option?.label ?? String(value)}</Tag>
+        );
       },
     },
     {
@@ -333,13 +366,34 @@ export function RolePage() {
 
   const ruleTreeData = useMemo(() => toTreeData(ruleTree), [ruleTree]);
   const allRuleKeys = useMemo(() => getAllNodeKeys(ruleTree), [ruleTree]);
+  const ruleSelectionRelations = useMemo(
+    () => buildRuleSelectionRelations(ruleTree),
+    [ruleTree],
+  );
   const availableRuleKeys = useMemo(() => new Set(allRuleKeys.map(String)), [allRuleKeys]);
   const visibleCheckedRuleKeys = useMemo(
     () =>
-      checkedRuleKeys
-        .filter((key) => availableRuleKeys.has(String(key)))
-        .map((key) => Number(key)),
+      checkedRuleKeys.filter((key) => availableRuleKeys.has(String(key))).map((key) => Number(key)),
     [availableRuleKeys, checkedRuleKeys],
+  );
+  const halfCheckedRuleKeys = useMemo(
+    () =>
+      cascadeRuleSelection
+        ? getHalfCheckedRuleKeys(visibleCheckedRuleKeys, ruleSelectionRelations)
+        : [],
+    [cascadeRuleSelection, ruleSelectionRelations, visibleCheckedRuleKeys],
+  );
+  const treeCheckedRuleKeys = useMemo(
+    () =>
+      cascadeRuleSelection
+        ? {
+            checked: visibleCheckedRuleKeys.filter(
+              (key) => !halfCheckedRuleKeys.includes(Number(key)),
+            ),
+            halfChecked: halfCheckedRuleKeys,
+          }
+        : visibleCheckedRuleKeys,
+    [cascadeRuleSelection, halfCheckedRuleKeys, visibleCheckedRuleKeys],
   );
   const visibleExpandedRuleKeys = useMemo(
     () =>
@@ -376,14 +430,17 @@ export function RolePage() {
       content: (
         <Space orientation="vertical" size={10}>
           <span>
-            新增 {added.length} 项，移除 {removed.length} 项，保持 {unchanged} 项。保存后该角色用户的旧 token 会失效。
+            新增 {added.length} 项，移除 {removed.length} 项，保持 {unchanged}{" "}
+            项。保存后该角色用户的旧 token 会失效。
           </span>
           {added.length ? (
             <div>
               <strong>新增：</strong>
               <Space wrap size={4}>
                 {added.slice(0, 12).map((id) => (
-                  <Tag color="green" key={id}>{ruleNameMap.get(id)?.name ?? id}</Tag>
+                  <Tag color="green" key={id}>
+                    {ruleNameMap.get(id)?.name ?? id}
+                  </Tag>
                 ))}
               </Space>
             </div>
@@ -393,7 +450,9 @@ export function RolePage() {
               <strong>移除：</strong>
               <Space wrap size={4}>
                 {removed.slice(0, 12).map((id) => (
-                  <Tag color="red" key={id}>{ruleNameMap.get(id)?.name ?? id}</Tag>
+                  <Tag color="red" key={id}>
+                    {ruleNameMap.get(id)?.name ?? id}
+                  </Tag>
                 ))}
               </Space>
             </div>
@@ -410,6 +469,7 @@ export function RolePage() {
     <PageScaffold
       title="角色管理"
       description="通过角色配置管理员权限，可查看角色用户并维护菜单权限"
+      hideHeader
     >
       <Row className="system-workbench system-role-workbench" gutter={[20, 20]}>
         <Col xxl={14} lg={12} xs={24}>
@@ -418,6 +478,7 @@ export function RolePage() {
             accessName="system.role"
             rowKey="id"
             columns={roleColumns}
+            toolbarTitle="角色列表"
             createTitle="新增角色"
             updateTitle="编辑角色"
             tableMode="bounded"
@@ -426,6 +487,34 @@ export function RolePage() {
             actionColumnWidth={164}
             canUpdate={(record) => !record.isSystem}
             canDelete={(record) => !record.isSystem}
+            beforeSubmit={(values) => {
+              const submittedRuleIds = Array.isArray(values.ruleIds)
+                ? values.ruleIds.map(Number).filter(Number.isFinite)
+                : [];
+              return {
+                ...values,
+                ruleIds: expandRuleSelection(submittedRuleIds, ruleSelectionRelations),
+              };
+            }}
+            onDataChanged={(change) => {
+              if (!change.record) return;
+              if (change.action === "delete") {
+                if (selectedRole?.id === change.record.id) {
+                  setSelectedRole(null);
+                  setCheckedRuleKeys([]);
+                }
+                return;
+              }
+              if (change.action !== "update" || !change.values) return;
+              const updatedRuleIds = Array.isArray(change.values.ruleIds)
+                ? change.values.ruleIds.map(Number).filter(Number.isFinite)
+                : [];
+              setSelectedRole((current) => {
+                if (!current || current.id !== change.record?.id) return current;
+                return { ...current, ...change.values, ruleIds: updatedRuleIds } as RoleRecord;
+              });
+              if (selectedRole?.id === change.record.id) setCheckedRuleKeys(updatedRuleIds);
+            }}
             operateRender={(record) => (
               <Tooltip title="复制角色">
                 <Button
@@ -510,21 +599,45 @@ export function RolePage() {
                 <>
                   <Spin spinning={roleMetaQuery.isLoading || roleMetaQuery.isFetching}>
                     <div className="system-tree-scroll">
-                    <Tree
-                      checkable
-                      checkStrictly
-                      treeData={ruleTreeData}
-                      checkedKeys={visibleCheckedRuleKeys}
-                      expandedKeys={visibleExpandedRuleKeys}
-                      onCheck={(keys) => {
-                        setCheckedRuleKeys(Array.isArray(keys) ? keys : keys.checked);
-                      }}
-                      onExpand={setExpandedRuleKeys}
-                    />
+                      <Tree
+                        checkable
+                        checkStrictly
+                        treeData={ruleTreeData}
+                        checkedKeys={treeCheckedRuleKeys}
+                        expandedKeys={visibleExpandedRuleKeys}
+                        onCheck={(_, info) => {
+                          setCheckedRuleKeys((current) =>
+                            applyRuleSelection({
+                              selectedKeys: current,
+                              nodeId: Number(info.node.key),
+                              checked: info.checked,
+                              cascade: cascadeRuleSelection,
+                              relations: ruleSelectionRelations,
+                            }),
+                          );
+                        }}
+                        onExpand={setExpandedRuleKeys}
+                      />
                     </div>
                   </Spin>
                   <div className="system-tree-actions">
                     <span className="system-tree-count">已选 {checkedRuleKeys.length} 项</span>
+                    <Tooltip
+                      title={
+                        cascadeRuleSelection
+                          ? "勾选父级会选择全部子权限，勾选子级会自动补齐上级菜单和路由"
+                          : "父子权限独立选择，适合精确调整菜单、路由和操作权限"
+                      }
+                    >
+                      <Space size={6}>
+                        <span>级联选择</span>
+                        <Switch
+                          size="small"
+                          checked={cascadeRuleSelection}
+                          onChange={setCascadeRuleSelection}
+                        />
+                      </Space>
+                    </Tooltip>
                     <Button size="small" onClick={() => setExpandedRuleKeys(allRuleKeys)}>
                       展开全部
                     </Button>
@@ -537,15 +650,20 @@ export function RolePage() {
                     <Button size="small" onClick={() => setCheckedRuleKeys([])}>
                       清空
                     </Button>
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        const checked = new Set(checkedRuleKeys.map(String));
-                        setCheckedRuleKeys(allRuleKeys.filter((key) => !checked.has(String(key))));
-                      }}
-                    >
-                      反选
-                    </Button>
+                    <Tooltip title={cascadeRuleSelection ? "反选仅适用于独立选择模式" : undefined}>
+                      <Button
+                        size="small"
+                        disabled={cascadeRuleSelection}
+                        onClick={() => {
+                          const checked = new Set(checkedRuleKeys.map(String));
+                          setCheckedRuleKeys(
+                            allRuleKeys.filter((key) => !checked.has(String(key))),
+                          );
+                        }}
+                      >
+                        反选
+                      </Button>
+                    </Tooltip>
                     <Button
                       type="primary"
                       size="small"
@@ -580,12 +698,16 @@ export function RolePage() {
           <Input
             addonBefore="名称"
             value={copyForm.name}
-            onChange={(event) => setCopyForm((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) =>
+              setCopyForm((current) => ({ ...current, name: event.target.value }))
+            }
           />
           <Input
             addonBefore="编码"
             value={copyForm.code}
-            onChange={(event) => setCopyForm((current) => ({ ...current, code: event.target.value }))}
+            onChange={(event) =>
+              setCopyForm((current) => ({ ...current, code: event.target.value }))
+            }
           />
           <Checkbox
             checked={copyForm.copyRules}

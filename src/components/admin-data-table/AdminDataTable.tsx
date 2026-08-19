@@ -6,17 +6,17 @@ import {
   ColumnHeightOutlined,
   DeleteOutlined,
   EditOutlined,
+  FilterOutlined,
   PlusOutlined,
   ReloadOutlined,
-  SearchOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Checkbox, Divider, Dropdown, Input, Popover, Space, Table, Tooltip } from "antd";
+import { Button, Checkbox, Dropdown, Input, Popover, Space, Table, Tooltip } from "antd";
 import type { TableProps } from "antd";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import type { SorterResult, TableCurrentDataSource } from "antd/es/table/interface";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AuthButton } from "@/components/auth-button/AuthButton";
 import { AdminEntityForm } from "@/components/admin-entity-form/AdminEntityForm";
 import { AdminSearchForm } from "@/components/admin-search-form/AdminSearchForm";
@@ -32,6 +32,7 @@ type AdminDataTableProps<T extends object> = {
   rowKey: keyof T & string;
   accessName: string;
   columns: AdminDataTableColumn<T>[];
+  defaultSort?: { field: keyof T & string; order: "asc" | "desc" };
   defaultPageSize?: number;
   createTitle?: string;
   updateTitle?: string;
@@ -48,6 +49,12 @@ type AdminDataTableProps<T extends object> = {
   searchCardClassName?: string;
   searchPlacement?: "inside" | "card";
   toolbarTitle?: React.ReactNode;
+  quickFilters?: Array<{
+    key: string;
+    label: React.ReactNode;
+    count?: number;
+    values: Record<string, unknown>;
+  }>;
   emptyText?: React.ReactNode;
   urlStatePrefix?: string;
   pagination?: false;
@@ -59,6 +66,7 @@ type AdminDataTableProps<T extends object> = {
   >;
   canUpdate?: (record: T) => boolean;
   canDelete?: (record: T) => boolean;
+  deleteDisabledReason?: (record: T) => React.ReactNode | undefined;
   actionBarRender?: (reload: () => void) => React.ReactNode;
   operateRender?: (record: T, reload: () => void) => React.ReactNode;
   beforeSubmit?: (
@@ -71,13 +79,36 @@ type AdminDataTableProps<T extends object> = {
     open: boolean,
     context: { mode: "create" | "update"; record: T | null },
   ) => void;
-  onDataChanged?: () => void;
+  createInitialValues?: Partial<T>;
+  formBasicColumns?: 1 | 2;
+  formNotice?: React.ReactNode;
+  onDataChanged?: (change: {
+    action: "create" | "update" | "delete";
+    record: T | null;
+    values?: Record<string, unknown>;
+  }) => void;
 };
 
 const emptyQueryKeyDeps: readonly unknown[] = [];
 
+function isConventionallySortableField(field: string) {
+  return (
+    field === "id" ||
+    field === "sort" ||
+    field === "order" ||
+    field === "priority" ||
+    field.endsWith("At")
+  );
+}
+
 function getRowId<T extends object>(record: T, rowKey: keyof T & string) {
   return String(record[rowKey]);
+}
+
+function hasSearchValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === "") return false;
+  if (Array.isArray(value)) return value.some(hasSearchValue);
+  return true;
 }
 
 function normalizeFieldOptions(options?: FieldOption[]): FieldOption[] | undefined {
@@ -104,6 +135,7 @@ export function AdminDataTable<T extends object>({
   rowKey,
   accessName,
   columns,
+  defaultSort,
   defaultPageSize = 10,
   createTitle = "新增",
   updateTitle = "编辑",
@@ -111,15 +143,15 @@ export function AdminDataTable<T extends object>({
   enableUpdate = true,
   enableDelete = true,
   enableActions = true,
-  showSearchButton = false,
   showSearchForm = true,
-  defaultSearchOpen = true,
+  defaultSearchOpen = false,
   showKeywordSearch = true,
   showToolbarSettings = true,
   cardClassName,
   searchCardClassName,
   searchPlacement = "inside",
   toolbarTitle,
+  quickFilters,
   emptyText,
   urlStatePrefix,
   pagination,
@@ -128,12 +160,16 @@ export function AdminDataTable<T extends object>({
   tableProps,
   canUpdate,
   canDelete,
+  deleteDisabledReason,
   actionBarRender,
   operateRender,
   beforeSubmit,
   handleRequest,
   queryKeyDeps = emptyQueryKeyDeps,
   onFormOpenChange,
+  createInitialValues,
+  formBasicColumns,
+  formNotice,
   onDataChanged,
 }: AdminDataTableProps<T>) {
   const queryClient = useQueryClient();
@@ -143,7 +179,7 @@ export function AdminDataTable<T extends object>({
   const [searchOpen, setSearchOpen] = useState(defaultSearchOpen);
   const [draftKeyword, setDraftKeyword] = useState<string | null>(null);
   const [density, setDensity] = useState<TableProps<T>["size"]>();
-  const [bordered, setBordered] = useState(false);
+  const [bordered, setBordered] = useState(Boolean(tableProps?.bordered));
   const [columnsChecked, setColumnsChecked] = useState<string[] | null>(null);
 
   const fieldSignature = JSON.stringify(buildSearchFieldSignature(columns));
@@ -152,14 +188,28 @@ export function AdminDataTable<T extends object>({
     [fieldSignature],
   );
   const { state, actions } = useTableUrlState({ defaultPageSize, fields, urlStatePrefix });
-  const hasActiveSearch = Boolean(state.keyword || Object.keys(state.filters).length);
+  const appliedKeyword = state.keyword ?? "";
+  const previousAppliedKeyword = useRef(appliedKeyword);
+  const activeFilterCount =
+    Object.values(state.formValues).filter(hasSearchValue).length + (state.keyword ? 1 : 0);
+  const hasActiveSearch = activeFilterCount > 0;
   const defaultColumnKeys = useMemo(
     () => columns.filter((column) => !column.hideInTable).map((column) => column.dataIndex),
     [columns],
   );
   const activeColumnKeys = columnsChecked ?? defaultColumnKeys;
   const keywordText = draftKeyword ?? state.keyword ?? "";
-  const shouldShowSearch = showSearchForm && (searchOpen || hasActiveSearch);
+  const shouldShowSearch = showSearchForm && searchOpen;
+  const quickFilterFields = useMemo(
+    () => Array.from(new Set(quickFilters?.flatMap((item) => Object.keys(item.values)) ?? [])),
+    [quickFilters],
+  );
+
+  useEffect(() => {
+    if (previousAppliedKeyword.current === appliedKeyword) return;
+    previousAppliedKeyword.current = appliedKeyword;
+    setDraftKeyword(null);
+  }, [appliedKeyword]);
 
   const tableQueryKey = useMemo(
     () => ["admin-data-table", api, state.query, ...queryKeyDeps] as const,
@@ -179,6 +229,8 @@ export function AdminDataTable<T extends object>({
   const total = tableQuery.data?.total ?? 0;
   const loading = tableQuery.isLoading || tableQuery.isFetching;
   const hasRows = data.length > 0;
+  const effectiveSort = state.sort ?? defaultSort;
+  const effectiveDensity = density ?? tableProps?.size ?? "middle";
 
   const reload = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
@@ -202,9 +254,9 @@ export function AdminDataTable<T extends object>({
 
   const deleteMutation = useMutation({
     mutationFn: (record: T) => request(`${api}/${getRowId(record, rowKey)}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_, record) => {
       feedback.success("删除成功");
-      onDataChanged?.();
+      onDataChanged?.({ action: "delete", record });
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
     },
   });
@@ -214,7 +266,7 @@ export function AdminDataTable<T extends object>({
       const payload = beforeSubmit ? beforeSubmit(values, formMode) : values;
       if (formMode === "create") {
         await request(api, { method: "POST", body: payload });
-        return "创建成功";
+        return { message: "创建成功", payload };
       }
       if (editingRecord) {
         await request(`${api}/${getRowId(editingRecord, rowKey)}`, {
@@ -222,12 +274,12 @@ export function AdminDataTable<T extends object>({
           body: payload,
         });
       }
-      return "更新成功";
+      return { message: "更新成功", payload };
     },
-    onSuccess: (message) => {
+    onSuccess: ({ message, payload }) => {
       feedback.success(message);
+      onDataChanged?.({ action: formMode, record: editingRecord, values: payload });
       closeForm();
-      onDataChanged?.();
       void queryClient.invalidateQueries({ queryKey: ["admin-data-table", api] });
     },
   });
@@ -236,13 +288,23 @@ export function AdminDataTable<T extends object>({
     const visibleColumns: ColumnsType<T> = columns
       .filter((column) => !column.hideInTable)
       .filter((column) => activeColumnKeys.includes(column.dataIndex))
-      .map((column) => ({
-        ...column,
-        dataIndex: column.dataIndex,
-        sorter: column.sorter,
-        fixed: hasRows ? column.fixed : undefined,
-        width: hasRows ? column.width : undefined,
-      }));
+      .map((column) => {
+        const sorter = column.sorter ?? isConventionallySortableField(column.dataIndex);
+        return {
+          ...column,
+          dataIndex: column.dataIndex,
+          sorter,
+          sortDirections: column.sortDirections ?? ["ascend", "descend"],
+          sortOrder:
+            sorter && effectiveSort?.field === column.dataIndex
+              ? effectiveSort.order === "asc"
+                ? "ascend"
+                : "descend"
+              : null,
+          fixed: hasRows ? column.fixed : undefined,
+          width: hasRows ? column.width : undefined,
+        };
+      });
 
     if (!enableActions) return visibleColumns;
 
@@ -269,15 +331,17 @@ export function AdminDataTable<T extends object>({
               </Tooltip>
             </AuthButton>
           ) : null}
-          {enableDelete && (canDelete ? canDelete(record) : true) ? (
+          {enableDelete &&
+          ((canDelete ? canDelete(record) : true) || deleteDisabledReason?.(record)) ? (
             <AuthButton auth={`${accessName}.delete`}>
-              <Tooltip title="删除">
+              <Tooltip title={deleteDisabledReason?.(record) ?? "删除"}>
                 <Button
                   aria-label="删除"
                   danger
                   type="primary"
                   size="small"
                   icon={<DeleteOutlined />}
+                  disabled={Boolean(deleteDisabledReason?.(record))}
                   onClick={() => {
                     if (!window.confirm("确认删除当前记录？")) return;
                     deleteMutation.mutate(record);
@@ -298,10 +362,12 @@ export function AdminDataTable<T extends object>({
     columns,
     canDelete,
     canUpdate,
+    deleteDisabledReason,
     deleteMutation,
     enableActions,
     enableDelete,
     enableUpdate,
+    effectiveSort,
     hasRows,
     openForm,
     operateRender,
@@ -336,11 +402,31 @@ export function AdminDataTable<T extends object>({
   }
 
   function handleKeywordSearch(value: string) {
-    setDraftKeyword(null);
     actions.setSearch({
       ...state.formValues,
       keyword: value,
     });
+  }
+
+  function isQuickFilterActive(values: Record<string, unknown>) {
+    if (!quickFilterFields.length) return false;
+    return quickFilterFields.every((field) => {
+      const expected = values[field];
+      const actual = state.formValues[field];
+      if (expected === undefined || expected === null || expected === "") {
+        return actual === undefined || actual === null || actual === "";
+      }
+      return String(actual) === String(expected);
+    });
+  }
+
+  function applyQuickFilter(values: Record<string, unknown>) {
+    const nextValues: Record<string, unknown> = {
+      ...state.formValues,
+      keyword: state.keyword,
+    };
+    quickFilterFields.forEach((field) => delete nextValues[field]);
+    actions.setSearch({ ...nextValues, ...values });
   }
 
   const searchNode = shouldShowSearch ? (
@@ -350,9 +436,12 @@ export function AdminDataTable<T extends object>({
       keyword={state.keyword}
       includeKeyword={false}
       loading={loading}
-      onSearch={(values) => actions.setSearch({ ...values, keyword: keywordText })}
+      onSearch={(values) => {
+        setDraftKeyword(keywordText);
+        actions.setSearch({ ...values, keyword: keywordText });
+      }}
       onReset={() => {
-        setDraftKeyword(null);
+        setDraftKeyword("");
         actions.reset();
       }}
     />
@@ -360,11 +449,11 @@ export function AdminDataTable<T extends object>({
 
   const densityMenu = {
     items: [
-      { key: "large", label: "默认", onClick: () => setDensity("large") },
-      { key: "middle", label: "中等", onClick: () => setDensity("middle") },
+      { key: "large", label: "宽松", onClick: () => setDensity("large") },
+      { key: "middle", label: "标准", onClick: () => setDensity("middle") },
       { key: "small", label: "紧凑", onClick: () => setDensity("small") },
     ],
-    selectedKeys: [density ?? "large"],
+    selectedKeys: [density ?? tableProps?.size ?? "middle"],
   };
 
   const tableScroll = useMemo<TableProps<T>["scroll"]>(() => {
@@ -408,15 +497,96 @@ export function AdminDataTable<T extends object>({
 
   const tableCard = (
     <div className={["admin-card", "admin-table-card", cardClassName].filter(Boolean).join(" ")}>
-      {searchPlacement === "inside" && searchNode ? (
-        <>
-          {searchNode}
-          <Divider className="admin-search-divider" />
-        </>
-      ) : null}
       <div className="admin-toolbar">
         <div className="admin-toolbar-left">
-          {toolbarTitle ? <div className="admin-toolbar-title">{toolbarTitle}</div> : null}
+          <div className="admin-toolbar-title">{toolbarTitle ?? "数据列表"}</div>
+          <span className="admin-toolbar-total">共 {total} 条</span>
+        </div>
+        <div className="admin-toolbar-right">
+          {showSearchForm ? (
+            <Button
+              className="admin-search-toggle"
+              type={searchOpen || hasActiveSearch ? "primary" : "default"}
+              icon={<FilterOutlined />}
+              onClick={() => setSearchOpen((value) => !value)}
+            >
+              <span>筛选</span>
+              {activeFilterCount ? (
+                <span
+                  className="admin-search-toggle-count"
+                  aria-label={`${activeFilterCount} 个筛选条件`}
+                >
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
+          {showToolbarSettings ? (
+            <>
+              <Tooltip title="刷新">
+                <Button aria-label="刷新" type="text" icon={<ReloadOutlined />} onClick={reload} />
+              </Tooltip>
+              <Tooltip title="行间距">
+                <Dropdown menu={densityMenu} trigger={["click"]}>
+                  <Button aria-label="行间距" type="text" icon={<ColumnHeightOutlined />} />
+                </Dropdown>
+              </Tooltip>
+              <Tooltip title={bordered ? "隐藏边框" : "显示边框"}>
+                <Button
+                  aria-label={bordered ? "隐藏边框" : "显示边框"}
+                  type="text"
+                  icon={bordered ? <BorderOutlined /> : <BorderlessTableOutlined />}
+                  onClick={() => setBordered((value) => !value)}
+                />
+              </Tooltip>
+              <Popover
+                content={columnSettingContent}
+                title="列设置"
+                trigger="click"
+                placement="bottomRight"
+              >
+                <Tooltip title="列设置">
+                  <Button aria-label="列设置" type="text" icon={<SettingOutlined />} />
+                </Tooltip>
+              </Popover>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {searchPlacement === "inside" && searchNode ? searchNode : null}
+      <div className="admin-table-commandbar">
+        <div className="admin-table-quick-filters">
+          {quickFilters?.map((filter) => {
+            const active = isQuickFilterActive(filter.values);
+            return (
+              <Button
+                key={filter.key}
+                type="text"
+                className={
+                  active ? "admin-table-quick-filter is-active" : "admin-table-quick-filter"
+                }
+                onClick={() => applyQuickFilter(filter.values)}
+              >
+                <span>{filter.label}</span>
+                {filter.count !== undefined ? (
+                  <span className="admin-table-quick-count">{filter.count}</span>
+                ) : null}
+              </Button>
+            );
+          })}
+        </div>
+        <div className="admin-table-command-actions">
+          {actionBarRender?.(reload)}
+          {showKeywordSearch ? (
+            <Input.Search
+              className="admin-table-keyword"
+              allowClear
+              value={keywordText}
+              placeholder="搜索表格内容"
+              onChange={(event) => setDraftKeyword(event.target.value)}
+              onSearch={handleKeywordSearch}
+            />
+          ) : null}
           {enableCreate ? (
             <AuthButton auth={`${accessName}.create`}>
               <Button
@@ -425,65 +595,11 @@ export function AdminDataTable<T extends object>({
                 icon={<PlusOutlined />}
                 onClick={() => openForm("create", null)}
               >
-                新增
+                {createTitle}
               </Button>
             </AuthButton>
           ) : null}
-          {showSearchButton ? (
-            <Button
-              className="admin-search-toggle"
-              type="primary"
-              icon={<SearchOutlined />}
-              onClick={() => setSearchOpen((value) => !value)}
-            >
-              搜索
-            </Button>
-          ) : null}
-          {showKeywordSearch ? (
-            <Input.Search
-              className="admin-table-keyword"
-              allowClear
-              value={keywordText}
-              placeholder="请输入关键字"
-              onChange={(event) => {
-                const value = event.target.value;
-                setDraftKeyword(value);
-                if (!value && state.keyword) {
-                  handleKeywordSearch("");
-                }
-              }}
-              onSearch={handleKeywordSearch}
-            />
-          ) : null}
-          {actionBarRender?.(reload)}
         </div>
-        {showToolbarSettings ? (
-          <div className="admin-toolbar-right">
-            <Tooltip title="刷新">
-              <Button type="text" icon={<ReloadOutlined />} onClick={reload} />
-            </Tooltip>
-            <Dropdown menu={densityMenu} trigger={["click"]}>
-              <Button type="text" icon={<ColumnHeightOutlined />} />
-            </Dropdown>
-            <Tooltip title={bordered ? "隐藏边框" : "显示边框"}>
-              <Button
-                type="text"
-                icon={bordered ? <BorderOutlined /> : <BorderlessTableOutlined />}
-                onClick={() => setBordered((value) => !value)}
-              />
-            </Tooltip>
-            <Popover
-              content={columnSettingContent}
-              title="列设置"
-              trigger="click"
-              placement="bottomRight"
-            >
-              <Tooltip title="列设置">
-                <Button type="text" icon={<SettingOutlined />} />
-              </Tooltip>
-            </Popover>
-          </div>
-        ) : null}
       </div>
       <div className={["admin-table-wrapper", `admin-table-wrapper--${tableMode}`].join(" ")}>
         <Table<T>
@@ -491,6 +607,7 @@ export function AdminDataTable<T extends object>({
           className={[
             "admin-data-table",
             hasRows ? "admin-data-table--populated" : "admin-data-table--empty",
+            `admin-data-table--density-${effectiveDensity}`,
             tableProps?.className,
           ]
             .filter(Boolean)
@@ -500,10 +617,11 @@ export function AdminDataTable<T extends object>({
           dataSource={data}
           rowSelection={tableRowSelection}
           loading={loading}
-          bordered={tableProps?.bordered ?? bordered}
-          size={tableProps?.size ?? density}
+          bordered={bordered}
+          size={effectiveDensity}
           locale={{ emptyText: emptyText ?? <EmptyState /> }}
           scroll={tableScroll}
+          showSorterTooltip={tableProps?.showSorterTooltip ?? { target: "sorter-icon" }}
           pagination={
             pagination === false
               ? false
@@ -515,6 +633,9 @@ export function AdminDataTable<T extends object>({
                   placement: ["bottomEnd"],
                   showQuickJumper: total > state.pageSize * 2,
                   showSizeChanger: true,
+                  pageSizeOptions: Array.from(new Set([10, 20, 30, 50, 100, state.pageSize])).sort(
+                    (left, right) => left - right,
+                  ),
                   showTotal: (count) => `共 ${count} 条`,
                 }
           }
@@ -526,8 +647,10 @@ export function AdminDataTable<T extends object>({
         mode={formMode}
         title={formMode === "create" ? createTitle : updateTitle}
         columns={columns}
-        initialValues={editingRecord}
+        initialValues={formMode === "create" ? createInitialValues : editingRecord}
         loading={saveMutation.isPending}
+        basicColumnCount={formBasicColumns}
+        notice={formNotice}
         onCancel={closeForm}
         onFinish={handleFinish}
       />

@@ -95,11 +95,16 @@ function decodeFormValue(field: TableUrlField, rawValue: string) {
   return rawValue;
 }
 
-function removeTableParams(params: URLSearchParams, fields: TableUrlField[], prefix?: string) {
+function removeTableParams(
+  params: URLSearchParams,
+  fields: TableUrlField[],
+  prefix?: string,
+  options: { removeSort?: boolean } = {},
+) {
   params.delete(getParamName(prefix, "page"));
   params.delete(getParamName(prefix, "pageSize"));
   params.delete(getParamName(prefix, "keyword"));
-  params.delete(getParamName(prefix, "sort"));
+  if (options.removeSort !== false) params.delete(getParamName(prefix, "sort"));
   fields.forEach((field) => {
     const fieldName = getParamName(prefix, field.name);
     params.delete(fieldName);
@@ -179,7 +184,7 @@ export function useTableUrlState({
     () => ({
       setSearch(values: Record<string, unknown>) {
         const params = new URLSearchParams(navigation.search);
-        removeTableParams(params, fields, urlStatePrefix);
+        removeTableParams(params, fields, urlStatePrefix, { removeSort: false });
         if (values.keyword)
           params.set(getParamName(urlStatePrefix, "keyword"), String(values.keyword));
         fields.forEach((field) =>

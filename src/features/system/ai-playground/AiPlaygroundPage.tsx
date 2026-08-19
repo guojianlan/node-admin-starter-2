@@ -21,9 +21,14 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
-import { request, requestEventStream, type EventStreamMessage } from "@/lib/request";
+import {
+  buildQueryString,
+  request,
+  requestEventStream,
+  type EventStreamMessage,
+} from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
 
@@ -75,6 +80,21 @@ type StreamFinish = {
   durationMs?: number;
 };
 
+type AiPlaygroundModelOption = {
+  id: number;
+  name: string;
+  modelId: string;
+  providerId: number;
+  providerName: string;
+  providerCode: string;
+  providerType: string;
+  capabilities: Record<string, unknown>;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  isDefaultChat: boolean;
+  isDefaultStructured: boolean;
+};
+
 const usageOptions = [
   { label: "Chat", value: "chat" },
   { label: "结构化", value: "structured" },
@@ -110,8 +130,22 @@ function finishColor(finishReason?: string) {
   return "blue";
 }
 
+function supportsUsage(model: AiPlaygroundModelOption, usage: AiRuntimeUsage) {
+  return usage === "chat" || model.isDefaultStructured || model.capabilities.structured === true;
+}
+
+function pickFallbackModel(models: AiPlaygroundModelOption[], usage: AiRuntimeUsage) {
+  const compatibleModels = models.filter((model) => supportsUsage(model, usage));
+  return (
+    compatibleModels.find((model) =>
+      usage === "structured" ? model.isDefaultStructured : model.isDefaultChat,
+    ) ?? compatibleModels[0]
+  );
+}
+
 export function AiPlaygroundPage() {
   const [usage, setUsage] = useState<AiRuntimeUsage>("chat");
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
   const [input, setInput] = useState(
     "请用三句话说明 Admin Base 的 AI Runtime 应该怎么接入业务模块。",
   );
@@ -124,12 +158,40 @@ export function AiPlaygroundPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
 
-  const runtimeQuery = useQuery({
-    queryKey: ["system-ai-playground-runtime", usage],
+  const optionsQuery = useQuery({
+    queryKey: ["system-ai-playground-options"],
     queryFn: () =>
-      request<AiRuntimeStatus>(`/api/system/ai/playground/runtime-config/${usage}`, {
+      request<{ models: AiPlaygroundModelOption[] }>("/api/system/ai/playground/options", {
         silent: true,
       }),
+    retry: false,
+  });
+
+  const availableModels = useMemo(() => optionsQuery.data?.models ?? [], [optionsQuery.data]);
+  const compatibleModels = useMemo(
+    () => availableModels.filter((model) => supportsUsage(model, usage)),
+    [availableModels, usage],
+  );
+  const selectedModelExists =
+    selectedModelId !== null && compatibleModels.some((model) => model.id === selectedModelId);
+  const defaultModel = compatibleModels.find((model) =>
+    usage === "structured" ? model.isDefaultStructured : model.isDefaultChat,
+  );
+  const fallbackModel = pickFallbackModel(availableModels, usage);
+  const effectiveModelId = selectedModelExists
+    ? selectedModelId
+    : defaultModel
+      ? null
+      : (fallbackModel?.id ?? null);
+
+  const runtimeQuery = useQuery({
+    queryKey: ["system-ai-playground-runtime", usage, effectiveModelId],
+    queryFn: () =>
+      request<AiRuntimeStatus>(
+        `/api/system/ai/playground/runtime-config/${usage}${buildQueryString({ modelId: effectiveModelId ?? undefined })}`,
+        { silent: true },
+      ),
+    enabled: optionsQuery.isSuccess,
     retry: false,
   });
 
@@ -142,6 +204,7 @@ export function AiPlaygroundPage() {
 
   const buildPayload = () => ({
     usage,
+    modelId: effectiveModelId,
     input: input.trim(),
     maxOutputTokens,
     timeoutMs,
@@ -232,11 +295,13 @@ export function AiPlaygroundPage() {
 
   const activeConfig = streamMeta ?? (runtimeQuery.data?.ready ? runtimeQuery.data : null);
   const busy = runMutation.isPending || isStreaming;
+  const runtimeReady = Boolean(runtimeQuery.data?.ready);
+  const hasCompatibleModels = compatibleModels.length > 0;
 
   return (
     <PageScaffold
       title="AI Playground"
-      description="使用当前默认 Provider 和模型验证 AI Runtime，供业务模块与 Agent 接入前调试"
+      description="临时调试已配置模型的 Prompt、参数、流式输出与用量；结果不保存为正式会话"
       className="ai-playground-page"
     >
       <div className="ai-playground-workbench admin-fill-workspace">
@@ -253,10 +318,57 @@ export function AiPlaygroundPage() {
                 options={usageOptions}
                 onChange={(value) => {
                   setUsage(value);
-                  resetResult();
+                  setOutput("");
+                  setFinish(null);
+                  setStreamError("");
+                  setStreamMeta(null);
                 }}
                 style={{ width: "100%" }}
               />
+            </Space>
+            <Space orientation="vertical" size={6} style={{ width: "100%" }}>
+              <Typography.Text type="secondary">运行模型</Typography.Text>
+              <Select
+                showSearch
+                loading={optionsQuery.isLoading}
+                value={effectiveModelId ?? "default"}
+                optionFilterProp="label"
+                options={[
+                  {
+                    value: "default",
+                    label: `使用${usage === "structured" ? "结构化" : " Chat"}默认模型`,
+                  },
+                  ...compatibleModels.map((model) => ({
+                    value: model.id,
+                    label: `${model.name} (${model.modelId}) · ${model.providerName} · ${model.providerCode}${
+                      usage === "structured" && model.isDefaultStructured
+                        ? " · 结构化默认"
+                        : usage === "chat" && model.isDefaultChat
+                          ? " · Chat 默认"
+                          : ""
+                    }`,
+                  })),
+                ]}
+                onChange={(value) => {
+                  setSelectedModelId(value === "default" ? null : Number(value));
+                  setOutput("");
+                  setFinish(null);
+                  setStreamError("");
+                  setStreamMeta(null);
+                }}
+                placeholder="选择已启用的模型"
+                style={{ width: "100%" }}
+                notFoundContent={optionsQuery.isLoading ? "正在加载模型" : "没有可用模型"}
+              />
+              {optionsQuery.error ? (
+                <Typography.Text type="danger">模型列表加载失败</Typography.Text>
+              ) : !optionsQuery.isLoading && !hasCompatibleModels ? (
+                <Typography.Text type="warning">
+                  {usage === "structured"
+                    ? "没有已启用且支持结构化输出的模型"
+                    : "没有已启用的 Chat 模型"}
+                </Typography.Text>
+              ) : null}
             </Space>
             <Space orientation="vertical" size={6} style={{ width: "100%" }}>
               <Typography.Text type="secondary">Prompt</Typography.Text>
@@ -279,7 +391,7 @@ export function AiPlaygroundPage() {
               />
               <InputNumber
                 min={16}
-                max={32768}
+                max={131072}
                 step={512}
                 value={maxOutputTokens}
                 onChange={(value) => setMaxOutputTokens(Number(value ?? 16384))}
@@ -302,7 +414,7 @@ export function AiPlaygroundPage() {
                 type="primary"
                 icon={<ThunderboltOutlined />}
                 loading={isStreaming}
-                disabled={runMutation.isPending}
+                disabled={runMutation.isPending || !runtimeReady}
                 onClick={() => void runStream()}
               >
                 流式运行
@@ -310,7 +422,7 @@ export function AiPlaygroundPage() {
               <Button
                 icon={<PlayCircleOutlined />}
                 loading={runMutation.isPending}
-                disabled={isStreaming}
+                disabled={isStreaming || !runtimeReady}
                 onClick={() => {
                   if (!input.trim()) {
                     feedback.warning("请输入调用内容");

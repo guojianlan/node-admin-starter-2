@@ -1,0 +1,178 @@
+import { Agent } from "@mastra/core/agent";
+import type { ModelMessage } from "ai";
+import {
+  appendAgentRunStep,
+  createAgentRun,
+  executeAgentTool,
+  finishAgentRun,
+  getAiAgent,
+  listAiTools,
+} from "@/server/services/ai-agent-service";
+import { isAiToolApprovalRequired } from "@/server/services/ai-agent-runtime-policy";
+import type { AiRuntimeMessage } from "@/server/services/ai-runtime-service";
+import { createAiRuntime } from "@/server/services/ai-runtime-service";
+import { resolveDataScopeForUser } from "@/server/services/data-scope";
+import { createAdminBaseMastraRequestContext } from "./request-context";
+import { toMastraLanguageModel } from "./model-adapter";
+import { adaptMastraAgentStream } from "./stream-adapter";
+import { createMastraToolSet } from "./tool-adapter";
+
+function toModelMessages(messages: AiRuntimeMessage[]): ModelMessage[] {
+  return messages.map((message) => ({ role: message.role, content: message.content }));
+}
+
+function separateAgentInstructions(messages: AiRuntimeMessage[], instructions: string) {
+  const first = messages[0];
+  const normalizedInstructions = instructions.trim();
+  if (
+    first?.role === "system" &&
+    normalizedInstructions &&
+    first.content.startsWith(normalizedInstructions)
+  ) {
+    return { instructions: first.content, messages: messages.slice(1) };
+  }
+  return { instructions: normalizedInstructions, messages };
+}
+
+function normalizeUsage(usage: unknown): Record<string, unknown> {
+  return usage && typeof usage === "object" && !Array.isArray(usage)
+    ? Object.fromEntries(
+        Object.entries(usage as Record<string, unknown>).filter(([, value]) => value != null),
+      )
+    : {};
+}
+
+export async function createMastraAiAgentStream(input: {
+  agentId: number;
+  sessionId: number;
+  userId: number;
+  inputMessageId?: number | null;
+  parentRunId?: number | null;
+  sourceApprovalId?: number | null;
+  messages: AiRuntimeMessage[];
+  modelId?: number | null;
+  maxOutputTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+  abortSignal: AbortSignal;
+  abilities?: string[];
+  requestId?: string;
+}) {
+  const startedAt = performance.now();
+  const agentRow = await getAiAgent(input.agentId);
+  if (!agentRow || agentRow.status !== 1) throw new Error("Agent 不存在或已停用");
+  const runtime = await createAiRuntime({
+    usage: "chat",
+    messages: input.messages,
+    modelId: input.modelId || agentRow.modelId,
+    maxOutputTokens: input.maxOutputTokens || agentRow.maxOutputTokens || undefined,
+    temperature: input.temperature ?? agentRow.temperatureMilli / 1000,
+    timeoutMs: input.timeoutMs,
+    abortSignal: input.abortSignal,
+  });
+  const runId = await createAgentRun({
+    sessionId: input.sessionId,
+    agentId: agentRow.id,
+    userId: input.userId,
+    inputMessageId: input.inputMessageId,
+    parentRunId: input.parentRunId,
+    sourceApprovalId: input.sourceApprovalId,
+  });
+  const toolRows = await listAiTools({ activeOnly: true, agentId: agentRow.id });
+  const toolMap = new Map(toolRows.map((item) => [item.code, item]));
+  let stepNo = 0;
+  const tools = createMastraToolSet({
+    tools: toolRows,
+    requiresApproval: isAiToolApprovalRequired,
+    execute: async (toolRow, toolInput) => {
+      const toolStartedAt = performance.now();
+      stepNo += 1;
+      try {
+        const output = await executeAgentTool(toolRow, toolInput, {
+          userId: input.userId,
+          requestId: input.requestId,
+        });
+        await appendAgentRunStep({
+          runId,
+          stepNo,
+          stepType: "tool",
+          status: "completed",
+          toolId: toolRow.id,
+          toolName: toolRow.code,
+          input: toolInput,
+          output,
+          durationMs: Math.round(performance.now() - toolStartedAt),
+        });
+        return output;
+      } catch (error) {
+        await appendAgentRunStep({
+          runId,
+          stepNo,
+          stepType: "tool",
+          status: "failed",
+          toolId: toolRow.id,
+          toolName: toolRow.code,
+          input: toolInput,
+          durationMs: Math.round(performance.now() - toolStartedAt),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    },
+  });
+  const requestContext = createAdminBaseMastraRequestContext({
+    userId: input.userId,
+    abilities: input.abilities ?? [],
+    requestId: input.requestId ?? `ai-agent-run-${runId}`,
+    dataScope: await resolveDataScopeForUser(input.userId),
+  });
+  const agentInput = separateAgentInstructions(runtime.messages, agentRow.instructions);
+  const mastraAgent = new Agent({
+    id: `admin-base-${agentRow.code}`,
+    name: agentRow.name,
+    description: agentRow.description ?? undefined,
+    instructions: agentInput.instructions,
+    model: toMastraLanguageModel(runtime.sdkRuntime.model),
+    tools,
+    maxRetries: 0,
+  });
+
+  try {
+    const stream = await mastraAgent.stream(toModelMessages(agentInput.messages), {
+      runId: `admin-base-run-${runId}`,
+      requestContext,
+      maxSteps: Math.min(Math.max(agentRow.maxSteps, 1), 20),
+      modelSettings: {
+        maxOutputTokens: runtime.maxOutputTokens,
+        temperature: runtime.temperature,
+      },
+      abortSignal: AbortSignal.any([input.abortSignal, AbortSignal.timeout(runtime.timeoutMs)]),
+    });
+    return {
+      orchestrator: "mastra" as const,
+      agent: agentRow,
+      runId,
+      runtime: {
+        ...runtime,
+        startedAt,
+        endpointHint: runtime.sdkRuntime.endpointHint,
+        normalizeUsage,
+        resolveDurationMs: () => Math.round(performance.now() - startedAt),
+      },
+      stream: { fullStream: adaptMastraAgentStream(stream) },
+      toolMap,
+      nextStepNo: () => {
+        stepNo += 1;
+        return stepNo;
+      },
+      currentStepNo: () => stepNo,
+    };
+  } catch (error) {
+    await finishAgentRun({
+      id: runId,
+      status: "failed",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}

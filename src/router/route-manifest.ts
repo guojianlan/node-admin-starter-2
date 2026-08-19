@@ -5,6 +5,8 @@ import { AiAgentPage } from "@/features/system/ai-agent/AiAgentPage";
 import { AiModelPage } from "@/features/system/ai-model/AiModelPage";
 import { AiPlaygroundPage } from "@/features/system/ai-playground/AiPlaygroundPage";
 import { AiProviderPage } from "@/features/system/ai-provider/AiProviderPage";
+import { AiSetupPage } from "@/features/system/ai-setup/AiSetupPage";
+import { AiWebSearchPage } from "@/features/system/ai-web-search/AiWebSearchPage";
 import { ConfigPage } from "@/features/system/config/ConfigPage";
 import { DictItemPage } from "@/features/system/dict/DictItemPage";
 import { DeptPage } from "@/features/system/dept/DeptPage";
@@ -156,16 +158,23 @@ export const adminRoutes: AdminRouteRecord[] = [
     component: SmsProviderPage,
   },
   {
+    path: "/system/ai/setup",
+    key: "system.aiSetup",
+    title: "AI 接入",
+    auth: "system.aiSetup.query",
+    component: AiSetupPage,
+  },
+  {
     path: "/system/ai/provider",
     key: "system.aiProvider",
-    title: "AI Provider",
+    title: "AI 服务商",
     auth: "system.aiProvider.query",
     component: AiProviderPage,
   },
   {
     path: "/system/ai/model",
     key: "system.aiModel",
-    title: "AI 模型",
+    title: "模型管理",
     auth: "system.aiModel.query",
     component: AiModelPage,
   },
@@ -189,6 +198,13 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "AI Agent",
     auth: "system.aiAgent.query",
     component: AiAgentPage,
+  },
+  {
+    path: "/system/ai/web-search",
+    key: "system.aiWebSearch",
+    title: "联网搜索",
+    auth: "system.aiWebSearch.query",
+    component: AiWebSearchPage,
   },
   {
     path: "/system/module/generator",

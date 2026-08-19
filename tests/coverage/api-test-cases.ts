@@ -7,6 +7,7 @@ const operationsByMethod = {
     "/api/system/ai/chat/sessions/{id}",
     "/api/system/ai/model/{id}",
     "/api/system/ai/provider/{id}",
+    "/api/system/ai/web-search/provider/{id}",
     "/api/system/ai/tool/{id}",
     "/api/system/config/group/{id}",
     "/api/system/config/items/{id}",
@@ -45,6 +46,9 @@ const operationsByMethod = {
     "/api/system/ai/agent/options",
     "/api/system/ai/agent/runs",
     "/api/system/ai/agent/runs/{id}/steps",
+    "/api/system/ai/workflow/definitions",
+    "/api/system/ai/workflow/runs",
+    "/api/system/ai/workflow/runs/{id}",
     "/api/system/ai/chat/options",
     "/api/system/ai/chat/runtime-config",
     "/api/system/ai/chat/sessions",
@@ -53,8 +57,13 @@ const operationsByMethod = {
     "/api/system/ai/chat/sessions/{id}/messages",
     "/api/system/ai/chat/sessions/{id}/run/latest",
     "/api/system/ai/model",
+    "/api/system/ai/setup/summary",
+    "/api/system/ai/provider/{id}/models",
+    "/api/system/ai/provider/{id}/test-models",
+    "/api/system/ai/playground/options",
     "/api/system/ai/playground/runtime-config/{usage}",
     "/api/system/ai/provider",
+    "/api/system/ai/web-search/provider",
     "/api/system/ai/runtime-config/{usage}",
     "/api/system/ai/tool",
     "/api/system/config/group",
@@ -116,6 +125,7 @@ const operationsByMethod = {
   POST: [
     "/api/system/ai/agent",
     "/api/system/ai/approval/{id}/decision",
+    "/api/system/ai/chat/sessions/{sessionId}/client-actions/{id}/result",
     "/api/system/ai/chat/sessions",
     "/api/system/ai/chat/sessions/{id}/messages/{messageId}/regenerate",
     "/api/system/ai/chat/sessions/{id}/messages/stream",
@@ -128,7 +138,13 @@ const operationsByMethod = {
     "/api/system/ai/provider/batch-delete",
     "/api/system/ai/provider/test",
     "/api/system/ai/provider/test/stream",
+    "/api/system/ai/setup/complete",
+    "/api/system/ai/setup/discover",
+    "/api/system/ai/web-search/provider",
+    "/api/system/ai/web-search/provider/batch-delete",
+    "/api/system/ai/web-search/provider/test",
     "/api/system/ai/tool",
+    "/api/system/ai/workflow/{code}/runs",
     "/api/system/config/group",
     "/api/system/config/group/batch-delete",
     "/api/system/config/items",
@@ -195,6 +211,8 @@ const operationsByMethod = {
     "/api/system/ai/provider/{id}",
     "/api/system/ai/provider/default/{id}",
     "/api/system/ai/provider/status/{id}",
+    "/api/system/ai/web-search/provider/{id}",
+    "/api/system/ai/web-search/provider/status/{id}",
     "/api/system/ai/tool/{id}",
     "/api/system/config/group/{id}",
     "/api/system/config/items/{id}",
@@ -276,6 +294,33 @@ function coverageFor(path: string): CoverageMode {
 
 function createCase(method: string, path: string): ApiTestCase {
   const operation = `${method} ${path}`;
+  if (operation === "POST /api/system/ai/chat/sessions/{sessionId}/client-actions/{id}/result") {
+    return {
+      operation,
+      area: "ai / chat",
+      success: [
+        "granted 结果在浏览器和服务端分别粗化后写入 Approval/Step，Run 进入 waiting_continuation 并恢复同一 Agent 流程",
+        "denied、unavailable 或 error 作为合法 Client Tool 结果完成当前 Step，Agent 随后询问城市而不是把会话标记失败",
+      ],
+      failures: [
+        "未登录返回 401，缺少 system.aiChat.chat 返回 403；跨用户、跨会话、非 browser-location Tool 返回 409",
+        "过期或已处理结果返回 409，重复提交不能创建第二条消息、执行第二次续跑或覆盖原结果",
+      ],
+      dataAssertions: [
+        "经纬度只保留两位小数，accuracy 为受限安全整数；Approval、Step 和系统上下文不含客户端提交的精确坐标",
+        "Approval 为 executed、Step 为 completed、父 Run 为 waiting_continuation；过期请求将 Step/Run 收口为 denied/stopped",
+      ],
+      security: [
+        "接口只要求当前会话用户的 system.aiChat.chat，不使用管理员 system.aiAgent.approve 权限，也不能执行任意服务端 Tool",
+        "请求体使用判别联合严格校验；服务端只构造受控输出和系统消息，不接受客户端自定义 output 或日志字段",
+      ],
+      sideEffects: [
+        "成功或降级结果刷新会话消息统计并允许一次续跑；过期结果停止等待中的 Run，避免永久挂起",
+        "操作日志只记录 browser_location、结果状态和是否授权，不记录经纬度、accuracy 或浏览器原始错误对象",
+      ],
+      coverage: "automated",
+    };
+  }
   const isPublic = publicApiOperations.has(operation);
   const isRead = method === "GET";
   const isStream = path.endsWith("/stream");

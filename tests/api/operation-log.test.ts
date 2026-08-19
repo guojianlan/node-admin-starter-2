@@ -43,8 +43,7 @@ async function readJson<T = unknown>(response: Response) {
 }
 
 async function login(username = "admin", password?: string) {
-  const resolvedPassword =
-    password ?? (username === "admin" ? getAdminTestPassword() : "123456");
+  const resolvedPassword = password ?? (username === "admin" ? getAdminTestPassword() : "123456");
   const response = await app.request("/api/system/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -283,6 +282,21 @@ describe("operation log", () => {
         success: true,
       }),
     ]);
+
+    const stats = await app.request("/api/system/operation/log/stats", {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    const statsBody = await readJson<{
+      modules: Array<{ module: string; label: string; total: number }>;
+    }>(stats);
+    expect(stats.status).toBe(200);
+    expect(statsBody.data?.modules).toContainEqual(
+      expect.objectContaining({
+        module: "system.dict",
+        label: "字典管理",
+        total: 1,
+      }),
+    );
 
     await createDictQueryOnlyUser();
     const limitedToken = await login("dictviewer", "123456");

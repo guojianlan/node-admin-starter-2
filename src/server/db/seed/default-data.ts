@@ -250,10 +250,25 @@ const moduleRules = [
   },
   {
     route: {
+      id: 300,
+      parentId: 180,
+      key: "system.aiSetup",
+      name: "AI 接入",
+      path: "/system/ai/setup",
+      icon: "api",
+      order: 79,
+    },
+    actions: [
+      ["query", "查看 AI 接入"],
+      ["configure", "配置 AI 接入"],
+    ],
+  },
+  {
+    route: {
       id: 230,
       parentId: 180,
       key: "system.aiProvider",
-      name: "AI Provider",
+      name: "AI 服务商",
       path: "/system/ai/provider",
       icon: "api",
       order: 80,
@@ -273,7 +288,7 @@ const moduleRules = [
       id: 240,
       parentId: 180,
       key: "system.aiModel",
-      name: "AI 模型",
+      name: "模型管理",
       path: "/system/ai/model",
       icon: "api",
       order: 81,
@@ -337,6 +352,26 @@ const moduleRules = [
       ["update", "编辑 Agent 和工具"],
       ["delete", "删除 Agent 和工具"],
       ["approve", "审批 Agent 工具调用"],
+      ["executeWorkflow", "执行 AI 工作流"],
+    ],
+  },
+  {
+    route: {
+      id: 290,
+      parentId: 180,
+      key: "system.aiWebSearch",
+      name: "联网搜索",
+      path: "/system/ai/web-search",
+      icon: "global",
+      order: 85,
+    },
+    actions: [
+      ["query", "查询搜索 Provider"],
+      ["create", "新增搜索 Provider"],
+      ["update", "编辑搜索 Provider"],
+      ["delete", "删除搜索 Provider"],
+      ["status", "启停搜索 Provider"],
+      ["test", "测试搜索 Provider"],
     ],
   },
   {

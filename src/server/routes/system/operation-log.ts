@@ -1,10 +1,10 @@
-import { desc, eq, sql as drizzleSql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql as drizzleSql } from "drizzle-orm";
 import { Hono } from "hono";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { createCrudRoutes } from "@/server/crud/create-crud-routes";
 import { db, sqlite } from "@/server/db";
-import { sysOperationLog } from "@/server/db/schema";
+import { sysOperationLog, sysRule } from "@/server/db/schema";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { recordOperationLog, runWithOperationLog } from "@/server/services/operation-log-service";
@@ -124,12 +124,14 @@ operationLogRoutes.get(
     const rows = await db
       .select({
         module: sysOperationLog.module,
+        label: drizzleSql<string>`COALESCE(${sysRule.displayName}, ${sysRule.name}, ${sysOperationLog.module})`,
         total: drizzleSql<number>`COUNT(1)::int`,
         failed: drizzleSql<number>`COUNT(*) FILTER (WHERE ${sysOperationLog.success} = false)::int`,
         lastAt: drizzleSql<Date>`MAX(${sysOperationLog.createdAt})`,
       })
       .from(sysOperationLog)
-      .groupBy(sysOperationLog.module)
+      .leftJoin(sysRule, and(eq(sysRule.key, sysOperationLog.module), isNull(sysRule.deletedAt)))
+      .groupBy(sysOperationLog.module, sysRule.displayName, sysRule.name)
       .orderBy(desc(drizzleSql`MAX(${sysOperationLog.createdAt})`));
 
     const failedTotal = await db
@@ -195,7 +197,10 @@ operationLogRoutes.get(
       "createdAt",
     ];
     const escapeCsv = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const csv = [headers.join(","), ...rows.map((row) => headers.map((key) => escapeCsv(row[key])).join(","))].join("\n");
+    const csv = [
+      headers.join(","),
+      ...rows.map((row) => headers.map((key) => escapeCsv(row[key])).join(",")),
+    ].join("\n");
     return new Response(csv, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

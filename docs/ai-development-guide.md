@@ -122,6 +122,34 @@ refused. Rollback restores source only and never reverses an already executed da
 - Custom scope logic belongs in a reusable scope resolver or an explicit query boundary, not in a
   frontend filter.
 
+### Data Ownership Decision
+
+Every module contract must choose one visibility model before schema or page generation:
+
+| Visibility model          | Typical records                                                | Required contract                                                                                   |
+| ------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Global system data        | dictionaries, system parameters, Provider metadata             | State `dataScope: false` and why all authorized administrators share the records                    |
+| Department-owned          | articles, customers, orders, projects owned by an organization | Persist non-null `deptId`, set it on the server, and map it in CRUD `dataScope`                     |
+| User-owned                | personal drafts, private conversations, personal tasks         | Persist non-null `ownerId`, set it to the current user on the server, and map it in `dataScope`     |
+| Department-and-user-owned | department work with a responsible person                      | Persist both `deptId` and `ownerId`; department scopes use the department and `self` uses the owner |
+| Custom business scope     | account teams, project membership, regional franchises         | Define the membership resolver and apply it to list, detail, export, and every mutation route       |
+
+`createdBy` remains immutable audit evidence. Do not use it as the only ownership field when a
+record can be transferred, reassigned, or remain with its original department after the creator
+moves departments.
+
+For scoped modules:
+
+1. Derive default `deptId` and `ownerId` from the authenticated user in server code. Do not trust
+   hidden frontend fields.
+2. Define whether authorized administrators may assign or transfer records, and which target
+   departments or owners are valid.
+3. Declare CRUD Factory `dataScope`; explicit routes, exports, aggregates, jobs, and external tools
+   must apply the same resolver themselves.
+4. Test same-department success, cross-department invisibility, direct-ID write rejection, mixed
+   batch rejection, self-only behavior, department-tree behavior, and super-admin behavior.
+5. Treat a missing ownership decision as a design blocker, not as permission to ship global data.
+
 ## 8. Audit And Secret Rules
 
 Record material mutations with operation, resource, resource ID, success/failure, request ID, risk
@@ -227,6 +255,29 @@ Standard CRUD:
 ```text
 Use $admin-module to add a CMS category module with name, slug, status, sort, description,
 department data scope, standard permissions, operation logs, API tests, and page acceptance cases.
+```
+
+Department-owned business data:
+
+```text
+Use $admin-module to add a CMS article module.
+Visibility model: department-and-user-owned.
+Persist non-null deptId and ownerId. On create, set deptId from the authenticated user's department
+and ownerId from the authenticated user on the server; do not trust client ownership fields.
+Current-department roles see only their department, department-tree roles include child departments,
+custom-department roles use sys_role_dept, self roles use ownerId, and all roles are unrestricted.
+Apply the same scope to list, detail, export, update, delete, batch actions, and custom routes.
+Allow reassignment only to departments and users inside the operator's resolved scope.
+Add cross-department read/write, mixed-batch, self, tree, assignment, and operation-log tests.
+```
+
+Intentionally global configuration:
+
+```text
+Use $admin-module to add a CMS rendering configuration module.
+Visibility model: global system data. Set dataScope: false intentionally because these settings are
+shared by all departments. Keep page/action permissions, protected system records, operation logs,
+and tests; do not add deptId or ownerId merely to satisfy a generic template.
 ```
 
 Operational page:

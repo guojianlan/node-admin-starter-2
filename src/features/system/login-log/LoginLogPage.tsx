@@ -32,7 +32,9 @@ export function LoginLogPage() {
     mutationFn: () => request("/api/system/login/log/clean", { method: "DELETE", body: {} }),
     onSuccess: () => {
       feedback.success("清理成功");
-      void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/login/log"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-data-table", "/api/system/login/log"],
+      });
     },
   });
 
@@ -123,7 +125,7 @@ export function LoginLogPage() {
   ];
 
   return (
-    <PageScaffold title="登录日志" description="查看后台账号登录成功、失败和来源信息">
+    <PageScaffold title="登录日志" description="查看后台账号登录成功、失败和来源信息" hideHeader>
       <AdminDataTable
         api="/api/system/login/log"
         accessName="system.loginLog"

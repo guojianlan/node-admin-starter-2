@@ -7,6 +7,7 @@ import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { encryptSecret } from "@/server/services/secret";
+import { resolveListOrder } from "@/server/services/list-query";
 
 const emptyToNull = (value: unknown) => (value === "" ? null : value);
 
@@ -21,8 +22,14 @@ const providerSchema = z.object({
   userInfoUrl: optionalUrl,
   clientId: z.preprocess(emptyToNull, z.string().optional().nullable()),
   clientSecret: z.preprocess(emptyToNull, z.string().optional().nullable()),
-  scopes: z.union([z.array(z.string()), z.string()]).optional().nullable(),
-  userMapping: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().nullable(),
+  scopes: z
+    .union([z.array(z.string()), z.string()])
+    .optional()
+    .nullable(),
+  userMapping: z
+    .union([z.record(z.string(), z.unknown()), z.string()])
+    .optional()
+    .nullable(),
   autoCreateUser: z.coerce.boolean().default(false),
   status: z.coerce.number().default(1),
   sort: z.coerce.number().default(0),
@@ -150,6 +157,17 @@ oauthProviderRoutes.get(
       values.push(Number(status));
     }
     const where = conditions.join(" AND ");
+    const orderSql = resolveListOrder({
+      params,
+      fieldMap: {
+        id: "id",
+        sort: "sort",
+        createdAt: "created_at",
+        updatedAt: "updated_at",
+      },
+      sortableFields: ["id", "sort", "createdAt", "updatedAt"],
+      defaultSort: { field: "sort", order: "asc" },
+    }).sql;
     const totalRow = (await sqlite
       .prepare(`SELECT COUNT(1)::int AS total FROM sys_oauth_provider WHERE ${where}`)
       .get(...values)) as { total: number } | undefined;
@@ -175,7 +193,7 @@ oauthProviderRoutes.get(
           updated_at AS updatedAt
          FROM sys_oauth_provider
          WHERE ${where}
-         ORDER BY sort ASC, id ASC
+         ${orderSql}
          LIMIT ? OFFSET ?`,
       )
       .all(...values, pageSize, (page - 1) * pageSize)) as ProviderRow[];
@@ -197,9 +215,7 @@ oauthProviderRoutes.post(
     const payload = providerSchema.parse(await c.req.json());
     const scopesJson = JSON.stringify(normalizeScopes(payload.scopes));
     const userMappingJson = JSON.stringify(parseJsonObject(payload.userMapping));
-    const clientSecretEncrypted = payload.clientSecret
-      ? encryptSecret(payload.clientSecret)
-      : null;
+    const clientSecretEncrypted = payload.clientSecret ? encryptSecret(payload.clientSecret) : null;
     await runWithOperationLog(
       c,
       {
@@ -288,7 +304,9 @@ oauthProviderRoutes.put(
             payload.userInfoUrl ?? row.userInfoUrl,
             payload.clientId ?? row.clientId,
             payload.clientSecret ? encryptSecret(payload.clientSecret) : null,
-            payload.scopes === undefined ? row.scopesJson : JSON.stringify(normalizeScopes(payload.scopes)),
+            payload.scopes === undefined
+              ? row.scopesJson
+              : JSON.stringify(normalizeScopes(payload.scopes)),
             payload.userMapping === undefined
               ? row.userMappingJson
               : JSON.stringify(parseJsonObject(payload.userMapping)),
@@ -322,7 +340,9 @@ oauthProviderRoutes.delete(
       },
       async () => {
         await sqlite
-          .prepare("UPDATE sys_oauth_provider SET deleted_at = now(), updated_at = now() WHERE id = ?")
+          .prepare(
+            "UPDATE sys_oauth_provider SET deleted_at = now(), updated_at = now() WHERE id = ?",
+          )
           .run(id);
       },
     );
@@ -336,7 +356,9 @@ oauthProviderRoutes.put(
   ability("system.oauthProvider.status"),
   async (c) => {
     const id = Number(c.req.param("id"));
-    const payload = z.object({ status: z.coerce.number(), enabled: z.coerce.boolean().optional() }).parse(await c.req.json());
+    const payload = z
+      .object({ status: z.coerce.number(), enabled: z.coerce.boolean().optional() })
+      .parse(await c.req.json());
     await runWithOperationLog(
       c,
       {
@@ -348,7 +370,9 @@ oauthProviderRoutes.put(
       },
       async () => {
         await sqlite
-          .prepare("UPDATE sys_oauth_provider SET status = ?, enabled = COALESCE(?, enabled), updated_at = now() WHERE id = ? AND deleted_at IS NULL")
+          .prepare(
+            "UPDATE sys_oauth_provider SET status = ?, enabled = COALESCE(?, enabled), updated_at = now() WHERE id = ? AND deleted_at IS NULL",
+          )
           .run(payload.status, payload.enabled ?? null, id);
       },
     );

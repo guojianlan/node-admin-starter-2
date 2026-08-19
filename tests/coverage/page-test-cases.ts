@@ -219,19 +219,36 @@ export const pageTestCases: PageTestCase[] = [
       "风险、动作、用户、状态和时间为主列；requestId 可复制，JSON 详情在抽屉内格式化，固定操作列不遮挡内容",
   }),
   pageCase({
-    path: "/system/ai/provider",
-    area: "AI Provider",
-    content: "AI SDK Provider 类型、Base URL、API Key 状态、默认和启停状态",
-    primaryAction: "新增、编辑、测试流式回答、切默认和启停 Provider",
+    path: "/system/ai/setup",
+    area: "AI 接入",
+    content: "可用连接、可用模型、默认用途和分步接入状态",
+    primaryAction:
+      "选择服务商并测试连接、同步或手工添加模型、批量勾选导入、设置默认用途并在一个事务中完成接入",
     desktop:
-      "Provider 类型、名称、默认和状态可扫描；测试使用独立弹窗，流式 Markdown 区域宽度和停止操作稳定",
+      "接入状态、默认模型和标准流程优先展示；向导固定操作区可触达，模型列表在弹窗中局部滚动，高级连接参数默认折叠",
+    empty:
+      "没有可用连接或默认 Chat 模型时显示接入入口，不要求用户先理解 Provider 和 Model 内部关系",
+    permission:
+      "system.aiSetup.query 控制页面和状态读取，system.aiSetup.configure 控制连接发现和完成接入；高级页面继续使用各自权限",
+    coverage: "mixed",
+  }),
+  pageCase({
+    path: "/system/ai/provider",
+    area: "AI 服务商",
+    content:
+      "服务商类型、连接名称、Base URL、API Key 状态、连接级请求超时、默认和启停状态；内部编码由系统维护",
+    primaryAction:
+      "为每个账号、环境或网关创建独立连接并配置默认请求超时；同一服务商类型允许多连接，并可测试、切默认和启停",
+    desktop:
+      "连接名称、服务商类型、内部编码、默认和状态可扫描；同类型多连接能明确区分，测试使用独立弹窗",
     coverage: "mixed",
   }),
   pageCase({
     path: "/system/ai/model",
-    area: "AI 模型",
-    content: "模型 ID、Provider、用途、上下文、输出上限、默认和状态",
-    primaryAction: "新增、编辑、测试模型、切默认和启停模型",
+    area: "模型管理",
+    content: "服务商连接实例、模型 ID、用途、默认和状态；能力、上下文、输出和价格位于高级配置",
+    primaryAction:
+      "选择服务商连接后同步模型并从自动展开的候选项选择；同步结果有容量元数据时自动回填，没有时从常用规格选择或手工输入",
     desktop:
       "模型 ID 和用途为主信息，上下文/输出上限数字对齐；测试弹窗区分 Prompt、流输出、用量和结束原因",
     coverage: "mixed",
@@ -239,8 +256,9 @@ export const pageTestCases: PageTestCase[] = [
   pageCase({
     path: "/system/ai/playground",
     area: "AI Playground",
-    content: "Provider、模型、Prompt、System Prompt、输出限制和流式结果",
-    primaryAction: "发送、停止、调整参数并查看 Markdown、用量和结束原因",
+    content: "已配置模型、Prompt、System Prompt、输出限制和临时流式结果，不产生正式会话",
+    primaryAction:
+      "选择任意已启用模型或默认模型，发送、停止、调整参数并查看 Markdown、用量和结束原因",
     desktop:
       "参数区与结果区比例合理；输入、发送/停止、流式正文和用量不重叠，长内容在结果区内部滚动",
     empty: "未配置可用模型时显示前往 Provider/模型管理的明确入口",
@@ -250,20 +268,33 @@ export const pageTestCases: PageTestCase[] = [
     path: "/system/ai/chat",
     area: "AI Chat",
     content: "会话、消息、模型、Agent、System Prompt、Run/Step、审批和使用量",
-    primaryAction: "创建/切换会话、发送/停止/重新生成、选择 Agent、审批工具和导出",
+    primaryAction:
+      "创建/切换会话、发送/停止/重新生成、选择 Agent、处理服务端工具审批或一次性浏览器位置授权并导出",
     desktop:
-      "会话栏、消息滚动区、固定输入区和运行检查器高度闭合；用户/AI 消息左右语义明确，Streamdown 正文占满可读宽度",
+      "会话栏、消息滚动区和固定输入区高度闭合；新会话默认使用通用工作助手，顶部一级对话模式可直接切换 Agent 或直接对话，并根据服务端实际可用 Tool 明确显示联网搜索可用、不可用或仅模型不联网；需要当前位置时在输入区上方显示一次性浏览器授权面板，权限触发、安全环境和 10 秒等待条件以可聚焦悬停图标解释；允许、拒绝、不支持、超时和未知错误精确区分并恢复同一 Agent 流程，内部续跑指令只显示为友好定位状态，不会原样暴露或误弹管理员运行检查器；输入区只保留消息与发送/停止动作，模型输出上限和超时由服务端按模型配置及安全策略兜底；首字返回前在 Assistant 行持续显示正在思考或处理任务、动态状态和已等待时长，首字出现后无缝切换 Streamdown；用户/AI 消息左右语义明确，回答底部用语义信息色突出首次响应并紧凑展示首字、可观测思考和总耗时；普通模型会话不显示运行检查器，Agent 会话可按需打开，服务端审批或运行失败时自动展开，步骤详情可完整滚动查看输入、输出、Usage、耗时和错误",
     empty: "无会话时提供直接创建或发送入口；无模型时显示配置入口而不是空白聊天框",
     coverage: "mixed",
   }),
   pageCase({
     path: "/system/ai/agent",
     area: "AI Agent",
-    content: "Agent、Tool、模型、System Prompt、模块开发工具、审批证据和调试 Run/Step/Approval",
-    primaryAction: "创建/编辑 Agent 和 Tool、运行模块设计/草稿/差异/验证，并审批或拒绝发布与回滚",
+    content:
+      "可复用 Agent 定义、受控 Tool、模型、System Prompt、审批证据、调试 Run/Step/Approval 和可信 Workflow Run",
+    primaryAction: "创建/编辑 Agent 和 Tool、运行 Agent 调试或 AI 环境预检，并审批或拒绝高风险工具",
     desktop:
-      "Agent 列表、配置表单和调试轨迹职责清楚；审批展示计划哈希、影响文件、验证输出和有效期，运行时间线不与表单混杂",
+      "Agent、Tools、Runs、Workflows 分区清楚；各 Tab 在固定工作区内闭合高度，表头和底部分页保持可达，长列表只在表体内部滚动；预检报告和持久步骤可追踪，审批展示计划哈希、影响文件、验证输出和有效期",
     empty: "无 Agent 时提供创建入口和必要字段，不只展示不可操作的通用助手文案",
+    coverage: "mixed",
+  }),
+  pageCase({
+    path: "/system/ai/web-search",
+    area: "联网搜索",
+    content: "Tavily、Brave、SearXNG 搜索连接、密钥状态、超时、结果上限、优先级和测试结果",
+    primaryAction: "新增或配置搜索连接、启停、调整优先级并在独立弹窗执行真实搜索测试",
+    desktop:
+      "首选连接、服务类型、端点、密钥状态、启停和优先级可扫描；测试弹窗分别展示尝试链和来源结果",
+    empty: "没有自定义连接时仍显示三个停用的内置模板；没有启用连接时 Agent 不暴露联网搜索 Tool",
+    permission: "查询、创建、编辑、删除、启停和测试分别由 system.aiWebSearch 权限控制",
     coverage: "mixed",
   }),
   pageCase({

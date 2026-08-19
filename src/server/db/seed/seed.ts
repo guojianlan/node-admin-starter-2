@@ -47,7 +47,8 @@ const seedWebsiteFiles: SeedWebsiteFile[] = [
     path: "seed/robots.txt",
     mime: "text/plain",
     type: "document",
-    read: async () => Buffer.from("User-agent: *\nDisallow: /system/\nDisallow: /api/system/\n", "utf8"),
+    read: async () =>
+      Buffer.from("User-agent: *\nDisallow: /system/\nDisallow: /api/system/\n", "utf8"),
   },
 ];
 
@@ -128,6 +129,7 @@ async function syncSequences(dbClient: DbClient) {
     "sys_oauth_provider",
     "sys_sms_provider",
     "sys_ai_provider",
+    "sys_ai_web_search_provider",
     "sys_ai_model",
     "sys_ai_agent",
     "sys_ai_tool",
@@ -371,7 +373,9 @@ ON CONFLICT DO NOTHING;
       )
       .run(group.id, group.name, group.code, group.sort, now, now);
   }
-  await dbClient.prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2, 3, 4, 5)").run();
+  await dbClient
+    .prepare("UPDATE sys_config_group SET is_system = true WHERE id IN (1, 2, 3, 4, 5)")
+    .run();
   await dbClient.prepare("UPDATE sys_config_group SET name = '文件策略' WHERE code = 'file'").run();
 
   const insertConfig = dbClient.prepare(
@@ -774,16 +778,26 @@ ON CONFLICT DO NOTHING;
        ON CONFLICT DO NOTHING`,
     )
     .run(
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
-      now, now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
     );
   await dbClient
     .prepare(

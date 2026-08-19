@@ -1,8 +1,9 @@
 "use client";
 
 import { QuestionCircleOutlined } from "@ant-design/icons";
-import { Form, Modal, Tooltip } from "antd";
-import { useEffect } from "react";
+import { Button, Form, Modal, Tooltip } from "antd";
+import { DownOutlined, UpOutlined } from "@ant-design/icons";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { AdminFieldRenderer } from "@/components/admin-fields/AdminFieldRenderer";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
@@ -15,6 +16,8 @@ type AdminEntityFormProps<T extends object> = {
   columns: AdminDataTableColumn<T>[];
   initialValues?: Partial<T> | null;
   loading?: boolean;
+  basicColumnCount?: 1 | 2;
+  notice?: ReactNode;
   onCancel: () => void;
   onFinish: (values: Record<string, unknown>) => Promise<void> | void;
 };
@@ -56,10 +59,13 @@ export function AdminEntityForm<T extends object>({
   columns,
   initialValues,
   loading,
+  basicColumnCount = 2,
+  notice,
   onCancel,
   onFinish,
 }: AdminEntityFormProps<T>) {
   const [form] = Form.useForm();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const formColumns = columns.filter((column) => {
     if (column.hideInForm) return false;
     if (mode === "create" && column.hideInCreate) return false;
@@ -79,48 +85,74 @@ export function AdminEntityForm<T extends object>({
     return () => window.clearTimeout(timer);
   }, [form, initialValues, open]);
 
+  const basicColumns = formColumns.filter((column) => column.formSection !== "advanced");
+  const advancedColumns = formColumns.filter((column) => column.formSection === "advanced");
+
+  const renderColumn = (column: AdminDataTableColumn<T>) => (
+    <div className={column.fullWidth ? "admin-form-full" : undefined} key={column.dataIndex}>
+      <Form.Item
+        {...column.formItemProps}
+        label={column.formItemProps?.label ?? renderFormLabel(column.title, column.formHelp)}
+        name={column.dataIndex as NamePath}
+        rules={
+          column.required
+            ? [{ required: true, message: `请输入${column.title}` }]
+            : column.formItemProps?.rules
+        }
+      >
+        {column.renderFormField ? (
+          column.renderFormField({ form, initialValues, mode })
+        ) : (
+          <AdminFieldRenderer
+            valueType={column.valueType}
+            options={column.options}
+            fieldProps={column.fieldProps}
+          />
+        )}
+      </Form.Item>
+    </div>
+  );
+
+  const handleCancel = () => {
+    setAdvancedOpen(false);
+    onCancel();
+  };
+
+  const handleFinish = async (values: Record<string, unknown>) => {
+    await onFinish(values);
+    setAdvancedOpen(false);
+  };
+
   return (
     <Modal
       open={open}
       title={title}
       width={760}
       confirmLoading={loading}
-      onCancel={onCancel}
+      onCancel={handleCancel}
       onOk={() => form.submit()}
       destroyOnHidden
       mask={{ closable: false }}
     >
-      <Form form={form} layout="vertical" onFinish={onFinish} requiredMark={false}>
-        <div className="admin-entity-form-grid" data-testid="admin-entity-form">
-          {formColumns.map((column) => (
-            <div
-              className={column.fullWidth ? "admin-form-full" : undefined}
-              key={column.dataIndex}
-            >
-              <Form.Item
-                {...column.formItemProps}
-                label={
-                  column.formItemProps?.label ?? renderFormLabel(column.title, column.formHelp)
-                }
-                name={column.dataIndex as NamePath}
-                rules={
-                  column.required
-                    ? [{ required: true, message: `请输入${column.title}` }]
-                    : column.formItemProps?.rules
-                }
+      <Form form={form} layout="vertical" onFinish={handleFinish} requiredMark={false}>
+        {notice ? <div className="admin-entity-form-notice">{notice}</div> : null}
+        <div
+          className={`admin-entity-form-grid admin-entity-form-grid--basic-${basicColumnCount}`}
+          data-testid="admin-entity-form"
+        >
+          {basicColumns.map(renderColumn)}
+          {advancedColumns.length ? (
+            <div className="admin-form-full admin-form-advanced-toggle">
+              <Button
+                type="link"
+                icon={advancedOpen ? <UpOutlined /> : <DownOutlined />}
+                onClick={() => setAdvancedOpen((value) => !value)}
               >
-                {column.renderFormField ? (
-                  column.renderFormField({ form, initialValues, mode })
-                ) : (
-                  <AdminFieldRenderer
-                    valueType={column.valueType}
-                    options={column.options}
-                    fieldProps={column.fieldProps}
-                  />
-                )}
-              </Form.Item>
+                {advancedOpen ? "收起高级配置" : "展开高级配置"}
+              </Button>
             </div>
-          ))}
+          ) : null}
+          {advancedOpen ? advancedColumns.map(renderColumn) : null}
         </div>
       </Form>
     </Modal>

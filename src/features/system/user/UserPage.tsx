@@ -212,12 +212,14 @@ export function UserPage() {
     <PageScaffold
       title="用户列表"
       description="通过用户列表管理系统账号，并为用户分配部门与角色"
+      hideHeader
     >
       <AdminDataTable
         api="/api/system/user"
         accessName="system.user"
         rowKey="id"
         columns={columns}
+        toolbarTitle="用户列表"
         createTitle="新增用户"
         updateTitle="编辑用户"
         canDelete={(record) => !record.isSystem}
