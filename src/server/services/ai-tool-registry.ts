@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { DbClient } from "@/server/db";
 import { executeWebSearch, hasActiveWebSearchProvider } from "./ai-web-search-service";
+import { executeMcpGatewayTool } from "./ai-governance-service";
+import { searchKnowledge } from "./ai-knowledge-service";
 import { recordBackgroundOperationLog } from "./operation-log-service";
 import {
   executeModuleAgentTool,
@@ -17,6 +19,8 @@ export const coreAiToolHandlerKeys = [
   "system_status",
   "operation_log_summary",
   "web_search",
+  "knowledge_search",
+  "mcp_gateway",
   "browser_location",
 ] as const;
 export const aiToolHandlerKeys = [...coreAiToolHandlerKeys, ...moduleAgentHandlerKeys] as const;
@@ -57,6 +61,12 @@ const webSearchInputSchema = z.object({
 const browserLocationInputSchema = z.object({
   reason: z.string().trim().min(1).max(300).describe("说明为什么当前任务需要用户的大致位置"),
 });
+const knowledgeSearchInputSchema = z.object({
+  query: z.string().trim().min(1).max(2000).describe("要从当前用户可访问知识库检索的问题"),
+  knowledgeBaseIds: z.array(z.number().int().positive()).max(20).optional(),
+  limit: z.number().int().min(1).max(12).default(6),
+});
+const mcpGatewayInputSchema = z.record(z.string(), z.unknown());
 
 function calculate(expression: string) {
   const compact = expression.replace(/\s+/g, "");
@@ -260,6 +270,47 @@ const coreRegistry: Record<(typeof coreAiToolHandlerKeys)[number], AiToolRegistr
       throw new Error("浏览器位置必须通过 Client Tool 结果接口提交");
     },
   },
+  knowledge_search: {
+    label: "知识库检索",
+    description: "从当前用户可访问的知识库检索证据，并返回可追踪的文档片段",
+    inputSchema: knowledgeSearchInputSchema,
+    riskLevel: "low",
+    approvalRequired: false,
+    systemOnly: true,
+    execute: async (input, context) => {
+      if (!context.userId) throw new Error("知识库检索需要登录用户上下文");
+      const results = await searchKnowledge({
+        query: String(input.query),
+        knowledgeBaseIds: Array.isArray(input.knowledgeBaseIds)
+          ? input.knowledgeBaseIds.map(Number)
+          : undefined,
+        userId: context.userId,
+        limit: Number(input.limit || 6),
+        requestId: context.requestId,
+      });
+      return {
+        query: String(input.query),
+        resultCount: results.length,
+        results: results.map((item) => ({
+          knowledgeBaseId: item.knowledgeBaseId,
+          knowledgeBaseName: item.knowledgeBaseName,
+          documentId: item.documentId,
+          documentName: item.documentName,
+          chunkId: item.chunkId,
+          score: item.score,
+          content: item.content.slice(0, 2400),
+        })),
+      };
+    },
+  },
+  mcp_gateway: {
+    label: "MCP Gateway",
+    description: "执行已同步并进入 allowlist 的远程 MCP Tool",
+    inputSchema: mcpGatewayInputSchema,
+    riskLevel: "medium",
+    approvalRequired: true,
+    systemOnly: true,
+  },
 };
 
 export function isAiToolHandlerKey(value: string): value is AiToolHandlerKey {
@@ -298,7 +349,13 @@ export async function isAiToolRuntimeAvailable(handlerKey: string, dbClient: DbC
 }
 
 export async function executeRegisteredAiTool(
-  tool: { code: string; handlerKey: string; isSystem: boolean; riskLevel: AiToolRiskLevel },
+  tool: {
+    code: string;
+    handlerKey: string;
+    isSystem: boolean;
+    riskLevel: AiToolRiskLevel;
+    configJson?: string | null;
+  },
   input: Record<string, unknown>,
   context: AiToolExecutionContext,
 ) {
@@ -313,6 +370,13 @@ export async function executeRegisteredAiTool(
       dbClient: context.dbClient,
       userId: context.userId,
       approvedMutation: context.approvedModuleMutation,
+    });
+  }
+  if (tool.handlerKey === "mcp_gateway") {
+    return executeMcpGatewayTool({
+      configJson: tool.configJson,
+      arguments: parsed,
+      userId: context.userId,
     });
   }
   if (!definition.execute) throw new Error(`工具处理器 ${tool.handlerKey} 尚未实现`);

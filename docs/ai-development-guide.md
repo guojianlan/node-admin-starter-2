@@ -1,10 +1,15 @@
 # Admin Base AI Development Guide
 
-Updated: 2026-08-03
+Updated: 2026-08-24
 
 This guide defines how a human request, a coding agent, and the Admin Base module generator work
 together. The goal is deterministic framework extensions: the same requirement should produce the
 same architecture, permission model, test obligations, and review path.
+
+CRM、企业知识库、Notebook/PPT、经营数据查询和供应链 Agent 的完整业务示例见
+[`docs/ai-business-use-case-cookbook.md`](./ai-business-use-case-cookbook.md)。该手册明确区分普通 CRUD、
+业务事实、Knowledge、Memory、受控 Tool、Approval 和 Worker，避免把客户数据写进 Memory 或把任意
+SQL/文件系统权限交给模型。
 
 ## 1. Development Model
 

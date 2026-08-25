@@ -8,6 +8,7 @@ import { authRequired } from "@/server/middleware/auth";
 import {
   decideToolApproval,
   getLatestSessionAgentRun,
+  getAiAgentRunTrace,
   listAiAgents,
   listAiTools,
   listSessionApprovals,
@@ -374,6 +375,20 @@ aiAgentRoutes.get(
       )
       .all(id, user.id);
     return c.json(success(steps));
+  },
+);
+
+aiAgentRoutes.get(
+  "/ai/agent/runs/:id/trace",
+  authRequired(),
+  ability("system.aiAgent.query"),
+  async (c) => {
+    const trace = await getAiAgentRunTrace({
+      id: Number(c.req.param("id")),
+      userId: c.get("user").id,
+    });
+    if (!trace) return c.json({ success: false, msg: "Agent Run 不存在" }, 404);
+    return c.json(success(trace));
   },
 );
 

@@ -1934,6 +1934,1154 @@ SELECT setval(
 );
 `,
   },
+  {
+    id: "0035_ai_runtime_reliability",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_purpose_route (
+  purpose TEXT PRIMARY KEY
+    CHECK (purpose IN ('chat', 'structured', 'embedding', 'rerank', 'agent', 'ragAnswer', 'evalJudge')),
+  name TEXT NOT NULL,
+  description TEXT,
+  status INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER,
+  updated_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS sys_ai_purpose_route_status_idx ON sys_ai_purpose_route(status);
+
+CREATE TABLE IF NOT EXISTS sys_ai_purpose_model (
+  purpose TEXT NOT NULL REFERENCES sys_ai_purpose_route(purpose) ON DELETE CASCADE,
+  model_id INTEGER NOT NULL REFERENCES sys_ai_model(id) ON DELETE RESTRICT,
+  priority INTEGER NOT NULL CHECK (priority > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER,
+  PRIMARY KEY (purpose, model_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_purpose_model_priority_unique
+  ON sys_ai_purpose_model(purpose, priority);
+CREATE INDEX IF NOT EXISTS sys_ai_purpose_model_model_id_idx ON sys_ai_purpose_model(model_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_invocation (
+  id SERIAL PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  request_id TEXT,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  session_id INTEGER REFERENCES sys_ai_chat_session(id) ON DELETE SET NULL,
+  run_id INTEGER,
+  step_id INTEGER,
+  requested_model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  resolved_model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'failed', 'aborted')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  fallback_used BOOLEAN NOT NULL DEFAULT false,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost TEXT,
+  currency TEXT,
+  duration_ms INTEGER,
+  error_type TEXT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_purpose_created_idx
+  ON sys_ai_invocation(purpose, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_status_created_idx
+  ON sys_ai_invocation(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_request_id_idx ON sys_ai_invocation(request_id);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_user_created_idx
+  ON sys_ai_invocation(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_run_id_idx ON sys_ai_invocation(run_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_invocation_attempt (
+  id SERIAL PRIMARY KEY,
+  invocation_id INTEGER NOT NULL REFERENCES sys_ai_invocation(id) ON DELETE CASCADE,
+  attempt_no INTEGER NOT NULL CHECK (attempt_no > 0),
+  provider_id INTEGER REFERENCES sys_ai_provider(id) ON DELETE SET NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  provider_code TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  model_identifier TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'failed', 'aborted')),
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost TEXT,
+  currency TEXT,
+  latency_ms INTEGER,
+  first_token_ms INTEGER,
+  error_type TEXT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_invocation_attempt_no_unique
+  ON sys_ai_invocation_attempt(invocation_id, attempt_no);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_attempt_provider_created_idx
+  ON sys_ai_invocation_attempt(provider_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_attempt_model_created_idx
+  ON sys_ai_invocation_attempt(model_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_invocation_attempt_status_created_idx
+  ON sys_ai_invocation_attempt(status, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_purpose_route_updated_at ON sys_ai_purpose_route;
+CREATE TRIGGER trg_sys_ai_purpose_route_updated_at
+BEFORE UPDATE ON sys_ai_purpose_route
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_ai_purpose_route (purpose, name, description, status)
+VALUES
+  ('chat', '普通对话', 'AI Chat 和普通文本生成', 1),
+  ('structured', '结构化生成', 'JSON、表单和结构化内容生成', 1),
+  ('embedding', '向量化', 'Knowledge/RAG 文档和查询向量化', 1),
+  ('rerank', '重排序', 'RAG 检索结果重排序', 1),
+  ('agent', 'Agent 执行', '需要工具调用能力的 Agent 运行', 1),
+  ('ragAnswer', 'RAG 回答', '基于检索上下文生成带引用回答', 1),
+  ('evalJudge', 'Eval 裁判', '评测数据集和输出质量判定', 1)
+ON CONFLICT (purpose) DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description;
+
+INSERT INTO sys_ai_purpose_model (purpose, model_id, priority)
+SELECT 'chat', id, 1 FROM sys_ai_model
+WHERE deleted_at IS NULL AND is_default_chat = true
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_ai_purpose_model (purpose, model_id, priority)
+SELECT 'structured', id, 1 FROM sys_ai_model
+WHERE deleted_at IS NULL AND is_default_structured = true
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_ai_purpose_model (purpose, model_id, priority)
+SELECT 'embedding', id, 1 FROM sys_ai_model
+WHERE deleted_at IS NULL AND is_default_embedding = true
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_ai_purpose_model (purpose, model_id, priority)
+SELECT 'agent', id, 1 FROM sys_ai_model
+WHERE deleted_at IS NULL AND is_default_chat = true
+  AND COALESCE(capabilities_json, '{}')::jsonb @> '{"toolCalling": true}'::jsonb
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_ai_purpose_model (purpose, model_id, priority)
+SELECT purpose, model_id, 1
+FROM (
+  SELECT 'ragAnswer' AS purpose, id AS model_id FROM sys_ai_model
+  WHERE deleted_at IS NULL AND is_default_chat = true
+  UNION ALL
+  SELECT 'evalJudge' AS purpose, id AS model_id FROM sys_ai_model
+  WHERE deleted_at IS NULL AND is_default_structured = true
+) defaults
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (310, 180, 'route', 'system.aiRuntime', '运行与追踪', '/system/ai/runtime', 'dashboard', 82, 1, 1, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (311, 310, 'action', 'system.aiRuntime.query', '查询 AI 运行与追踪', 1, 1, 0, 0, true, now(), now()),
+  (312, 310, 'action', 'system.aiRuntime.update', '配置 AI 用途路由', 2, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (310), (311), (312)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0036_ai_knowledge_rag",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_knowledge_base (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  description TEXT,
+  scope_type TEXT NOT NULL DEFAULT 'global'
+    CHECK (scope_type IN ('global', 'department', 'user')),
+  dept_id INTEGER REFERENCES sys_dept(id) ON DELETE SET NULL,
+  owner_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER,
+  CONSTRAINT sys_ai_knowledge_base_scope_owner_check CHECK (
+    (scope_type = 'global' AND dept_id IS NULL AND owner_id IS NULL) OR
+    (scope_type = 'department' AND dept_id IS NOT NULL AND owner_id IS NULL) OR
+    (scope_type = 'user' AND owner_id IS NOT NULL AND dept_id IS NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_knowledge_base_code_active_unique
+  ON sys_ai_knowledge_base(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_knowledge_base_scope_status_idx
+  ON sys_ai_knowledge_base(scope_type, status);
+
+CREATE TABLE IF NOT EXISTS sys_ai_document (
+  id SERIAL PRIMARY KEY,
+  knowledge_base_id INTEGER NOT NULL REFERENCES sys_ai_knowledge_base(id) ON DELETE CASCADE,
+  file_id INTEGER NOT NULL REFERENCES sys_file(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'processing', 'ready', 'failed', 'disabled')),
+  character_count INTEGER NOT NULL DEFAULT 0,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  indexed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_document_base_hash_active_unique
+  ON sys_ai_document(knowledge_base_id, sha256) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_document_base_status_idx
+  ON sys_ai_document(knowledge_base_id, status);
+CREATE INDEX IF NOT EXISTS sys_ai_document_file_id_idx ON sys_ai_document(file_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_document_chunk (
+  id SERIAL PRIMARY KEY,
+  document_id INTEGER NOT NULL REFERENCES sys_ai_document(id) ON DELETE CASCADE,
+  chunk_no INTEGER NOT NULL CHECK (chunk_no > 0),
+  content TEXT NOT NULL,
+  token_count INTEGER NOT NULL DEFAULT 0,
+  page_number INTEGER,
+  paragraph_start INTEGER,
+  paragraph_end INTEGER,
+  heading TEXT,
+  metadata_json TEXT,
+  embedding_json TEXT,
+  search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_document_chunk_no_unique
+  ON sys_ai_document_chunk(document_id, chunk_no);
+CREATE INDEX IF NOT EXISTS sys_ai_document_chunk_document_id_idx
+  ON sys_ai_document_chunk(document_id);
+CREATE INDEX IF NOT EXISTS sys_ai_document_chunk_search_idx
+  ON sys_ai_document_chunk USING GIN(search_vector);
+
+CREATE TABLE IF NOT EXISTS sys_ai_rag_run (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  knowledge_base_ids_json TEXT NOT NULL,
+  query_hash TEXT NOT NULL,
+  invocation_id INTEGER REFERENCES sys_ai_invocation(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'completed', 'failed')),
+  citation_count INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS sys_ai_rag_run_user_created_idx
+  ON sys_ai_rag_run(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_rag_run_status_created_idx
+  ON sys_ai_rag_run(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_rag_citation (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_rag_run(id) ON DELETE CASCADE,
+  chunk_id INTEGER NOT NULL REFERENCES sys_ai_document_chunk(id) ON DELETE RESTRICT,
+  rank INTEGER NOT NULL CHECK (rank > 0),
+  score TEXT NOT NULL,
+  quote TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_rag_citation_run_chunk_unique
+  ON sys_ai_rag_citation(run_id, chunk_id);
+CREATE INDEX IF NOT EXISTS sys_ai_rag_citation_run_rank_idx
+  ON sys_ai_rag_citation(run_id, rank);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_knowledge_base_updated_at ON sys_ai_knowledge_base;
+CREATE TRIGGER trg_sys_ai_knowledge_base_updated_at
+BEFORE UPDATE ON sys_ai_knowledge_base
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_sys_ai_document_updated_at ON sys_ai_document;
+CREATE TRIGGER trg_sys_ai_document_updated_at
+BEFORE UPDATE ON sys_ai_document
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (320, 180, 'route', 'system.aiKnowledge', '知识库', '/system/ai/knowledge', 'book', 83, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (321, 320, 'action', 'system.aiKnowledge.query', '查询知识库', 1, 1, 0, 0, true, now(), now()),
+  (322, 320, 'action', 'system.aiKnowledge.create', '创建知识库', 2, 1, 0, 0, true, now(), now()),
+  (323, 320, 'action', 'system.aiKnowledge.update', '更新知识库', 3, 1, 0, 0, true, now(), now()),
+  (324, 320, 'action', 'system.aiKnowledge.delete', '删除知识库', 4, 1, 0, 0, true, now(), now()),
+  (325, 320, 'action', 'system.aiKnowledge.index', '索引知识文档', 5, 1, 0, 0, true, now(), now()),
+  (326, 320, 'action', 'system.aiKnowledge.search', '检索和问答', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (320), (321), (322), (323), (324), (325), (326)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0037_ai_knowledge_chunk_profiles",
+    sql: `
+ALTER TABLE sys_ai_knowledge_base
+  ADD COLUMN IF NOT EXISTS chunk_preset TEXT NOT NULL DEFAULT 'auto',
+  ADD COLUMN IF NOT EXISTS chunk_size INTEGER NOT NULL DEFAULT 1600,
+  ADD COLUMN IF NOT EXISTS chunk_overlap INTEGER NOT NULL DEFAULT 160,
+  ADD COLUMN IF NOT EXISTS chunk_config_json TEXT;
+
+ALTER TABLE sys_ai_knowledge_base
+  DROP CONSTRAINT IF EXISTS sys_ai_knowledge_base_chunk_preset_check;
+ALTER TABLE sys_ai_knowledge_base
+  ADD CONSTRAINT sys_ai_knowledge_base_chunk_preset_check
+  CHECK (chunk_preset IN ('auto', 'documentation', 'paragraph', 'sentence', 'recursive', 'fixed'));
+ALTER TABLE sys_ai_knowledge_base
+  DROP CONSTRAINT IF EXISTS sys_ai_knowledge_base_chunk_size_check;
+ALTER TABLE sys_ai_knowledge_base
+  ADD CONSTRAINT sys_ai_knowledge_base_chunk_size_check
+  CHECK (chunk_size BETWEEN 200 AND 12000);
+ALTER TABLE sys_ai_knowledge_base
+  DROP CONSTRAINT IF EXISTS sys_ai_knowledge_base_chunk_overlap_check;
+ALTER TABLE sys_ai_knowledge_base
+  ADD CONSTRAINT sys_ai_knowledge_base_chunk_overlap_check
+  CHECK (chunk_overlap BETWEEN 0 AND 2000 AND chunk_overlap < chunk_size);
+
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS chunker_version TEXT,
+  ADD COLUMN IF NOT EXISTS chunk_config_json TEXT;
+`,
+  },
+  {
+    id: "0038_ai_notebook_v1",
+    sql: `
+ALTER TABLE sys_ai_rag_run
+  ADD COLUMN IF NOT EXISTS source_filter_json TEXT;
+
+CREATE TABLE IF NOT EXISTS sys_ai_notebook (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  scope_type TEXT NOT NULL DEFAULT 'user'
+    CHECK (scope_type IN ('global', 'department', 'user')),
+  dept_id INTEGER REFERENCES sys_dept(id) ON DELETE SET NULL,
+  owner_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  default_model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  system_prompt TEXT,
+  status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (0, 1)),
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER,
+  CONSTRAINT sys_ai_notebook_scope_owner_check CHECK (
+    (scope_type = 'global' AND dept_id IS NULL AND owner_id IS NULL) OR
+    (scope_type = 'department' AND dept_id IS NOT NULL AND owner_id IS NULL) OR
+    (scope_type = 'user' AND owner_id IS NOT NULL AND dept_id IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_scope_status_idx
+  ON sys_ai_notebook(scope_type, status);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_owner_created_idx
+  ON sys_ai_notebook(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_dept_created_idx
+  ON sys_ai_notebook(dept_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_notebook_source (
+  id SERIAL PRIMARY KEY,
+  notebook_id INTEGER NOT NULL REFERENCES sys_ai_notebook(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL CHECK (source_type IN ('knowledge_base', 'document')),
+  knowledge_base_id INTEGER REFERENCES sys_ai_knowledge_base(id) ON DELETE RESTRICT,
+  document_id INTEGER REFERENCES sys_ai_document(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER,
+  deleted_at TIMESTAMPTZ,
+  deleted_by INTEGER,
+  CONSTRAINT sys_ai_notebook_source_target_check CHECK (
+    (source_type = 'knowledge_base' AND knowledge_base_id IS NOT NULL AND document_id IS NULL) OR
+    (source_type = 'document' AND document_id IS NOT NULL AND knowledge_base_id IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_source_notebook_idx
+  ON sys_ai_notebook_source(notebook_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_source_base_idx
+  ON sys_ai_notebook_source(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_source_document_idx
+  ON sys_ai_notebook_source(document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_notebook_source_base_active_unique
+  ON sys_ai_notebook_source(notebook_id, knowledge_base_id)
+  WHERE deleted_at IS NULL AND source_type = 'knowledge_base';
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_notebook_source_document_active_unique
+  ON sys_ai_notebook_source(notebook_id, document_id)
+  WHERE deleted_at IS NULL AND source_type = 'document';
+
+CREATE TABLE IF NOT EXISTS sys_ai_notebook_artifact (
+  id SERIAL PRIMARY KEY,
+  notebook_id INTEGER NOT NULL REFERENCES sys_ai_notebook(id) ON DELETE CASCADE,
+  artifact_type TEXT NOT NULL CHECK (artifact_type IN ('summary', 'outline', 'faq', 'brief')),
+  title TEXT NOT NULL,
+  prompt_text TEXT NOT NULL,
+  prompt_hash TEXT NOT NULL,
+  content TEXT,
+  status TEXT NOT NULL DEFAULT 'generating'
+    CHECK (status IN ('generating', 'completed', 'failed')),
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  rag_run_id INTEGER REFERENCES sys_ai_rag_run(id) ON DELETE SET NULL,
+  invocation_id INTEGER REFERENCES sys_ai_invocation(id) ON DELETE SET NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  source_snapshot_json TEXT NOT NULL,
+  citations_json TEXT NOT NULL DEFAULT '[]',
+  error_message TEXT,
+  generated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_artifact_notebook_created_idx
+  ON sys_ai_notebook_artifact(notebook_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_artifact_status_created_idx
+  ON sys_ai_notebook_artifact(status, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_notebook_updated_at ON sys_ai_notebook;
+CREATE TRIGGER trg_sys_ai_notebook_updated_at
+BEFORE UPDATE ON sys_ai_notebook
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_sys_ai_notebook_artifact_updated_at ON sys_ai_notebook_artifact;
+CREATE TRIGGER trg_sys_ai_notebook_artifact_updated_at
+BEFORE UPDATE ON sys_ai_notebook_artifact
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (330, 180, 'route', 'system.aiNotebook', 'AI Notebook', '/system/ai/notebook', 'book', 84, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (331, 330, 'action', 'system.aiNotebook.query', '查询 Notebook', 1, 1, 0, 0, true, now(), now()),
+  (332, 330, 'action', 'system.aiNotebook.create', '创建 Notebook', 2, 1, 0, 0, true, now(), now()),
+  (333, 330, 'action', 'system.aiNotebook.update', '更新 Notebook', 3, 1, 0, 0, true, now(), now()),
+  (334, 330, 'action', 'system.aiNotebook.delete', '删除 Notebook', 4, 1, 0, 0, true, now(), now()),
+  (335, 330, 'action', 'system.aiNotebook.source', '管理 Notebook 来源', 5, 1, 0, 0, true, now(), now()),
+  (336, 330, 'action', 'system.aiNotebook.ask', 'Notebook 检索问答', 6, 1, 0, 0, true, now(), now()),
+  (337, 330, 'action', 'system.aiNotebook.artifact', '生成 Notebook 产物', 7, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (330), (331), (332), (333), (334), (335), (336), (337)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0039_ai_eval_v1",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_eval_dataset (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  scope_type TEXT NOT NULL DEFAULT 'user'
+    CHECK (scope_type IN ('global', 'department', 'user')),
+  dept_id INTEGER REFERENCES sys_dept(id) ON DELETE SET NULL,
+  owner_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (0, 1)),
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER,
+  CONSTRAINT sys_ai_eval_dataset_scope_owner_check CHECK (
+    (scope_type = 'global' AND dept_id IS NULL AND owner_id IS NULL) OR
+    (scope_type = 'department' AND dept_id IS NOT NULL AND owner_id IS NULL) OR
+    (scope_type = 'user' AND owner_id IS NOT NULL AND dept_id IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_dataset_scope_status_idx
+  ON sys_ai_eval_dataset(scope_type, status);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_dataset_owner_created_idx
+  ON sys_ai_eval_dataset(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_dataset_dept_created_idx
+  ON sys_ai_eval_dataset(dept_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_eval_case (
+  id SERIAL PRIMARY KEY,
+  dataset_id INTEGER NOT NULL REFERENCES sys_ai_eval_dataset(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  agent_id INTEGER NOT NULL REFERENCES sys_ai_agent(id) ON DELETE RESTRICT,
+  source_run_id INTEGER REFERENCES sys_ai_agent_run(id) ON DELETE SET NULL,
+  input_text TEXT NOT NULL,
+  expected_text TEXT,
+  assertions_json TEXT NOT NULL DEFAULT '{}',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (0, 1)),
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_case_dataset_status_idx
+  ON sys_ai_eval_case(dataset_id, status);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_case_agent_id_idx ON sys_ai_eval_case(agent_id);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_case_source_run_idx ON sys_ai_eval_case(source_run_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_eval_run (
+  id SERIAL PRIMARY KEY,
+  dataset_id INTEGER NOT NULL REFERENCES sys_ai_eval_dataset(id) ON DELETE RESTRICT,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  total_cases INTEGER NOT NULL DEFAULT 0,
+  passed_cases INTEGER NOT NULL DEFAULT 0,
+  failed_cases INTEGER NOT NULL DEFAULT 0,
+  error_cases INTEGER NOT NULL DEFAULT 0,
+  request_id TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  duration_ms INTEGER,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_run_dataset_created_idx
+  ON sys_ai_eval_run(dataset_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_run_user_created_idx
+  ON sys_ai_eval_run(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_run_status_created_idx
+  ON sys_ai_eval_run(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_run_request_id_idx ON sys_ai_eval_run(request_id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_eval_result (
+  id SERIAL PRIMARY KEY,
+  eval_run_id INTEGER NOT NULL REFERENCES sys_ai_eval_run(id) ON DELETE CASCADE,
+  case_id INTEGER NOT NULL REFERENCES sys_ai_eval_case(id) ON DELETE RESTRICT,
+  agent_run_id INTEGER REFERENCES sys_ai_agent_run(id) ON DELETE SET NULL,
+  status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'error')),
+  actual_output TEXT,
+  assertions_json TEXT NOT NULL DEFAULT '[]',
+  metrics_json TEXT NOT NULL DEFAULT '{}',
+  error_message TEXT,
+  duration_ms INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT sys_ai_eval_result_run_case_unique UNIQUE (eval_run_id, case_id)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_result_agent_run_idx
+  ON sys_ai_eval_result(agent_run_id);
+CREATE INDEX IF NOT EXISTS sys_ai_eval_result_status_created_idx
+  ON sys_ai_eval_result(status, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_eval_dataset_updated_at ON sys_ai_eval_dataset;
+CREATE TRIGGER trg_sys_ai_eval_dataset_updated_at
+BEFORE UPDATE ON sys_ai_eval_dataset
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_sys_ai_eval_case_updated_at ON sys_ai_eval_case;
+CREATE TRIGGER trg_sys_ai_eval_case_updated_at
+BEFORE UPDATE ON sys_ai_eval_case
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (340, 180, 'route', 'system.aiEval', 'AI Eval', '/system/ai/eval', 'bug', 86, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system, created_at, updated_at)
+VALUES
+  (341, 340, 'action', 'system.aiEval.query', '查询 Eval', 1, 1, 0, 0, true, now(), now()),
+  (342, 340, 'action', 'system.aiEval.create', '创建 Eval 数据', 2, 1, 0, 0, true, now(), now()),
+  (343, 340, 'action', 'system.aiEval.update', '更新 Eval 数据', 3, 1, 0, 0, true, now(), now()),
+  (344, 340, 'action', 'system.aiEval.delete', '删除 Eval 数据', 4, 1, 0, 0, true, now(), now()),
+  (345, 340, 'action', 'system.aiEval.execute', '执行 Eval', 5, 1, 0, 0, true, now(), now()),
+  (346, 340, 'action', 'system.aiEval.saveCase', '从 Run 保存用例', 6, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT 1, rules.rule_id
+FROM (VALUES (340), (341), (342), (343), (344), (345), (346)) AS rules(rule_id)
+WHERE EXISTS (SELECT 1 FROM sys_role WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0040_ai_pricing_and_eval_baseline",
+    sql: `
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS cached_input_price TEXT;
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS cache_write_price TEXT;
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_source_url TEXT;
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_verified_at DATE;
+ALTER TABLE sys_ai_invocation ADD COLUMN IF NOT EXISTS cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sys_ai_invocation_attempt ADD COLUMN IF NOT EXISTS cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+
+INSERT INTO sys_ai_eval_dataset
+  (name, description, scope_type, status, sort, created_by, updated_by)
+SELECT
+  'Admin Base Agent 基线回归',
+  '系统内置的 Agent 核心能力回归集。执行前需要配置可用的 Agent 用途模型；联网搜索用例还需要启用 Web Search Provider。',
+  'global', 1, 0, 1, 1
+WHERE EXISTS (SELECT 1 FROM sys_user WHERE id = 1)
+  AND EXISTS (SELECT 1 FROM sys_ai_agent WHERE code = 'general-assistant' AND deleted_at IS NULL)
+  AND NOT EXISTS (
+    SELECT 1 FROM sys_ai_eval_dataset
+    WHERE name = 'Admin Base Agent 基线回归' AND deleted_at IS NULL
+  );
+
+INSERT INTO sys_ai_eval_case
+  (dataset_id, name, description, agent_id, input_text, expected_text,
+   assertions_json, tags_json, status, sort, created_by, updated_by)
+SELECT
+  dataset.id, seed.name, seed.description, agent.id, seed.input_text, seed.expected_text,
+  seed.assertions_json, seed.tags_json, 1, seed.sort, 1, 1
+FROM (
+  SELECT id FROM sys_ai_eval_dataset
+  WHERE name = 'Admin Base Agent 基线回归' AND deleted_at IS NULL
+  ORDER BY id ASC LIMIT 1
+) dataset
+CROSS JOIN (
+  SELECT id FROM sys_ai_agent
+  WHERE code = 'general-assistant' AND deleted_at IS NULL
+  ORDER BY id ASC LIMIT 1
+) agent
+CROSS JOIN (VALUES
+  ('基础指令遵循', '验证 Agent 能稳定遵循精确输出指令。',
+   '请只回复：Admin Base Eval OK', 'Admin Base Eval OK',
+   '{"contains":["Admin Base Eval OK"],"forbiddenTools":["web-search","browser-location"]}',
+   '["baseline","instruction"]', 10),
+  ('计算器工具调用', '验证确定性计算会调用受控 calculator 工具。',
+   '请使用计算器计算 125 * 8，并在最终答案中包含计算结果。', '1000',
+   '{"contains":["1000"],"expectedTools":["calculator"],"forbiddenTools":["web-search","browser-location"]}',
+   '["baseline","tool","calculator"]', 20),
+  ('联网搜索工具调用', '验证时效性问题会进入 Web Search；运行环境需要启用搜索 Provider。',
+   '请联网查询深圳今天的天气，并给出信息来源。', NULL,
+   '{"expectedTools":["web-search"],"forbiddenTools":["browser-location"]}',
+   '["baseline","tool","web-search","external"]', 30)
+) AS seed(name, description, input_text, expected_text, assertions_json, tags_json, sort)
+WHERE NOT EXISTS (
+  SELECT 1 FROM sys_ai_eval_case eval_case
+  WHERE eval_case.dataset_id = dataset.id
+    AND eval_case.name = seed.name
+    AND eval_case.deleted_at IS NULL
+);
+`,
+  },
+  {
+    id: "0041_ai_pricing_source_backfill",
+    sql: `
+UPDATE sys_ai_model AS model
+SET pricing_source_url = CASE provider.provider_type
+    WHEN 'openai' THEN 'https://openai.com/api/pricing/'
+    WHEN 'anthropic' THEN 'https://platform.claude.com/docs/en/about-claude/pricing'
+    WHEN 'google' THEN 'https://ai.google.dev/gemini-api/docs/pricing'
+    WHEN 'deepseek' THEN 'https://api-docs.deepseek.com/quick_start/pricing/'
+    WHEN 'qwen' THEN 'https://help.aliyun.com/zh/model-studio/model-pricing'
+    WHEN 'moonshot' THEN 'https://platform.kimi.com/docs/pricing/chat'
+    WHEN 'zhipu' THEN 'https://open.bigmodel.cn/pricing'
+    WHEN 'siliconflow' THEN 'https://www.siliconflow.com/pricing'
+    WHEN 'openrouter' THEN 'https://openrouter.ai/models'
+    ELSE model.pricing_source_url
+  END,
+  updated_at = now()
+FROM sys_ai_provider AS provider
+WHERE model.provider_id = provider.id
+  AND model.pricing_source_url IS NULL
+  AND provider.provider_type IN (
+    'openai', 'anthropic', 'google', 'deepseek', 'qwen',
+    'moonshot', 'zhipu', 'siliconflow', 'openrouter'
+  );
+`,
+  },
+  {
+    id: "0042_ai_pricing_catalog",
+    sql: `
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_source_type TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_catalog_key TEXT;
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_source_hash TEXT;
+ALTER TABLE sys_ai_model ADD COLUMN IF NOT EXISTS pricing_synced_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS sys_ai_pricing_catalog_snapshot (
+  id SERIAL PRIMARY KEY,
+  source_type TEXT NOT NULL DEFAULT 'litellm',
+  source_url TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  model_count INTEGER NOT NULL DEFAULT 0,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_pricing_catalog_snapshot_hash_unique
+  ON sys_ai_pricing_catalog_snapshot(source_type, source_hash);
+CREATE INDEX IF NOT EXISTS sys_ai_pricing_catalog_snapshot_fetched_idx
+  ON sys_ai_pricing_catalog_snapshot(fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_pricing_catalog_item (
+  id SERIAL PRIMARY KEY,
+  snapshot_id INTEGER NOT NULL REFERENCES sys_ai_pricing_catalog_snapshot(id) ON DELETE CASCADE,
+  catalog_key TEXT NOT NULL,
+  model_identifier TEXT NOT NULL,
+  provider_type TEXT,
+  mode TEXT,
+  input_price TEXT,
+  cached_input_price TEXT,
+  cache_write_price TEXT,
+  output_price TEXT,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  context_window INTEGER,
+  max_output_tokens INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_pricing_catalog_item_snapshot_key_unique
+  ON sys_ai_pricing_catalog_item(snapshot_id, catalog_key);
+CREATE INDEX IF NOT EXISTS sys_ai_pricing_catalog_item_snapshot_provider_idx
+  ON sys_ai_pricing_catalog_item(snapshot_id, provider_type);
+CREATE INDEX IF NOT EXISTS sys_ai_pricing_catalog_item_snapshot_model_idx
+  ON sys_ai_pricing_catalog_item(snapshot_id, model_identifier);
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, default_auth, is_system,
+   created_at, updated_at)
+SELECT 248, parent.id, 'action', 'system.aiModel.syncPricing', '同步 AI 模型价格', 8,
+       1, 0, 0, 0, true, now(), now()
+FROM sys_rule parent
+WHERE parent.key = 'system.aiModel' AND parent.deleted_at IS NULL
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT role.id, rule.id
+FROM sys_role role
+JOIN sys_rule rule ON rule.key = 'system.aiModel.syncPricing' AND rule.deleted_at IS NULL
+WHERE role.code = 'admin' AND role.deleted_at IS NULL
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0043_ai_governance_foundation",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_memory (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  agent_id INTEGER REFERENCES sys_ai_agent(id) ON DELETE CASCADE,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('user', 'agent')),
+  content TEXT NOT NULL,
+  write_policy TEXT NOT NULL DEFAULT 'manual' CHECK (write_policy IN ('manual', 'confirmed')),
+  source_session_id INTEGER REFERENCES sys_ai_chat_session(id) ON DELETE SET NULL,
+  source_message_id INTEGER REFERENCES sys_ai_chat_message(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER,
+  CONSTRAINT sys_ai_memory_scope_agent_check CHECK (
+    (scope_type = 'user' AND agent_id IS NULL) OR
+    (scope_type = 'agent' AND agent_id IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS sys_ai_memory_user_agent_status_idx
+  ON sys_ai_memory(user_id, agent_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_memory_expires_idx ON sys_ai_memory(expires_at);
+
+CREATE TABLE IF NOT EXISTS sys_ai_runtime_skill (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  description TEXT,
+  instructions TEXT NOT NULL,
+  status INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_runtime_skill_code_active_unique
+  ON sys_ai_runtime_skill(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_runtime_skill_status_sort_idx
+  ON sys_ai_runtime_skill(status, sort, id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_runtime_skill_tool (
+  skill_id INTEGER NOT NULL REFERENCES sys_ai_runtime_skill(id) ON DELETE CASCADE,
+  tool_id INTEGER NOT NULL REFERENCES sys_ai_tool(id) ON DELETE CASCADE,
+  PRIMARY KEY (skill_id, tool_id)
+);
+CREATE TABLE IF NOT EXISTS sys_ai_agent_skill (
+  agent_id INTEGER NOT NULL REFERENCES sys_ai_agent(id) ON DELETE CASCADE,
+  skill_id INTEGER NOT NULL REFERENCES sys_ai_runtime_skill(id) ON DELETE CASCADE,
+  PRIMARY KEY (agent_id, skill_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_ai_mcp_server (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  endpoint_url TEXT NOT NULL,
+  transport TEXT NOT NULL DEFAULT 'streamable_http'
+    CHECK (transport IN ('streamable_http', 'sse')),
+  oauth_mode TEXT NOT NULL DEFAULT 'none'
+    CHECK (oauth_mode IN ('none', 'client_credentials', 'authorization_code')),
+  client_id TEXT,
+  client_secret_encrypted TEXT,
+  authorization_url TEXT,
+  token_url TEXT,
+  scopes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'active', 'disabled', 'error')),
+  last_error TEXT,
+  last_synced_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_mcp_server_code_active_unique
+  ON sys_ai_mcp_server(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_mcp_server_status_idx ON sys_ai_mcp_server(status, id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_mcp_connection (
+  id SERIAL PRIMARY KEY,
+  server_id INTEGER NOT NULL REFERENCES sys_ai_mcp_server(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'connected', 'expired', 'revoked', 'error')),
+  state_hash TEXT,
+  code_verifier_encrypted TEXT,
+  access_token_encrypted TEXT,
+  refresh_token_encrypted TEXT,
+  token_type TEXT,
+  scopes TEXT,
+  expires_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS sys_ai_mcp_connection_server_user_idx
+  ON sys_ai_mcp_connection(server_id, user_id, status);
+
+CREATE TABLE IF NOT EXISTS sys_ai_mcp_tool (
+  id SERIAL PRIMARY KEY,
+  server_id INTEGER NOT NULL REFERENCES sys_ai_mcp_server(id) ON DELETE CASCADE,
+  remote_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  input_schema_json TEXT,
+  risk_level TEXT NOT NULL DEFAULT 'medium'
+    CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+  approval_required BOOLEAN NOT NULL DEFAULT true,
+  allowlisted BOOLEAN NOT NULL DEFAULT false,
+  status INTEGER NOT NULL DEFAULT 1,
+  last_seen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (server_id, remote_name)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_mcp_tool_server_status_idx
+  ON sys_ai_mcp_tool(server_id, status, allowlisted);
+
+CREATE TABLE IF NOT EXISTS sys_ai_provider_circuit (
+  provider_id INTEGER NOT NULL REFERENCES sys_ai_provider(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'closed' CHECK (state IN ('closed', 'open', 'half_open')),
+  failure_threshold INTEGER NOT NULL DEFAULT 3 CHECK (failure_threshold BETWEEN 1 AND 100),
+  cooldown_ms INTEGER NOT NULL DEFAULT 60000 CHECK (cooldown_ms BETWEEN 1000 AND 86400000),
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  next_probe_at TIMESTAMPTZ,
+  probe_lease_until TIMESTAMPTZ,
+  last_success_at TIMESTAMPTZ,
+  last_failure_at TIMESTAMPTZ,
+  last_error_type TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (provider_id, purpose)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_provider_circuit_state_probe_idx
+  ON sys_ai_provider_circuit(state, next_probe_at);
+
+CREATE TABLE IF NOT EXISTS sys_ai_job (
+  id SERIAL PRIMARY KEY,
+  job_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  priority INTEGER NOT NULL DEFAULT 100,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 20),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_by TEXT,
+  lease_until TIMESTAMPTZ,
+  idempotency_key TEXT,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  request_id TEXT,
+  result_json TEXT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_job_idempotency_unique
+  ON sys_ai_job(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_job_claim_idx
+  ON sys_ai_job(status, available_at, priority, id);
+CREATE INDEX IF NOT EXISTS sys_ai_job_user_created_idx ON sys_ai_job(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_quota_policy (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  subject_type TEXT NOT NULL CHECK (subject_type IN ('system', 'department', 'user')),
+  subject_id INTEGER,
+  period TEXT NOT NULL DEFAULT 'monthly' CHECK (period IN ('daily', 'monthly')),
+  max_input_tokens INTEGER,
+  max_output_tokens INTEGER,
+  max_cost TEXT,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  status INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER,
+  updated_by INTEGER,
+  CONSTRAINT sys_ai_quota_policy_subject_check CHECK (
+    (subject_type = 'system' AND subject_id IS NULL) OR
+    (subject_type <> 'system' AND subject_id IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_quota_policy_subject_period_unique
+  ON sys_ai_quota_policy(subject_type, COALESCE(subject_id, 0), period);
+
+CREATE TABLE IF NOT EXISTS sys_ai_billing_ledger (
+  id SERIAL PRIMARY KEY,
+  invocation_id INTEGER REFERENCES sys_ai_invocation(id) ON DELETE SET NULL,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  provider_id INTEGER REFERENCES sys_ai_provider(id) ON DELETE SET NULL,
+  model_id INTEGER REFERENCES sys_ai_model(id) ON DELETE SET NULL,
+  purpose TEXT NOT NULL,
+  entry_type TEXT NOT NULL DEFAULT 'usage' CHECK (entry_type IN ('usage', 'adjustment')),
+  amount TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'estimated'
+    CHECK (status IN ('estimated', 'confirmed', 'void')),
+  source TEXT NOT NULL DEFAULT 'runtime_estimate',
+  description TEXT,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_billing_ledger_invocation_usage_unique
+  ON sys_ai_billing_ledger(invocation_id) WHERE entry_type = 'usage' AND invocation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_billing_ledger_user_occurred_idx
+  ON sys_ai_billing_ledger(user_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_notebook_member (
+  notebook_id INTEGER NOT NULL REFERENCES sys_ai_notebook(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('viewer', 'editor')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER,
+  PRIMARY KEY (notebook_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_member_user_idx
+  ON sys_ai_notebook_member(user_id, notebook_id);
+
+ALTER TABLE sys_ai_eval_case ADD COLUMN IF NOT EXISTS judge_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_ai_eval_case ADD COLUMN IF NOT EXISTS judge_rubric TEXT;
+ALTER TABLE sys_ai_eval_case ADD COLUMN IF NOT EXISTS groundedness_required BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sys_ai_eval_result ADD COLUMN IF NOT EXISTS judge_score INTEGER;
+ALTER TABLE sys_ai_eval_result ADD COLUMN IF NOT EXISTS judge_reason TEXT;
+ALTER TABLE sys_ai_eval_result ADD COLUMN IF NOT EXISTS groundedness_score TEXT;
+ALTER TABLE sys_ai_eval_result ADD COLUMN IF NOT EXISTS judge_invocation_id INTEGER
+  REFERENCES sys_ai_invocation(id) ON DELETE SET NULL;
+
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('知识库检索', 'knowledge-search', '从当前用户可访问的知识库检索证据',
+   'knowledge_search', '{"query":"string","knowledgeBaseIds":"number[]","limit":"number"}',
+   'low', false, 1, 7, true)
+ON CONFLICT (code) WHERE deleted_at IS NULL DO UPDATE SET
+  name = EXCLUDED.name, description = EXCLUDED.description,
+  handler_key = EXCLUDED.handler_key, input_schema_json = EXCLUDED.input_schema_json,
+  risk_level = EXCLUDED.risk_level, approval_required = EXCLUDED.approval_required,
+  status = EXCLUDED.status, is_system = EXCLUDED.is_system, updated_at = now();
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id, 'inherit'
+FROM sys_ai_agent agent CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'general-assistant' AND agent.deleted_at IS NULL
+  AND tool.code = 'knowledge-search' AND tool.deleted_at IS NULL
+ON CONFLICT DO NOTHING;
+
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, path, icon, "order", status, hidden, link, is_system,
+   created_at, updated_at)
+VALUES
+  (350, 180, 'route', 'system.aiGovernance', 'AI 治理', '/system/ai/governance',
+   'safety', 87, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_rule
+  (id, parent_id, type, key, name, "order", status, hidden, link, is_system,
+   created_at, updated_at)
+VALUES
+  (351, 350, 'action', 'system.aiGovernance.query', '查询 AI 治理', 1, 1, 0, 0, true, now(), now()),
+  (352, 350, 'action', 'system.aiGovernance.update', '配置 AI 治理', 2, 1, 0, 0, true, now(), now()),
+  (353, 350, 'action', 'system.aiGovernance.execute', '执行 AI 治理任务', 3, 1, 0, 0, true, now(), now()),
+  (354, 350, 'action', 'system.aiGovernance.approve', '审批 MCP 工具', 4, 1, 0, 0, true, now(), now())
+ON CONFLICT DO NOTHING;
+INSERT INTO sys_role_rule (role_id, rule_id)
+SELECT role.id, rule_id
+FROM sys_role role
+CROSS JOIN (VALUES (350), (351), (352), (353), (354)) rules(rule_id)
+WHERE role.code = 'admin' AND role.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM sys_rule WHERE id = rules.rule_id)
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0044_ai_knowledge_tool_reconciliation",
+    sql: `
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('知识库检索', 'knowledge-search', '从当前用户可访问的知识库检索证据',
+   'knowledge_search', '{"query":"string","knowledgeBaseIds":"number[]","limit":"number"}',
+   'low', false, 1, 7, true)
+ON CONFLICT (code) WHERE deleted_at IS NULL DO UPDATE SET
+  name = EXCLUDED.name, description = EXCLUDED.description,
+  handler_key = EXCLUDED.handler_key, input_schema_json = EXCLUDED.input_schema_json,
+  risk_level = EXCLUDED.risk_level, approval_required = EXCLUDED.approval_required,
+  status = EXCLUDED.status, is_system = EXCLUDED.is_system, updated_at = now();
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id, 'inherit'
+FROM sys_ai_agent agent CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'general-assistant' AND agent.deleted_at IS NULL
+  AND tool.code = 'knowledge-search' AND tool.deleted_at IS NULL
+ON CONFLICT DO NOTHING;
+`,
+  },
+  {
+    id: "0045_ai_notebook_website_sources",
+    sql: `
+ALTER TABLE sys_ai_knowledge_base
+  ADD COLUMN IF NOT EXISTS managed_type TEXT;
+ALTER TABLE sys_ai_knowledge_base
+  ADD COLUMN IF NOT EXISTS managed_resource_id INTEGER;
+ALTER TABLE sys_ai_knowledge_base DROP CONSTRAINT IF EXISTS sys_ai_knowledge_base_managed_type_check;
+ALTER TABLE sys_ai_knowledge_base ADD CONSTRAINT sys_ai_knowledge_base_managed_type_check
+  CHECK (managed_type IS NULL OR managed_type IN ('notebook'));
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_knowledge_base_managed_resource_unique
+  ON sys_ai_knowledge_base(managed_type, managed_resource_id)
+  WHERE managed_type IS NOT NULL AND deleted_at IS NULL;
+
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'file';
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS canonical_url TEXT;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS source_domain TEXT;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS source_title TEXT;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_document
+  ADD COLUMN IF NOT EXISTS content_hash TEXT;
+ALTER TABLE sys_ai_document DROP CONSTRAINT IF EXISTS sys_ai_document_source_type_check;
+ALTER TABLE sys_ai_document ADD CONSTRAINT sys_ai_document_source_type_check
+  CHECK (source_type IN ('file', 'web_url'));
+CREATE INDEX IF NOT EXISTS sys_ai_document_source_type_idx
+  ON sys_ai_document(source_type, fetched_at DESC);
+`,
+  },
+  {
+    id: "0046_ai_research_and_file_usage",
+    sql: `
+ALTER TABLE sys_file
+  ADD COLUMN IF NOT EXISTS usage_type TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE sys_file DROP CONSTRAINT IF EXISTS sys_file_usage_type_check;
+ALTER TABLE sys_file ADD CONSTRAINT sys_file_usage_type_check
+  CHECK (usage_type IN ('general', 'knowledge', 'user_content'));
+CREATE INDEX IF NOT EXISTS sys_file_usage_type_created_idx
+  ON sys_file(usage_type, created_at DESC);
+
+UPDATE sys_file file
+SET usage_type = 'knowledge', updated_at = now()
+WHERE EXISTS (
+  SELECT 1 FROM sys_ai_document document
+  WHERE document.file_id = file.id AND document.deleted_at IS NULL
+)
+AND NOT EXISTS (
+  SELECT 1 FROM sys_file_reference reference
+  WHERE reference.file_id = file.id AND reference.module <> 'system.aiKnowledge'
+);
+
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_resource_idx
+  ON sys_ai_workflow_run(resource_type, resource_id, created_at DESC);
+
+UPDATE sys_config_items
+SET "values" = concat_ws(',', nullif("values", ''), 'md'), updated_at = now()
+WHERE key = 'file.allowed_extensions'
+  AND deleted_at IS NULL
+  AND lower(',' || coalesce("values", '') || ',') NOT LIKE '%,md,%';
+
+UPDATE sys_config_items
+SET "values" = concat_ws(',', nullif("values", ''), 'markdown'), updated_at = now()
+WHERE key = 'file.allowed_extensions'
+  AND deleted_at IS NULL
+  AND lower(',' || coalesce("values", '') || ',') NOT LIKE '%,markdown,%';
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

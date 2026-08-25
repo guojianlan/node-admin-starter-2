@@ -1,0 +1,104 @@
+{
+  "generatedAt": "2026-08-24T00:00:00.000Z",
+  "fictional": true,
+  "customers": [
+    {
+      "code": "CRM-1001",
+      "name": "星河精密制造",
+      "industry": "精密制造",
+      "region": "深圳",
+      "stage": "proposal",
+      "annualValue": 860000,
+      "lastContactAt": "2026-07-12T09:30:00.000Z",
+      "preferredChannel": "email",
+      "contactConsent": true,
+      "tags": ["高意向", "制造业", "深圳", "偏好技术资料"],
+      "confirmedPreferences": [
+        { "key": "content", "value": "技术白皮书和同业案例", "source": "meeting", "confidence": 1 }
+      ],
+      "activities": [
+        {
+          "type": "meeting",
+          "occurredAt": "2026-07-12T09:30:00.000Z",
+          "summary": "客户希望验证设备数据采集兼容性，并要求提供制造业同类案例。"
+        },
+        {
+          "type": "email",
+          "occurredAt": "2026-06-28T03:15:00.000Z",
+          "summary": "已发送初版方案，客户回复需要技术评审和分阶段实施计划。"
+        }
+      ]
+    },
+    {
+      "code": "CRM-1002",
+      "name": "云帆零售科技",
+      "industry": "连锁零售",
+      "region": "杭州",
+      "stage": "negotiation",
+      "annualValue": 420000,
+      "lastContactAt": "2026-08-16T06:20:00.000Z",
+      "preferredChannel": "email",
+      "contactConsent": true,
+      "tags": ["连锁零售", "价格敏感", "邮件优先"],
+      "confirmedPreferences": [
+        { "key": "proposal", "value": "分阶段报价和 ROI 明细", "source": "email", "confidence": 1 }
+      ],
+      "activities": [
+        {
+          "type": "email",
+          "occurredAt": "2026-08-16T06:20:00.000Z",
+          "summary": "采购要求补充三年 ROI 和门店分批上线价格。"
+        }
+      ]
+    },
+    {
+      "code": "CRM-1003",
+      "name": "青岚医疗器械",
+      "industry": "医疗器械",
+      "region": "苏州",
+      "stage": "discovery",
+      "annualValue": 650000,
+      "lastContactAt": "2026-06-18T02:00:00.000Z",
+      "preferredChannel": "email",
+      "contactConsent": true,
+      "tags": ["医疗", "合规敏感", "预算暂缓"],
+      "confirmedPreferences": [
+        {
+          "key": "communication",
+          "value": "先提供合规说明，避免高频促销",
+          "source": "meeting",
+          "confidence": 1
+        }
+      ],
+      "activities": [
+        {
+          "type": "meeting",
+          "occurredAt": "2026-06-18T02:00:00.000Z",
+          "summary": "客户表示本季度预算暂缓，下一预算窗口前只接收合规和产品更新。"
+        }
+      ]
+    },
+    {
+      "code": "CRM-1004",
+      "name": "北辰物流网络",
+      "industry": "物流",
+      "region": "广州",
+      "stage": "customer",
+      "annualValue": 1200000,
+      "lastContactAt": "2026-08-19T08:40:00.000Z",
+      "preferredChannel": "phone",
+      "contactConsent": true,
+      "tags": ["已成交", "扩容机会", "电话优先"],
+      "confirmedPreferences": [
+        { "key": "review", "value": "季度健康检查后讨论增购", "source": "call", "confidence": 1 }
+      ],
+      "activities": [
+        {
+          "type": "call",
+          "occurredAt": "2026-08-19T08:40:00.000Z",
+          "summary": "华南两个仓库准备扩容，希望先评估现有系统稳定性。"
+        }
+      ]
+    }
+  ]
+}

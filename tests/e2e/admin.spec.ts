@@ -45,6 +45,14 @@ async function gotoAdminPage(page: Page, path: string, heading: string) {
   }
 }
 
+async function openSearchForm(page: Page) {
+  const form = page.locator(".admin-search-form").first();
+  if (await form.isVisible().catch(() => false)) return form;
+  await page.locator(".admin-search-toggle").first().click();
+  await expect(form).toBeVisible();
+  return form;
+}
+
 async function confirmModal(page: Page) {
   await page
     .locator(".ant-modal")
@@ -81,21 +89,22 @@ test("login, search URL state, refresh, back and reset", async ({ page }) => {
   await login(page);
   await gotoAdminPage(page, "/system/user", "用户列表");
 
-  await page.getByPlaceholder("请输入关键字").fill("admin");
-  await page.getByPlaceholder("请输入关键字").press("Enter");
+  await page.getByPlaceholder("搜索表格内容").fill("admin");
+  await page.getByPlaceholder("搜索表格内容").press("Enter");
   await expect(page).toHaveURL(/keyword=admin/);
   await expect(page.getByText("admin@xinadmin.test")).toBeVisible();
 
   await page.reload();
-  await expect(page.getByPlaceholder("请输入关键字")).toHaveValue("admin");
+  await expect(page.getByPlaceholder("搜索表格内容")).toHaveValue("admin");
   await expect(page.getByText("admin@xinadmin.test")).toBeVisible();
 
-  await page.getByRole("button", { name: "重置" }).click();
+  await page.getByPlaceholder("搜索表格内容").fill("");
+  await page.getByPlaceholder("搜索表格内容").press("Enter");
   await expect(page).not.toHaveURL(/keyword=admin/);
 
   await page.goBack();
   await expect(page).toHaveURL(/keyword=admin/);
-  await expect(page.getByPlaceholder("请输入关键字")).toHaveValue("admin");
+  await expect(page.getByPlaceholder("搜索表格内容")).toHaveValue("admin");
 });
 
 test("user form validation and created user appears in list", async ({ page, request }) => {
@@ -126,8 +135,8 @@ test("user form validation and created user appears in list", async ({ page, req
     },
   });
   expect(createResponse.ok()).toBeTruthy();
-  await page.getByPlaceholder("请输入关键字").fill(`tester${suffix}`);
-  await page.getByPlaceholder("请输入关键字").press("Enter");
+  await page.getByPlaceholder("搜索表格内容").fill(`tester${suffix}`);
+  await page.getByPlaceholder("搜索表格内容").press("Enter");
   await expect(page).toHaveURL(new RegExp(`keyword=tester${suffix}`));
   await expect(page.getByText(`tester${suffix}`)).toBeVisible();
 });
@@ -173,6 +182,7 @@ test("URL select filters decode labels and apply numeric filters", async ({ page
   await login(page);
 
   await gotoAdminPage(page, "/system/user?sex=1", "用户列表");
+  await openSearchForm(page);
   await expect.poll(() => getSearchSelectText(page, "性别")).toBe("男");
   const userRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
   await expect(userRows).toHaveCount(1);
@@ -180,23 +190,27 @@ test("URL select filters decode labels and apply numeric filters", async ({ page
   await expect(userRows.first().locator("td").nth(3)).toHaveText("男");
 
   await gotoAdminPage(page, "/system/role?status=1", "角色管理");
+  await openSearchForm(page);
   await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
 
   await gotoAdminPage(page, "/system/dict?status=1", "字典管理");
+  await openSearchForm(page);
   await expect.poll(() => getSearchSelectText(page, "状态")).toBe("启用");
 });
 
-test("list search forms are visible by default and dict items stay on the dict page", async ({
+test("list search forms are collapsed by default and dict items stay on the dict page", async ({
   page,
 }) => {
   await login(page);
 
   await gotoAdminPage(page, "/system/user", "用户列表");
-  await expect(page.locator(".admin-search-form")).toBeVisible();
-  await expect(page.locator('.admin-search-form label[for="sex"]')).toBeVisible();
+  await expect(page.locator(".admin-search-form")).toHaveCount(0);
+  const userSearchForm = await openSearchForm(page);
+  await expect(userSearchForm.locator('label[for="sex"]')).toBeVisible();
 
   await gotoAdminPage(page, "/system/dict", "字典管理");
-  await expect(page.locator(".admin-search-form").first()).toBeVisible();
+  await expect(page.locator(".admin-search-form")).toHaveCount(0);
+  await openSearchForm(page);
   const dictRows = page.locator(".ant-table-tbody tr:not(.ant-table-measure-row)");
   await expect(dictRows).not.toHaveCount(0);
   await dictRows.first().click();
@@ -237,7 +251,7 @@ test("unauthorized user only sees permitted shell and no system menu", async ({
   });
 
   await login(page, username, "123456");
-  await expect(page.getByText("今日登录成功")).toBeVisible();
+  await expect(page.locator(".dashboard-page")).toBeVisible();
   await expect(page.getByText("系统管理")).not.toBeVisible();
 
   await page.goto("/system/user");

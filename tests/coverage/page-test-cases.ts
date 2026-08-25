@@ -223,9 +223,9 @@ export const pageTestCases: PageTestCase[] = [
     area: "AI 接入",
     content: "可用连接、可用模型、默认用途和分步接入状态",
     primaryAction:
-      "选择服务商并测试连接、同步或手工添加模型、批量勾选导入、设置默认用途并在一个事务中完成接入",
+      "选择服务商并测试连接、同步或手工添加模型、声明需要用于 Agent 的工具调用能力、批量勾选导入、设置默认用途并在一个事务中完成接入",
     desktop:
-      "接入状态、默认模型和标准流程优先展示；向导固定操作区可触达，模型列表在弹窗中局部滚动，高级连接参数默认折叠",
+      "接入状态、默认模型和标准流程优先展示；向导固定操作区可触达，模型列表在弹窗中局部滚动，Chat 模型可直接声明 Agent 工具能力，高级连接参数默认折叠",
     empty:
       "没有可用连接或默认 Chat 模型时显示接入入口，不要求用户先理解 Provider 和 Model 内部关系",
     permission:
@@ -248,7 +248,7 @@ export const pageTestCases: PageTestCase[] = [
     area: "模型管理",
     content: "服务商连接实例、模型 ID、用途、默认和状态；能力、上下文、输出和价格位于高级配置",
     primaryAction:
-      "选择服务商连接后同步模型并从自动展开的候选项选择；同步结果有容量元数据时自动回填，没有时从常用规格选择或手工输入",
+      "选择服务商连接后同步模型并从自动展开的候选项选择；可刷新社区价格目录、查看当前值与候选值差异并逐字段显式应用，目录不会静默覆盖价格或伪造官方核验日期",
     desktop:
       "模型 ID 和用途为主信息，上下文/输出上限数字对齐；测试弹窗区分 Prompt、流输出、用量和结束原因",
     coverage: "mixed",
@@ -263,6 +263,77 @@ export const pageTestCases: PageTestCase[] = [
       "参数区与结果区比例合理；输入、发送/停止、流式正文和用量不重叠，长内容在结果区内部滚动",
     empty: "未配置可用模型时显示前往 Provider/模型管理的明确入口",
     coverage: "mixed",
+  }),
+  pageCase({
+    path: "/system/ai/runtime",
+    area: "AI 运行治理",
+    content: "Chat、Agent、RAG 和 Eval 用途模型路由、Provider 健康、费用账本与调用 Trace",
+    primaryAction: "调整主模型和候选优先级、切换统计窗口并查看 Invocation/Attempt 详情",
+    desktop:
+      "用途路由顺序可扫描且可编辑；健康表突出成功率和 P50/P95，Trace 表支持筛选并在抽屉展示每次模型尝试",
+    empty: "没有调用记录时用途配置仍可维护，健康和 Trace 区域分别展示明确空状态",
+    permission:
+      "查询权限只允许查看运行数据；修改用途路由必须具有 system.aiRuntime.update 并写高风险操作日志",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/system/ai/knowledge",
+    area: "Knowledge/RAG",
+    content:
+      "按全局、部门或个人范围管理知识库、结构化分块模板、来源文件、索引状态、混合检索、RAG Run 和可追溯引用",
+    primaryAction:
+      "创建知识库并选择自动、技术文档、段落、句子、递归或固定分块模板，直接上传知识文件或从普通文件库导入独立快照、建立或停用索引，并在指定知识库中生成带引用回答",
+    desktop:
+      "首次进入自动选中第一条知识库，整行可点击且当前行保持明确选中态，右侧立即以分页表格加载来源文档；知识库与来源文档并排可扫描，左右工具栏和来源分页固定且两个表体在各自面板内独立滚动；添加来源默认直接上传为知识域文件，不进入普通文件管理、普通分组或普通文件下载链路，也可按权限从普通文件库导入独立 Knowledge 快照；导入后新文件使用 knowledge 用途域、独立物理路径和来源元数据，原文件移动或删除不影响知识文档与历史引用；普通文件选择器通过服务端关键词搜索、50 条分页和下拉滚动续页处理大数据量，跨页选择保留名称；分块配置说明目标长度、语义重叠和重新索引要求；问答区固定输入职责，回答与引用在结果区完整滚动；正文引用编号可点击并打开来源检查器，原文 Markdown、长代码和宽表格不能撑破 Drawer，检索诊断默认收起且多条引用可前后切换",
+    empty: "没有知识库时保留创建入口；没有文档或证据时明确显示空状态或证据不足，不调用模型补写事实",
+    permission:
+      "页面和查询、创建、更新、删除、索引、检索分别受 system.aiKnowledge 权限控制；部门和个人知识库必须在服务端执行数据范围过滤",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/system/ai/notebook",
+    area: "AI Notebook",
+    content:
+      "带全局、部门或个人范围的 Notebook、知识库/文档/公开网站来源、联网搜索发现与选择导入、异步深度研究、限定来源问答、引用快照和摘要/提纲/FAQ/结构化简报 Artifact",
+    primaryAction:
+      "创建或切换 Notebook、添加整个知识库/指定文档/公开网站；在底部统一输入框中切换问来源或联网研究，让 AI 自动规划检索、导入并索引可信来源、生成引用报告；查看研究步骤、引用和 Artifact",
+    desktop:
+      "顶部 Notebook 身份、选择、状态和管理动作保持紧凑；来源、回答、引用与产物使用带分隔线的连接式三栏工作台，中间回答占主宽度且不嵌套卡片，来源和证据栏可独立收起；三栏内容独立滚动，统一输入框固定在回答栏底部并显示当前来源数量；输入框提供问来源和联网研究两个明确模式，研究设置仅在紧凑 Popover 中调整检索方向数与最多来源数，主流程不再弹出独立研究表单；提交研究后显示可点击的活动 Run 状态并自动打开研究检查区，请求失败恢复原输入；窄屏通过来源、问答、证据分段切换而不是纵向堆叠，操作与正文不溢出；联网搜索默认只做发现，显示 Provider、结果、摘要、选择数量和降级诊断，批量导入允许部分成功且搜索摘要不能直接成为知识正文；深度研究运行中轮询并展示排队、执行、完成、失败或取消状态，步骤时间线、错误与证据可展开，完成后可直接打开带引用报告；网站来源显示网页标题、域名、抓取时间和安全的新窗口原文入口；来源删除仅在悬停、聚焦或触屏布局显现，引用行使用连续编号和可扫描元数据；回答和 Artifact 正文中的引用编号可点击并打开对应来源检查器，回答正文后不重复插入打断阅读的引用标签云；引用原文在 Drawer 中按 Markdown 正常排版，长代码和宽表格不能超出侧栏，多条引用可前后切换且关闭后保持原回答位置；浅色和深色主题均使用共享表面、边框、文字和语义色 token",
+    empty:
+      "没有 Notebook 时保留创建入口；没有来源时禁用问来源但允许联网研究自动寻找资料；证据不足时明确显示，不调用模型补写事实",
+    permission:
+      "查询、创建、更新、删除、来源、问答和 Artifact 分别受 system.aiNotebook 权限控制；Notebook 和来源同时执行服务端数据范围过滤；网站抓取拒绝内网、保留地址、危险重定向和非 HTML 响应，并对成功与失败写入脱敏操作日志",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/system/ai/eval",
+    area: "AI Eval / Trace",
+    content:
+      "带全局、部门或个人范围的 Dataset、固定输入 Case、不可覆盖的同步 Run/Result 历史、确定性断言和 Agent Run/Step/Invocation Trace",
+    primaryAction:
+      "创建数据集和 Case、从真实 Agent Run 固化用例、执行整组回归、查看文本/工具/延迟/Token/成本断言并追溯 Provider/Model 尝试",
+    desktop:
+      "数据集列表和 Cases/Runs 主工作区并排；表格表头、分页和操作保持可达，Result 与 Trace 在抽屉内分层展示，长输出和断言证据可独立滚动",
+    empty:
+      "没有数据集时保留创建入口；没有启用 Case 时禁用运行；没有结果或 Trace 时明确显示空状态而不是伪造成功指标",
+    permission:
+      "查询、创建、更新、删除、执行和从 Run 保存分别受 system.aiEval 权限控制；数据集执行全局、部门和个人数据范围过滤，高风险工具在无人值守 Eval 中必须拒绝而不是自动批准",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/system/ai/governance",
+    area: "AI 治理",
+    content:
+      "显式长期 Memory、Runtime Skills、MCP Server/OAuth/Tool allowlist、持久化熔断、共享配额、任务队列和计费账本",
+    primaryAction:
+      "维护个人或 Agent Memory，组合 Skill 与受控 Tool，连接并同步 MCP Server，审批 MCP Tool，查看熔断/half-open、配额、Worker Job 和结算账本",
+    desktop:
+      "五个治理 Tab 保持紧凑表格密度；MCP Server、连接和 Tool 策略分层展示，长错误与 Endpoint 不撑破表格；任务、熔断和账本可按状态扫描",
+    empty:
+      "无 Memory、Skill、MCP、熔断、配额、任务或账本时，各表保持完整空状态和创建入口，不伪造 Provider 健康、费用或 Worker 状态",
+    permission:
+      "Memory 使用 AI Chat 查询/更新权限并强制当前用户所有权；其余查询、配置、执行和审批分别受 system.aiGovernance 权限控制；MCP Secret 和 OAuth Token 永不回显",
+    coverage: "automated",
   }),
   pageCase({
     path: "/system/ai/chat",

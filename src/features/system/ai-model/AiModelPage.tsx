@@ -4,7 +4,10 @@ import {
   ApiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  DollarOutlined,
   DownOutlined,
+  ExportOutlined,
+  SyncOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +16,9 @@ import {
   AutoComplete,
   Button,
   Checkbox,
+  Descriptions,
   Dropdown,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -21,6 +26,7 @@ import {
   Select,
   Space,
   Switch,
+  Table,
   Tag,
   Tooltip,
   Typography,
@@ -29,20 +35,62 @@ import { useRef, useState } from "react";
 import { AdminDataTable } from "@/components/admin-data-table/AdminDataTable";
 import type { AdminDataTableColumn } from "@/components/admin-fields/types";
 import { StreamingMarkdown } from "@/components/ai/StreamingMarkdown";
+import { AuthButton } from "@/components/auth-button/AuthButton";
 import { buildQueryString, request, requestTextStream } from "@/lib/request";
 import type { PageResult } from "@/lib/response";
 import { useNavigationAdapter } from "@/platform/navigation";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
+import { getOfficialAiPricingSource } from "@/shared/ai-pricing-sources";
 import { statusOptions } from "../shared/options";
 
 function AiModelCapabilityField({ form }: { form: import("antd").FormInstance }) {
   const modelType = Form.useWatch("modelType", form) as AiModelRecord["modelType"] | undefined;
+  const capabilitiesJson = Form.useWatch("capabilitiesJson", form) as string | null | undefined;
+  if (modelType === "embedding") {
+    const capabilities = parseCapabilities(capabilitiesJson);
+    const dimensions = Number(capabilities.dimensions) || undefined;
+    const setDimensions = (value: number | null) => {
+      const existing = parseCapabilities(form.getFieldValue("capabilitiesJson"));
+      form.setFieldValue(
+        "capabilitiesJson",
+        JSON.stringify({
+          ...existing,
+          embedding: true,
+          ...(value ? { dimensions: value } : { dimensions: undefined }),
+        }),
+      );
+    };
+    return (
+      <Space.Compact block>
+        <InputNumber
+          min={64}
+          max={65_536}
+          step={64}
+          value={dimensions}
+          placeholder="向量维度，例如 1024"
+          style={{ width: "100%" }}
+          onChange={setDimensions}
+        />
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [512, 768, 1024, 1536, 2048, 3072].map((value) => ({
+              key: String(value),
+              label: `${value} 维`,
+              onClick: () => setDimensions(value),
+            })),
+          }}
+        >
+          <Button icon={<DownOutlined />}>常用维度</Button>
+        </Dropdown>
+      </Space.Compact>
+    );
+  }
   if ((modelType || "chat") !== "chat") {
     return (
       <Typography.Text type="secondary">
-        {modelType === "embedding" ? "Embedding" : modelType === "image" ? "图片生成" : "重排序"}
-        能力会自动配置
+        {modelType === "image" ? "图片生成" : "重排序"}能力会自动配置
       </Typography.Text>
     );
   }
@@ -95,8 +143,16 @@ type AiModelRecord = {
   contextWindow?: number | null;
   maxOutputTokens?: number | null;
   inputPrice?: string | null;
+  cachedInputPrice?: string | null;
+  cacheWritePrice?: string | null;
   outputPrice?: string | null;
   currency: string;
+  pricingSourceUrl?: string | null;
+  pricingVerifiedAt?: string | null;
+  pricingSourceType: "manual" | "catalog" | "provider";
+  pricingCatalogKey?: string | null;
+  pricingSourceHash?: string | null;
+  pricingSyncedAt?: string | null;
   isDefaultChat: boolean;
   isDefaultStructured: boolean;
   isDefaultEmbedding: boolean;
@@ -111,6 +167,58 @@ type AiTestResult = {
   endpoint: string;
   status: number;
   preview: string;
+};
+
+const pricingFieldLabels = {
+  inputPrice: "普通输入价格",
+  cachedInputPrice: "缓存读取价格",
+  cacheWritePrice: "缓存写入价格",
+  outputPrice: "输出价格",
+  contextWindow: "上下文窗口",
+  maxOutputTokens: "最大输出 Token",
+} as const;
+
+type PricingField = keyof typeof pricingFieldLabels;
+
+type PricingCatalogCandidate = {
+  id: number;
+  catalogKey: string;
+  modelIdentifier: string;
+  providerType?: string | null;
+  mode?: string | null;
+  inputPrice?: string | null;
+  cachedInputPrice?: string | null;
+  cacheWritePrice?: string | null;
+  outputPrice?: string | null;
+  currency: string;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  sourceHash: string;
+  fetchedAt: string;
+  diff: Record<
+    PricingField,
+    {
+      current: string | number | null;
+      suggested: string | number | null;
+      changed: boolean;
+      available: boolean;
+    }
+  >;
+};
+
+type PricingPreview = {
+  model: AiModelRecord;
+  catalog: {
+    ready: boolean;
+    source: { name: string; url: string; homepage: string; trustLevel: "community" };
+    snapshot: null | {
+      id: number;
+      sourceHash: string;
+      modelCount: number;
+      fetchedAt: string;
+    };
+  };
+  candidates: PricingCatalogCandidate[];
 };
 
 const modelTypeOptions = [
@@ -227,6 +335,55 @@ function ModelLimitInput({
       </Dropdown>
     </Space.Compact>
   );
+}
+
+function PricingSourceField({
+  form,
+  providers,
+}: {
+  form: import("antd").FormInstance;
+  providers: AiProviderRecord[];
+}) {
+  const providerId = Form.useWatch("providerId", form) as number | undefined;
+  const value = Form.useWatch("pricingSourceUrl", form) as string | null | undefined;
+  const provider = providers.find((item) => Number(item.id) === Number(providerId));
+  const official = getOfficialAiPricingSource(provider?.providerType);
+  const link = value?.trim() || official?.url;
+
+  return (
+    <Space.Compact block>
+      <Input
+        allowClear
+        value={value ?? undefined}
+        placeholder={official?.url ?? "填写服务商或网关的价格页 URL"}
+        onChange={(event) => form.setFieldValue("pricingSourceUrl", event.target.value)}
+      />
+      <Tooltip title={link ? `打开${official?.name ?? "价格来源"}` : "当前服务商没有内置价格来源"}>
+        <Button
+          disabled={!link}
+          href={link}
+          target="_blank"
+          rel="noreferrer"
+          icon={<ExportOutlined />}
+          aria-label="打开价格来源"
+        />
+      </Tooltip>
+    </Space.Compact>
+  );
+}
+
+function formatModelPrice(value?: string | null) {
+  if (value == null || value === "") return "-";
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number) : value;
+}
+
+function formatPricingValue(field: PricingField, value: string | number | null | undefined) {
+  if (value == null || value === "") return "未提供";
+  if (field === "contextWindow" || field === "maxOutputTokens") {
+    return `${Number(value).toLocaleString()} tokens`;
+  }
+  return `${formatModelPrice(String(value))} USD / 1M`;
 }
 
 function AiModelIdField({
@@ -429,6 +586,9 @@ export function AiModelPage() {
   const [streamStatus, setStreamStatus] = useState<number | null>(null);
   const [streamError, setStreamError] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [pricingModel, setPricingModel] = useState<AiModelRecord | null>(null);
+  const [pricingCandidateId, setPricingCandidateId] = useState<number | null>(null);
+  const [pricingFields, setPricingFields] = useState<PricingField[] | null>(null);
   const streamControllerRef = useRef<AbortController | null>(null);
   const providerQuery = useQuery({
     queryKey: ["system-ai-provider-options"],
@@ -447,6 +607,22 @@ export function AiModelPage() {
   const activeProviderCount = (providerQuery.data ?? []).filter(
     (provider) => provider.status === 1,
   ).length;
+  const pricingPreviewQuery = useQuery({
+    queryKey: ["system-ai-model-pricing-preview", pricingModel?.id],
+    queryFn: () =>
+      request<PricingPreview>(`/api/system/ai/model/${pricingModel?.id}/pricing/preview`),
+    enabled: Boolean(pricingModel),
+  });
+  const pricingCandidates = pricingPreviewQuery.data?.candidates ?? [];
+  const pricingCandidate =
+    pricingCandidates.find((item) => item.id === pricingCandidateId) ?? pricingCandidates[0] ?? null;
+  const selectedPricingFields =
+    pricingFields ??
+    (pricingCandidate
+      ? (Object.keys(pricingFieldLabels) as PricingField[]).filter(
+        (field) => pricingCandidate.diff[field].available && pricingCandidate.diff[field].changed,
+      )
+      : []);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["admin-data-table", "/api/system/ai/model"] });
@@ -491,6 +667,37 @@ export function AiModelPage() {
     onSuccess: (result) => {
       setTestResult(result as AiTestResult);
       feedback.success("模型调用正常");
+    },
+  });
+
+  const refreshPricingMutation = useMutation({
+    mutationFn: () =>
+      request<{ changed: boolean; modelCount: number }>("/api/system/ai/pricing/catalog/refresh", {
+        method: "POST",
+      }),
+    onSuccess: (result) => {
+      feedback.success(
+        result.changed
+          ? `价格目录已刷新，共 ${result.modelCount} 个模型`
+          : "价格目录已是最新版本",
+      );
+      void pricingPreviewQuery.refetch();
+    },
+  });
+
+  const applyPricingMutation = useMutation({
+    mutationFn: () => {
+      if (!pricingModel || !pricingCandidate) throw new Error("请选择价格候选");
+      return request(`/api/system/ai/model/${pricingModel.id}/pricing/apply`, {
+        method: "PUT",
+        body: { catalogItemId: pricingCandidate.id, fields: selectedPricingFields },
+      });
+    },
+    onSuccess: () => {
+      feedback.success("目录候选值已应用");
+      setPricingModel(null);
+      setPricingCandidateId(null);
+      invalidate();
     },
   });
 
@@ -592,12 +799,17 @@ export function AiModelPage() {
             optionFilterProp="label"
             placeholder="选择服务商连接"
             onChange={(value) => {
+              const provider = providerQuery.data?.find(
+                (item) => Number(item.id) === Number(value),
+              );
               form.setFieldValue("providerId", Number(value));
               form.setFieldsValue({
                 modelId: undefined,
                 name: undefined,
                 contextWindow: undefined,
                 maxOutputTokens: undefined,
+                pricingSourceUrl: getOfficialAiPricingSource(provider?.providerType)?.url,
+                pricingVerifiedAt: undefined,
               });
             }}
           />
@@ -665,15 +877,19 @@ export function AiModelPage() {
       width: 220,
       formSection: "advanced",
       formHelp:
-        "这些能力用于决定模型能否执行结构化输出、Agent 工具调用、图片理解或推理任务。不了解时保持默认即可。",
+        "Chat 模型在这里声明结构化输出、Agent 工具调用、图片理解或推理能力；Embedding 模型在这里填写服务商要求的向量维度，例如 text-embedding-v4 使用 1024。",
       renderFormField: ({ form }) => <AiModelCapabilityField form={form} />,
       render: (value) => {
-        const tags = capabilityTags(value ? String(value) : "");
-        return tags.length ? (
+        const parsed = parseCapabilities(value);
+        const tags = capabilityTags(value ? String(value) : "").filter(
+          (tag) => tag !== "dimensions",
+        );
+        return tags.length || Number(parsed.dimensions) > 0 ? (
           <Space wrap size={4}>
             {tags.map((tag) => (
               <Tag key={tag}>{tag}</Tag>
             ))}
+            {Number(parsed.dimensions) > 0 ? <Tag>{Number(parsed.dimensions)} 维</Tag> : null}
           </Space>
         ) : (
           <Typography.Text type="secondary">未配置</Typography.Text>
@@ -720,20 +936,80 @@ export function AiModelPage() {
       ),
     },
     {
-      title: "输入价格",
+      title: "价格 / 1M tokens",
       dataIndex: "inputPrice",
       hideInSearch: true,
-      width: 100,
+      width: 280,
       formSection: "advanced",
-      formHelp: "仅用于成本统计，不参与模型调用。不需要成本核算时留空。",
+      formHelp:
+        "每 100 万非缓存输入 Token 的价格。价格只用于费用账本估算，不影响模型调用；实际费用以服务商账单为准。",
+      fieldProps: { placeholder: "普通输入，例如 2.5" },
+      render: (_, record) => {
+        const hasPrice = [
+          record.inputPrice,
+          record.cachedInputPrice,
+          record.cacheWritePrice,
+          record.outputPrice,
+        ].some((value) => value != null && value !== "");
+        return (
+          <Space orientation="vertical" size={2}>
+            {hasPrice ? (
+              <Typography.Text>
+                输入 {formatModelPrice(record.inputPrice)} · 缓存读{" "}
+                {formatModelPrice(record.cachedInputPrice)} · 输出{" "}
+                {formatModelPrice(record.outputPrice)} {record.currency || "USD"}
+              </Typography.Text>
+            ) : (
+              <Typography.Text type="secondary">未配置</Typography.Text>
+            )}
+            {record.cacheWritePrice ? (
+              <Typography.Text type="secondary">
+                缓存写 {formatModelPrice(record.cacheWritePrice)} {record.currency || "USD"}
+              </Typography.Text>
+            ) : null}
+            {record.pricingSourceUrl ? (
+              <Typography.Link href={record.pricingSourceUrl} target="_blank" rel="noreferrer">
+                价格来源{record.pricingVerifiedAt ? ` · 核验于 ${record.pricingVerifiedAt}` : ""}
+              </Typography.Link>
+            ) : null}
+            {record.pricingSourceType === "catalog" ? (
+              <Typography.Text type="secondary">
+                <Tag color="blue">目录同步</Tag>
+                {record.pricingCatalogKey}
+              </Typography.Text>
+            ) : null}
+          </Space>
+        );
+      },
+    },
+    {
+      title: "缓存读取价格",
+      dataIndex: "cachedInputPrice",
+      hideInSearch: true,
+      hideInTable: true,
+      formSection: "advanced",
+      formHelp:
+        "每 100 万缓存读取 Token 的价格。留空时账本回退使用普通输入价，避免把缓存命中错误地计为免费。",
+      fieldProps: { placeholder: "缓存读取，例如 0.25" },
+    },
+    {
+      title: "缓存写入价格",
+      dataIndex: "cacheWritePrice",
+      hideInSearch: true,
+      hideInTable: true,
+      formSection: "advanced",
+      formHelp:
+        "每 100 万缓存写入 Token 的价格，主要用于 Anthropic 等显式收取缓存创建费用的服务。留空时使用普通输入价估算。",
+      fieldProps: { placeholder: "可选，例如 3.125" },
     },
     {
       title: "输出价格",
       dataIndex: "outputPrice",
       hideInSearch: true,
-      width: 100,
+      hideInTable: true,
       formSection: "advanced",
-      formHelp: "仅用于成本统计，不参与模型调用。不需要成本核算时留空。",
+      formHelp:
+        "每 100 万输出 Token 的价格，仅用于成本估算，不参与模型调用。不需要成本核算时留空。",
     },
     {
       title: "币种",
@@ -742,6 +1018,39 @@ export function AiModelPage() {
       width: 88,
       formSection: "advanced",
       fieldProps: { placeholder: "USD" },
+    },
+    {
+      title: "价格来源",
+      dataIndex: "pricingSourceUrl",
+      hideInSearch: true,
+      hideInTable: true,
+      fullWidth: true,
+      formSection: "advanced",
+      formHelp:
+        "常见官方 Provider 会自动带出官方价格页；兼容网关应填写网关自己的价格页。/models 通常不返回价格，因此系统不把模型同步结果当作价格真值。",
+      renderFormField: ({ form, initialValues }) => (
+        <PricingSourceField
+          form={form}
+          providers={providersForForm(providerQuery.data ?? [], initialValues)}
+        />
+      ),
+    },
+    {
+      title: "价格核验日期",
+      dataIndex: "pricingVerifiedAt",
+      hideInSearch: true,
+      hideInTable: true,
+      formSection: "advanced",
+      fieldProps: { placeholder: "YYYY-MM-DD" },
+      formHelp: "记录管理员最后一次对照价格来源的日期。系统不会声称网页价格已经自动同步。",
+      formItemProps: {
+        rules: [
+          {
+            pattern: /^\d{4}-\d{2}-\d{2}$/,
+            message: "请输入 YYYY-MM-DD 格式日期",
+          },
+        ],
+      },
     },
     {
       title: "默认用途",
@@ -854,7 +1163,7 @@ export function AiModelPage() {
             }
           />
         }
-        actionColumnWidth={212}
+        actionColumnWidth={248}
         canDelete={(record) =>
           !record.isSystem &&
           !record.isDefaultChat &&
@@ -882,6 +1191,21 @@ export function AiModelPage() {
         )}
         operateRender={(record) => (
           <>
+            <Tooltip title="从价格目录获取候选值">
+              <AuthButton
+                auth="system.aiModel.syncPricing"
+              >
+                <Button
+                  size="small"
+                  icon={<DollarOutlined />}
+                  onClick={() => {
+                    setPricingCandidateId(null);
+                    setPricingFields(null);
+                    setPricingModel(record);
+                  }}
+                />
+              </AuthButton>
+            </Tooltip>
             <Tooltip title="测试模型调用">
               <Button
                 size="small"
@@ -938,6 +1262,141 @@ export function AiModelPage() {
           </>
         )}
       />
+      <Modal
+        title={pricingModel ? `获取定价 · ${pricingModel.name}` : "获取定价"}
+        open={Boolean(pricingModel)}
+        width={860}
+        okText="应用选中字段"
+        cancelText="关闭"
+        confirmLoading={applyPricingMutation.isPending}
+        okButtonProps={{ disabled: !pricingCandidate || selectedPricingFields.length === 0 }}
+        onOk={() => void applyPricingMutation.mutateAsync()}
+        onCancel={() => {
+          setPricingModel(null);
+          setPricingCandidateId(null);
+          setPricingFields(null);
+        }}
+      >
+        <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="warning"
+            title="目录价格是社区维护的候选值"
+            description="应用前请核对服务商官方价格页。目录刷新和应用都不会填写“价格核验日期”，实际结算仍以服务商账单为准。"
+            action={
+              <AuthButton
+                auth="system.aiModel.syncPricing"
+              >
+                <Button
+                  icon={<SyncOutlined />}
+                  loading={refreshPricingMutation.isPending}
+                  onClick={() => void refreshPricingMutation.mutateAsync()}
+                >
+                  刷新目录
+                </Button>
+              </AuthButton>
+            }
+          />
+          {pricingPreviewQuery.isLoading ? (
+            <Alert showIcon type="info" title="正在读取价格目录" />
+          ) : !pricingPreviewQuery.data?.catalog.ready ? (
+            <Empty description="价格目录尚未初始化，请先刷新目录" />
+          ) : !pricingCandidate ? (
+            <Empty description="最新目录中没有与当前 Provider 和模型 ID 确定匹配的候选" />
+          ) : (
+            <>
+              <Descriptions size="small" column={2} bordered>
+                <Descriptions.Item label="当前模型">{pricingModel?.modelId}</Descriptions.Item>
+                <Descriptions.Item label="目录候选">
+                  <Select
+                    value={pricingCandidate.id}
+                    style={{ width: "100%" }}
+                    options={pricingCandidates.map((item) => ({
+                      value: item.id,
+                      label: `${item.catalogKey}${item.providerType ? ` · ${item.providerType}` : ""}`,
+                    }))}
+                    onChange={(value) => {
+                      setPricingCandidateId(value);
+                      setPricingFields(null);
+                    }}
+                  />
+                </Descriptions.Item>
+                <Descriptions.Item label="目录模型数">
+                  {pricingPreviewQuery.data.catalog.snapshot?.modelCount.toLocaleString()}
+                </Descriptions.Item>
+                <Descriptions.Item label="目录时间">
+                  {pricingPreviewQuery.data.catalog.snapshot?.fetchedAt
+                    ? new Date(pricingPreviewQuery.data.catalog.snapshot.fetchedAt).toLocaleString()
+                    : "-"}
+                </Descriptions.Item>
+                <Descriptions.Item label="来源版本" span={2}>
+                  <Typography.Text code>
+                    {pricingPreviewQuery.data.catalog.snapshot?.sourceHash.slice(0, 16)}
+                  </Typography.Text>
+                  <Typography.Link
+                    href={pricingPreviewQuery.data.catalog.source.homepage}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ marginInlineStart: 8 }}
+                  >
+                    LiteLLM
+                  </Typography.Link>
+                </Descriptions.Item>
+              </Descriptions>
+              <Table
+                size="small"
+                pagination={false}
+                rowKey="field"
+                dataSource={(Object.keys(pricingFieldLabels) as PricingField[]).map((field) => ({
+                  field,
+                  label: pricingFieldLabels[field],
+                  ...pricingCandidate.diff[field],
+                }))}
+                columns={[
+                  { title: "字段", dataIndex: "label", width: 150 },
+                  {
+                    title: "当前生效值",
+                    dataIndex: "current",
+                    render: (value, row) => formatPricingValue(row.field, value),
+                  },
+                  {
+                    title: "目录候选值",
+                    dataIndex: "suggested",
+                    render: (value, row) =>
+                      row.available ? (
+                        formatPricingValue(row.field, value)
+                      ) : (
+                        <Typography.Text type="secondary">未提供</Typography.Text>
+                      ),
+                  },
+                  {
+                    title: "变化",
+                    dataIndex: "changed",
+                    width: 88,
+                    render: (changed, row) =>
+                      row.available ? (
+                        <Tag color={changed ? "gold" : "default"}>
+                          {changed ? "有变化" : "相同"}
+                        </Tag>
+                      ) : (
+                        "-"
+                      ),
+                  },
+                ]}
+              />
+              <Checkbox.Group
+                value={selectedPricingFields}
+                options={(Object.keys(pricingFieldLabels) as PricingField[]).map((field) => ({
+                  label: pricingFieldLabels[field],
+                  value: field,
+                  disabled: !pricingCandidate.diff[field].available,
+                }))}
+                onChange={(values) => setPricingFields(values as PricingField[])}
+              />
+            </>
+          )}
+        </Space>
+      </Modal>
       <Modal
         title="测试 AI 模型"
         open={Boolean(testModel)}

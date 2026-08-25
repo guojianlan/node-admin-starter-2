@@ -1467,7 +1467,7 @@ describe("framework completeness coverage", () => {
       headers: authHeaders(token),
       body: JSON.stringify({ oldPassword: getAdminTestPassword(), newPassword: "short" }),
     });
-    expect(weak.status).toBe(500);
+    expect(weak.status).toBe(400);
 
     await sqlite
       .prepare(

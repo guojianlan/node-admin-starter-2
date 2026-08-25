@@ -2,9 +2,14 @@ import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { AiChatPage } from "@/features/system/ai-chat/AiChatPage";
 import { AiAgentPage } from "@/features/system/ai-agent/AiAgentPage";
+import { AiEvalPage } from "@/features/system/ai-eval/AiEvalPage";
+import { AiGovernancePage } from "@/features/system/ai-governance/AiGovernancePage";
+import { AiKnowledgePage } from "@/features/system/ai-knowledge/AiKnowledgePage";
 import { AiModelPage } from "@/features/system/ai-model/AiModelPage";
+import { AiNotebookPage } from "@/features/system/ai-notebook/AiNotebookPage";
 import { AiPlaygroundPage } from "@/features/system/ai-playground/AiPlaygroundPage";
 import { AiProviderPage } from "@/features/system/ai-provider/AiProviderPage";
+import { AiRuntimePage } from "@/features/system/ai-runtime/AiRuntimePage";
 import { AiSetupPage } from "@/features/system/ai-setup/AiSetupPage";
 import { AiWebSearchPage } from "@/features/system/ai-web-search/AiWebSearchPage";
 import { ConfigPage } from "@/features/system/config/ConfigPage";
@@ -177,6 +182,41 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "模型管理",
     auth: "system.aiModel.query",
     component: AiModelPage,
+  },
+  {
+    path: "/system/ai/runtime",
+    key: "system.aiRuntime",
+    title: "运行与追踪",
+    auth: "system.aiRuntime.query",
+    component: AiRuntimePage,
+  },
+  {
+    path: "/system/ai/knowledge",
+    key: "system.aiKnowledge",
+    title: "知识库",
+    auth: "system.aiKnowledge.query",
+    component: AiKnowledgePage,
+  },
+  {
+    path: "/system/ai/notebook",
+    key: "system.aiNotebook",
+    title: "AI Notebook",
+    auth: "system.aiNotebook.query",
+    component: AiNotebookPage,
+  },
+  {
+    path: "/system/ai/eval",
+    key: "system.aiEval",
+    title: "AI Eval",
+    auth: "system.aiEval.query",
+    component: AiEvalPage,
+  },
+  {
+    path: "/system/ai/governance",
+    key: "system.aiGovernance",
+    title: "AI 治理",
+    auth: "system.aiGovernance.query",
+    component: AiGovernancePage,
   },
   {
     path: "/system/ai/playground",

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  date,
   index,
   integer,
   pgTable,
@@ -567,6 +568,9 @@ export const sysFile = pgTable(
     ext: text("ext"),
     mime: text("mime"),
     type: text("type").notNull().default("other"),
+    usageType: text("usage_type", { enum: ["general", "knowledge", "user_content"] })
+      .notNull()
+      .default("general"),
     sha256: text("sha256"),
     metadataJson: text("metadata_json"),
     thumbnailPath: text("thumbnail_path"),
@@ -581,6 +585,7 @@ export const sysFile = pgTable(
     index("sys_file_storage_id_idx").on(table.storageId),
     index("sys_file_uploader_id_idx").on(table.uploaderId),
     index("sys_file_type_idx").on(table.type),
+    index("sys_file_usage_type_created_idx").on(table.usageType, table.createdAt),
     index("sys_file_sha256_idx").on(table.sha256),
     index("sys_file_deleted_at_idx").on(table.deletedAt),
     index("sys_file_created_at_idx").on(table.createdAt),
@@ -793,8 +798,20 @@ export const sysAiModel = pgTable(
     contextWindow: integer("context_window"),
     maxOutputTokens: integer("max_output_tokens"),
     inputPrice: text("input_price"),
+    cachedInputPrice: text("cached_input_price"),
+    cacheWritePrice: text("cache_write_price"),
     outputPrice: text("output_price"),
     currency: text("currency").notNull().default("USD"),
+    pricingSourceUrl: text("pricing_source_url"),
+    pricingVerifiedAt: date("pricing_verified_at"),
+    pricingSourceType: text("pricing_source_type", {
+      enum: ["manual", "catalog", "provider"],
+    })
+      .notNull()
+      .default("manual"),
+    pricingCatalogKey: text("pricing_catalog_key"),
+    pricingSourceHash: text("pricing_source_hash"),
+    pricingSyncedAt: timestamp("pricing_synced_at", { withTimezone: true }),
     isDefaultChat: boolean("is_default_chat").notNull().default(false),
     isDefaultStructured: boolean("is_default_structured").notNull().default(false),
     isDefaultEmbedding: boolean("is_default_embedding").notNull().default(false),
@@ -822,6 +839,561 @@ export const sysAiModel = pgTable(
     index("sys_ai_model_provider_id_idx").on(table.providerId),
     index("sys_ai_model_type_status_idx").on(table.modelType, table.status),
     index("sys_ai_model_status_sort_idx").on(table.status, table.sort),
+  ],
+);
+
+export const sysAiPricingCatalogSnapshot = pgTable(
+  "sys_ai_pricing_catalog_snapshot",
+  {
+    id: serial("id").primaryKey(),
+    sourceType: text("source_type", { enum: ["litellm"] })
+      .notNull()
+      .default("litellm"),
+    sourceUrl: text("source_url").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    modelCount: integer("model_count").notNull().default(0),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_pricing_catalog_snapshot_hash_unique").on(
+      table.sourceType,
+      table.sourceHash,
+    ),
+    index("sys_ai_pricing_catalog_snapshot_fetched_idx").on(table.fetchedAt),
+  ],
+);
+
+export const sysAiPricingCatalogItem = pgTable(
+  "sys_ai_pricing_catalog_item",
+  {
+    id: serial("id").primaryKey(),
+    snapshotId: integer("snapshot_id")
+      .notNull()
+      .references(() => sysAiPricingCatalogSnapshot.id, { onDelete: "cascade" }),
+    catalogKey: text("catalog_key").notNull(),
+    modelIdentifier: text("model_identifier").notNull(),
+    providerType: text("provider_type"),
+    mode: text("mode"),
+    inputPrice: text("input_price"),
+    cachedInputPrice: text("cached_input_price"),
+    cacheWritePrice: text("cache_write_price"),
+    outputPrice: text("output_price"),
+    currency: text("currency").notNull().default("USD"),
+    contextWindow: integer("context_window"),
+    maxOutputTokens: integer("max_output_tokens"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_pricing_catalog_item_snapshot_key_unique").on(
+      table.snapshotId,
+      table.catalogKey,
+    ),
+    index("sys_ai_pricing_catalog_item_snapshot_provider_idx").on(
+      table.snapshotId,
+      table.providerType,
+    ),
+    index("sys_ai_pricing_catalog_item_snapshot_model_idx").on(
+      table.snapshotId,
+      table.modelIdentifier,
+    ),
+  ],
+);
+
+export const sysAiPurposeRoute = pgTable(
+  "sys_ai_purpose_route",
+  {
+    purpose: text("purpose", {
+      enum: ["chat", "structured", "embedding", "rerank", "agent", "ragAnswer", "evalJudge"],
+    }).primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: integer("status").notNull().default(1),
+    ...timestamps,
+    createdBy: integer("created_by"),
+    updatedBy: integer("updated_by"),
+  },
+  (table) => [index("sys_ai_purpose_route_status_idx").on(table.status)],
+);
+
+export const sysAiPurposeModel = pgTable(
+  "sys_ai_purpose_model",
+  {
+    purpose: text("purpose")
+      .notNull()
+      .references(() => sysAiPurposeRoute.purpose, { onDelete: "cascade" }),
+    modelId: integer("model_id")
+      .notNull()
+      .references(() => sysAiModel.id, { onDelete: "restrict" }),
+    priority: integer("priority").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.purpose, table.modelId] }),
+    uniqueIndex("sys_ai_purpose_model_priority_unique").on(table.purpose, table.priority),
+    index("sys_ai_purpose_model_model_id_idx").on(table.modelId),
+  ],
+);
+
+export const sysAiInvocation = pgTable(
+  "sys_ai_invocation",
+  {
+    id: serial("id").primaryKey(),
+    purpose: text("purpose").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id"),
+    requestId: text("request_id"),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    sessionId: integer("session_id"),
+    runId: integer("run_id"),
+    stepId: integer("step_id"),
+    requestedModelId: integer("requested_model_id").references(() => sysAiModel.id, {
+      onDelete: "set null",
+    }),
+    resolvedModelId: integer("resolved_model_id").references(() => sysAiModel.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["running", "completed", "failed", "aborted"],
+    })
+      .notNull()
+      .default("running"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    fallbackUsed: boolean("fallback_used").notNull().default(false),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    estimatedCost: text("estimated_cost"),
+    currency: text("currency"),
+    durationMs: integer("duration_ms"),
+    errorType: text("error_type"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_ai_invocation_purpose_created_idx").on(table.purpose, table.createdAt),
+    index("sys_ai_invocation_status_created_idx").on(table.status, table.createdAt),
+    index("sys_ai_invocation_request_id_idx").on(table.requestId),
+    index("sys_ai_invocation_user_created_idx").on(table.userId, table.createdAt),
+    index("sys_ai_invocation_run_id_idx").on(table.runId),
+  ],
+);
+
+export const sysAiInvocationAttempt = pgTable(
+  "sys_ai_invocation_attempt",
+  {
+    id: serial("id").primaryKey(),
+    invocationId: integer("invocation_id")
+      .notNull()
+      .references(() => sysAiInvocation.id, { onDelete: "cascade" }),
+    attemptNo: integer("attempt_no").notNull(),
+    providerId: integer("provider_id").references(() => sysAiProvider.id, {
+      onDelete: "set null",
+    }),
+    modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    providerCode: text("provider_code").notNull(),
+    providerName: text("provider_name").notNull(),
+    modelIdentifier: text("model_identifier").notNull(),
+    modelName: text("model_name").notNull(),
+    status: text("status", { enum: ["running", "completed", "failed", "aborted"] })
+      .notNull()
+      .default("running"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    estimatedCost: text("estimated_cost"),
+    currency: text("currency"),
+    latencyMs: integer("latency_ms"),
+    firstTokenMs: integer("first_token_ms"),
+    errorType: text("error_type"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_invocation_attempt_no_unique").on(table.invocationId, table.attemptNo),
+    index("sys_ai_invocation_attempt_provider_created_idx").on(table.providerId, table.createdAt),
+    index("sys_ai_invocation_attempt_model_created_idx").on(table.modelId, table.createdAt),
+    index("sys_ai_invocation_attempt_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const sysAiKnowledgeBase = pgTable(
+  "sys_ai_knowledge_base",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    description: text("description"),
+    scopeType: text("scope_type", { enum: ["global", "department", "user"] })
+      .notNull()
+      .default("global"),
+    deptId: integer("dept_id").references(() => sysDept.id, { onDelete: "set null" }),
+    ownerId: integer("owner_id").references(() => sysUser.id, { onDelete: "set null" }),
+    chunkPreset: text("chunk_preset", {
+      enum: ["auto", "documentation", "paragraph", "sentence", "recursive", "fixed"],
+    })
+      .notNull()
+      .default("auto"),
+    chunkSize: integer("chunk_size").notNull().default(1600),
+    chunkOverlap: integer("chunk_overlap").notNull().default(160),
+    chunkConfigJson: text("chunk_config_json"),
+    managedType: text("managed_type", { enum: ["notebook"] }),
+    managedResourceId: integer("managed_resource_id"),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_knowledge_base_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_knowledge_base_scope_status_idx").on(table.scopeType, table.status),
+    uniqueIndex("sys_ai_knowledge_base_managed_resource_unique")
+      .on(table.managedType, table.managedResourceId)
+      .where(sql`${table.managedType} IS NOT NULL AND ${table.deletedAt} IS NULL`),
+  ],
+);
+
+export const sysAiDocument = pgTable(
+  "sys_ai_document",
+  {
+    id: serial("id").primaryKey(),
+    knowledgeBaseId: integer("knowledge_base_id")
+      .notNull()
+      .references(() => sysAiKnowledgeBase.id, { onDelete: "cascade" }),
+    fileId: integer("file_id")
+      .notNull()
+      .references(() => sysFile.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    sha256: text("sha256").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status", {
+      enum: ["pending", "processing", "ready", "failed", "disabled"],
+    })
+      .notNull()
+      .default("pending"),
+    characterCount: integer("character_count").notNull().default(0),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    chunkerVersion: text("chunker_version"),
+    chunkConfigJson: text("chunk_config_json"),
+    errorMessage: text("error_message"),
+    indexedAt: timestamp("indexed_at", { withTimezone: true }),
+    sourceType: text("source_type", { enum: ["file", "web_url"] })
+      .notNull()
+      .default("file"),
+    sourceUrl: text("source_url"),
+    canonicalUrl: text("canonical_url"),
+    sourceDomain: text("source_domain"),
+    sourceTitle: text("source_title"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    contentHash: text("content_hash"),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_document_base_hash_active_unique")
+      .on(table.knowledgeBaseId, table.sha256)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_document_base_status_idx").on(table.knowledgeBaseId, table.status),
+    index("sys_ai_document_file_id_idx").on(table.fileId),
+    index("sys_ai_document_source_type_idx").on(table.sourceType, table.fetchedAt),
+  ],
+);
+
+export const sysAiDocumentChunk = pgTable(
+  "sys_ai_document_chunk",
+  {
+    id: serial("id").primaryKey(),
+    documentId: integer("document_id")
+      .notNull()
+      .references(() => sysAiDocument.id, { onDelete: "cascade" }),
+    chunkNo: integer("chunk_no").notNull(),
+    content: text("content").notNull(),
+    tokenCount: integer("token_count").notNull().default(0),
+    pageNumber: integer("page_number"),
+    paragraphStart: integer("paragraph_start"),
+    paragraphEnd: integer("paragraph_end"),
+    heading: text("heading"),
+    metadataJson: text("metadata_json"),
+    embeddingJson: text("embedding_json"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_document_chunk_no_unique").on(table.documentId, table.chunkNo),
+    index("sys_ai_document_chunk_document_id_idx").on(table.documentId),
+  ],
+);
+
+export const sysAiRagRun = pgTable(
+  "sys_ai_rag_run",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    knowledgeBaseIdsJson: text("knowledge_base_ids_json").notNull(),
+    sourceFilterJson: text("source_filter_json"),
+    queryHash: text("query_hash").notNull(),
+    invocationId: integer("invocation_id").references(() => sysAiInvocation.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    citationCount: integer("citation_count").notNull().default(0),
+    durationMs: integer("duration_ms"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("sys_ai_rag_run_user_created_idx").on(table.userId, table.createdAt),
+    index("sys_ai_rag_run_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const sysAiRagCitation = pgTable(
+  "sys_ai_rag_citation",
+  {
+    id: serial("id").primaryKey(),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => sysAiRagRun.id, { onDelete: "cascade" }),
+    chunkId: integer("chunk_id")
+      .notNull()
+      .references(() => sysAiDocumentChunk.id, { onDelete: "restrict" }),
+    rank: integer("rank").notNull(),
+    score: text("score").notNull(),
+    quote: text("quote").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_rag_citation_run_chunk_unique").on(table.runId, table.chunkId),
+    index("sys_ai_rag_citation_run_rank_idx").on(table.runId, table.rank),
+  ],
+);
+
+export const sysAiNotebook = pgTable(
+  "sys_ai_notebook",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    scopeType: text("scope_type", { enum: ["global", "department", "user"] })
+      .notNull()
+      .default("user"),
+    deptId: integer("dept_id").references(() => sysDept.id, { onDelete: "set null" }),
+    ownerId: integer("owner_id").references(() => sysUser.id, { onDelete: "set null" }),
+    defaultModelId: integer("default_model_id").references(() => sysAiModel.id, {
+      onDelete: "set null",
+    }),
+    systemPrompt: text("system_prompt"),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_notebook_scope_status_idx").on(table.scopeType, table.status),
+    index("sys_ai_notebook_owner_created_idx").on(table.ownerId, table.createdAt),
+    index("sys_ai_notebook_dept_created_idx").on(table.deptId, table.createdAt),
+  ],
+);
+
+export const sysAiNotebookSource = pgTable(
+  "sys_ai_notebook_source",
+  {
+    id: serial("id").primaryKey(),
+    notebookId: integer("notebook_id")
+      .notNull()
+      .references(() => sysAiNotebook.id, { onDelete: "cascade" }),
+    sourceType: text("source_type", { enum: ["knowledge_base", "document"] }).notNull(),
+    knowledgeBaseId: integer("knowledge_base_id").references(() => sysAiKnowledgeBase.id, {
+      onDelete: "restrict",
+    }),
+    documentId: integer("document_id").references(() => sysAiDocument.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: integer("deleted_by"),
+  },
+  (table) => [
+    index("sys_ai_notebook_source_notebook_idx").on(table.notebookId, table.createdAt),
+    index("sys_ai_notebook_source_base_idx").on(table.knowledgeBaseId),
+    index("sys_ai_notebook_source_document_idx").on(table.documentId),
+  ],
+);
+
+export const sysAiNotebookArtifact = pgTable(
+  "sys_ai_notebook_artifact",
+  {
+    id: serial("id").primaryKey(),
+    notebookId: integer("notebook_id")
+      .notNull()
+      .references(() => sysAiNotebook.id, { onDelete: "cascade" }),
+    artifactType: text("artifact_type", { enum: ["summary", "outline", "faq", "brief"] }).notNull(),
+    title: text("title").notNull(),
+    promptText: text("prompt_text").notNull(),
+    promptHash: text("prompt_hash").notNull(),
+    content: text("content"),
+    status: text("status", { enum: ["generating", "completed", "failed"] })
+      .notNull()
+      .default("generating"),
+    version: integer("version").notNull().default(1),
+    ragRunId: integer("rag_run_id").references(() => sysAiRagRun.id, { onDelete: "set null" }),
+    invocationId: integer("invocation_id").references(() => sysAiInvocation.id, {
+      onDelete: "set null",
+    }),
+    modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    sourceSnapshotJson: text("source_snapshot_json").notNull(),
+    citationsJson: text("citations_json").notNull().default("[]"),
+    errorMessage: text("error_message"),
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_notebook_artifact_notebook_created_idx").on(table.notebookId, table.createdAt),
+    index("sys_ai_notebook_artifact_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const sysAiEvalDataset = pgTable(
+  "sys_ai_eval_dataset",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    scopeType: text("scope_type", { enum: ["global", "department", "user"] })
+      .notNull()
+      .default("user"),
+    deptId: integer("dept_id").references(() => sysDept.id, { onDelete: "set null" }),
+    ownerId: integer("owner_id").references(() => sysUser.id, { onDelete: "set null" }),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_eval_dataset_scope_status_idx").on(table.scopeType, table.status),
+    index("sys_ai_eval_dataset_owner_created_idx").on(table.ownerId, table.createdAt),
+    index("sys_ai_eval_dataset_dept_created_idx").on(table.deptId, table.createdAt),
+  ],
+);
+
+export const sysAiEvalCase = pgTable(
+  "sys_ai_eval_case",
+  {
+    id: serial("id").primaryKey(),
+    datasetId: integer("dataset_id")
+      .notNull()
+      .references(() => sysAiEvalDataset.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    agentId: integer("agent_id")
+      .notNull()
+      .references(() => sysAiAgent.id, { onDelete: "restrict" }),
+    sourceRunId: integer("source_run_id").references(() => sysAiAgentRun.id, {
+      onDelete: "set null",
+    }),
+    inputText: text("input_text").notNull(),
+    expectedText: text("expected_text"),
+    assertionsJson: text("assertions_json").notNull().default("{}"),
+    tagsJson: text("tags_json").notNull().default("[]"),
+    judgeEnabled: boolean("judge_enabled").notNull().default(false),
+    judgeRubric: text("judge_rubric"),
+    groundednessRequired: boolean("groundedness_required").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_eval_case_dataset_status_idx").on(table.datasetId, table.status),
+    index("sys_ai_eval_case_agent_id_idx").on(table.agentId),
+    index("sys_ai_eval_case_source_run_idx").on(table.sourceRunId),
+  ],
+);
+
+export const sysAiEvalRun = pgTable(
+  "sys_ai_eval_run",
+  {
+    id: serial("id").primaryKey(),
+    datasetId: integer("dataset_id")
+      .notNull()
+      .references(() => sysAiEvalDataset.id, { onDelete: "restrict" }),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    status: text("status", {
+      enum: ["queued", "running", "completed", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    totalCases: integer("total_cases").notNull().default(0),
+    passedCases: integer("passed_cases").notNull().default(0),
+    failedCases: integer("failed_cases").notNull().default(0),
+    errorCases: integer("error_cases").notNull().default(0),
+    requestId: text("request_id"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_ai_eval_run_dataset_created_idx").on(table.datasetId, table.createdAt),
+    index("sys_ai_eval_run_user_created_idx").on(table.userId, table.createdAt),
+    index("sys_ai_eval_run_status_created_idx").on(table.status, table.createdAt),
+    index("sys_ai_eval_run_request_id_idx").on(table.requestId),
+  ],
+);
+
+export const sysAiEvalResult = pgTable(
+  "sys_ai_eval_result",
+  {
+    id: serial("id").primaryKey(),
+    evalRunId: integer("eval_run_id")
+      .notNull()
+      .references(() => sysAiEvalRun.id, { onDelete: "cascade" }),
+    caseId: integer("case_id")
+      .notNull()
+      .references(() => sysAiEvalCase.id, { onDelete: "restrict" }),
+    agentRunId: integer("agent_run_id").references(() => sysAiAgentRun.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", { enum: ["passed", "failed", "error"] }).notNull(),
+    actualOutput: text("actual_output"),
+    assertionsJson: text("assertions_json").notNull().default("[]"),
+    metricsJson: text("metrics_json").notNull().default("{}"),
+    judgeScore: integer("judge_score"),
+    judgeReason: text("judge_reason"),
+    groundednessScore: text("groundedness_score"),
+    judgeInvocationId: integer("judge_invocation_id").references(() => sysAiInvocation.id, {
+      onDelete: "set null",
+    }),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_eval_result_run_case_unique").on(table.evalRunId, table.caseId),
+    index("sys_ai_eval_result_agent_run_idx").on(table.agentRunId),
+    index("sys_ai_eval_result_status_created_idx").on(table.status, table.createdAt),
   ],
 );
 
@@ -1152,6 +1724,327 @@ export const sysAiWorkflowRunStep = pgTable(
   (table) => [
     uniqueIndex("sys_ai_workflow_run_step_run_no_unique").on(table.runId, table.stepNo),
     index("sys_ai_workflow_run_step_code_idx").on(table.stepCode),
+  ],
+);
+
+export const sysAiMemory = pgTable(
+  "sys_ai_memory",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    agentId: integer("agent_id").references(() => sysAiAgent.id, { onDelete: "cascade" }),
+    scopeType: text("scope_type", { enum: ["user", "agent"] }).notNull(),
+    content: text("content").notNull(),
+    writePolicy: text("write_policy", { enum: ["manual", "confirmed"] })
+      .notNull()
+      .default("manual"),
+    sourceSessionId: integer("source_session_id").references(() => sysAiChatSession.id, {
+      onDelete: "set null",
+    }),
+    sourceMessageId: integer("source_message_id").references(() => sysAiChatMessage.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    index("sys_ai_memory_user_agent_status_idx").on(
+      table.userId,
+      table.agentId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("sys_ai_memory_expires_idx").on(table.expiresAt),
+  ],
+);
+
+export const sysAiRuntimeSkill = pgTable(
+  "sys_ai_runtime_skill",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    description: text("description"),
+    instructions: text("instructions").notNull(),
+    status: integer("status").notNull().default(1),
+    sort: integer("sort").notNull().default(0),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_runtime_skill_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_runtime_skill_status_sort_idx").on(table.status, table.sort, table.id),
+  ],
+);
+
+export const sysAiRuntimeSkillTool = pgTable(
+  "sys_ai_runtime_skill_tool",
+  {
+    skillId: integer("skill_id")
+      .notNull()
+      .references(() => sysAiRuntimeSkill.id, { onDelete: "cascade" }),
+    toolId: integer("tool_id")
+      .notNull()
+      .references(() => sysAiTool.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.skillId, table.toolId] })],
+);
+
+export const sysAiAgentSkill = pgTable(
+  "sys_ai_agent_skill",
+  {
+    agentId: integer("agent_id")
+      .notNull()
+      .references(() => sysAiAgent.id, { onDelete: "cascade" }),
+    skillId: integer("skill_id")
+      .notNull()
+      .references(() => sysAiRuntimeSkill.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.agentId, table.skillId] })],
+);
+
+export const sysAiMcpServer = pgTable(
+  "sys_ai_mcp_server",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    endpointUrl: text("endpoint_url").notNull(),
+    transport: text("transport", { enum: ["streamable_http", "sse"] })
+      .notNull()
+      .default("streamable_http"),
+    oauthMode: text("oauth_mode", {
+      enum: ["none", "client_credentials", "authorization_code"],
+    })
+      .notNull()
+      .default("none"),
+    clientId: text("client_id"),
+    clientSecretEncrypted: text("client_secret_encrypted"),
+    authorizationUrl: text("authorization_url"),
+    tokenUrl: text("token_url"),
+    scopes: text("scopes"),
+    status: text("status", { enum: ["draft", "active", "disabled", "error"] })
+      .notNull()
+      .default("draft"),
+    lastError: text("last_error"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_mcp_server_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_mcp_server_status_idx").on(table.status, table.id),
+  ],
+);
+
+export const sysAiMcpConnection = pgTable(
+  "sys_ai_mcp_connection",
+  {
+    id: serial("id").primaryKey(),
+    serverId: integer("server_id")
+      .notNull()
+      .references(() => sysAiMcpServer.id, { onDelete: "cascade" }),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["pending", "connected", "expired", "revoked", "error"],
+    })
+      .notNull()
+      .default("pending"),
+    stateHash: text("state_hash"),
+    codeVerifierEncrypted: text("code_verifier_encrypted"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenType: text("token_type"),
+    scopes: text("scopes"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("sys_ai_mcp_connection_server_user_idx").on(table.serverId, table.userId, table.status),
+  ],
+);
+
+export const sysAiMcpTool = pgTable(
+  "sys_ai_mcp_tool",
+  {
+    id: serial("id").primaryKey(),
+    serverId: integer("server_id")
+      .notNull()
+      .references(() => sysAiMcpServer.id, { onDelete: "cascade" }),
+    remoteName: text("remote_name").notNull(),
+    displayName: text("display_name").notNull(),
+    description: text("description"),
+    inputSchemaJson: text("input_schema_json"),
+    riskLevel: text("risk_level", { enum: ["low", "medium", "high", "critical"] })
+      .notNull()
+      .default("medium"),
+    approvalRequired: boolean("approval_required").notNull().default(true),
+    allowlisted: boolean("allowlisted").notNull().default(false),
+    status: integer("status").notNull().default(1),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_mcp_tool_server_remote_unique").on(table.serverId, table.remoteName),
+    index("sys_ai_mcp_tool_server_status_idx").on(table.serverId, table.status, table.allowlisted),
+  ],
+);
+
+export const sysAiProviderCircuit = pgTable(
+  "sys_ai_provider_circuit",
+  {
+    providerId: integer("provider_id")
+      .notNull()
+      .references(() => sysAiProvider.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    state: text("state", { enum: ["closed", "open", "half_open"] })
+      .notNull()
+      .default("closed"),
+    failureThreshold: integer("failure_threshold").notNull().default(3),
+    cooldownMs: integer("cooldown_ms").notNull().default(60000),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    nextProbeAt: timestamp("next_probe_at", { withTimezone: true }),
+    probeLeaseUntil: timestamp("probe_lease_until", { withTimezone: true }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastErrorType: text("last_error_type"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.providerId, table.purpose] }),
+    index("sys_ai_provider_circuit_state_probe_idx").on(table.state, table.nextProbeAt),
+  ],
+);
+
+export const sysAiJob = pgTable(
+  "sys_ai_job",
+  {
+    id: serial("id").primaryKey(),
+    jobType: text("job_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] })
+      .notNull()
+      .default("queued"),
+    priority: integer("priority").notNull().default(100),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedBy: text("locked_by"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key"),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    requestId: text("request_id"),
+    resultJson: text("result_json"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_job_idempotency_unique")
+      .on(table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    index("sys_ai_job_claim_idx").on(table.status, table.availableAt, table.priority, table.id),
+    index("sys_ai_job_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const sysAiQuotaPolicy = pgTable(
+  "sys_ai_quota_policy",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    subjectType: text("subject_type", { enum: ["system", "department", "user"] }).notNull(),
+    subjectId: integer("subject_id"),
+    period: text("period", { enum: ["daily", "monthly"] })
+      .notNull()
+      .default("monthly"),
+    maxInputTokens: integer("max_input_tokens"),
+    maxOutputTokens: integer("max_output_tokens"),
+    maxCost: text("max_cost"),
+    currency: text("currency").notNull().default("USD"),
+    status: integer("status").notNull().default(1),
+    ...timestamps,
+    createdBy: integer("created_by"),
+    updatedBy: integer("updated_by"),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_quota_policy_subject_period_unique").on(
+      table.subjectType,
+      table.subjectId,
+      table.period,
+    ),
+  ],
+);
+
+export const sysAiBillingLedger = pgTable(
+  "sys_ai_billing_ledger",
+  {
+    id: serial("id").primaryKey(),
+    invocationId: integer("invocation_id").references(() => sysAiInvocation.id, {
+      onDelete: "set null",
+    }),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "set null" }),
+    providerId: integer("provider_id").references(() => sysAiProvider.id, { onDelete: "set null" }),
+    modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    purpose: text("purpose").notNull(),
+    entryType: text("entry_type", { enum: ["usage", "adjustment"] })
+      .notNull()
+      .default("usage"),
+    amount: text("amount").notNull(),
+    currency: text("currency").notNull(),
+    status: text("status", { enum: ["estimated", "confirmed", "void"] })
+      .notNull()
+      .default("estimated"),
+    source: text("source").notNull().default("runtime_estimate"),
+    description: text("description"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_billing_ledger_invocation_usage_unique")
+      .on(table.invocationId)
+      .where(sql`${table.entryType} = 'usage' AND ${table.invocationId} IS NOT NULL`),
+    index("sys_ai_billing_ledger_user_occurred_idx").on(table.userId, table.occurredAt),
+  ],
+);
+
+export const sysAiNotebookMember = pgTable(
+  "sys_ai_notebook_member",
+  {
+    notebookId: integer("notebook_id")
+      .notNull()
+      .references(() => sysAiNotebook.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["viewer", "editor"] }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.notebookId, table.userId] }),
+    index("sys_ai_notebook_member_user_idx").on(table.userId, table.notebookId),
   ],
 );
 

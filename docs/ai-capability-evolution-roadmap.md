@@ -1,6 +1,6 @@
 # Admin Base AI 能力演进路线图
 
-Updated: 2026-08-19
+Updated: 2026-08-24
 
 本文记录 Admin Base 在现有 AI Runtime 之上的下一阶段能力规划，并以 Novex 的实现作为产品和
 工程参考。本文是路线图，不代表所列能力已经上线；当前已实现范围仍以
@@ -26,7 +26,7 @@ PostgreSQL-first、AI SDK 7、Provider/Model、Chat、Agent、Tool、Run、Step 
 - 所有工具由服务端注册并受权限、风险等级、审批和操作日志约束。
 - 不向 Agent 暴露任意 Shell、文件系统、Git、SQL、数据库或不受限 HTTP 能力。
 - 普通参数放在 `sys_config_items`；Provider、Model、知识库等资源使用独立资源模型。
-- 第一阶段保持单进程和 PostgreSQL-first。队列、Worker、Redis、Milvus 和 MCP 必须由真实负载触发。
+- 保持 PostgreSQL-first；长任务先使用 PostgreSQL Queue/Outbox Worker，不为基础能力强制引入 Redis、RabbitMQ 或 Milvus。
 - 每一层都必须先定义数据归属、权限、审计、失败状态和验收标准，再增加页面。
 
 ## 2. 当前能力基线
@@ -46,16 +46,29 @@ PostgreSQL-first、AI SDK 7、Provider/Model、Chat、Agent、Tool、Run、Step 
 - 服务端静态 Workflow Registry、Admin Base 自有 Workflow Run/Step 持久化，以及首个不调用外部
   模型的 `ai-runtime-preflight` 确定性工作流。
 - 受治理的 Web Search Provider chain、优先级失败回退、来源持久化、来源展示和 Tool Step 审计。
+- 统一 Invocation/Attempt 费用账本、Provider 成功率和 P50/P95、用途模型路由与有序失败回退。
+- Knowledge/RAG v1：知识库可见范围、TXT/Markdown/PDF/DOCX 解析、确定性分块、Embedding、PostgreSQL 全文与余弦混合检索、Grounded Ask、RAG Run 和引用详情。
+- Notebook v1：显式可见范围的 Workspace、知识库/文档 Source、限定来源问答、引用快照，以及摘要、提纲、FAQ 和自定义简报 Artifact。
+- Eval/Trace v1：带可见范围的 Dataset/Case、真实 Run 固化、同步批次、不可覆盖 Result、确定性断言，以及 Agent Run/Step/Approval 和 Invocation/Attempt 回链。
+- AI Pricing Catalog v1：LiteLLM 社区目录的受信 HTTPS 获取、结构校验、Hash 快照、分页候选、Provider/Model 确定匹配、差异预览和逐字段显式应用。
+- 跨会话 User/Agent Memory：只接受手工或用户确认写入，可查看、归档、过期和删除。
+- Runtime Agent Skill：组合受控指令和服务端注册 Tool，并可绑定 Agent；不执行上传代码或本地命令。
+- Agent Knowledge Tool：复用当前用户与 Knowledge 数据范围返回可核验 Chunk 证据。
+- MCP 治理基础：远程 Streamable HTTP、OAuth Client Credentials/Authorization Code + PKCE、连接与 Token 生命周期、Tool 同步、allowlist、风险与审批策略。
+- Provider 持久熔断：PostgreSQL 保存 closed/open/half-open，条件更新保证同一 Provider/用途只有一个 half-open 探针。
+- PostgreSQL Worker/Queue：`SKIP LOCKED` 领取、租约续期、幂等键、指数退避、失败重试和取消，首批承载 Notebook Artifact 与 Eval Dataset。
+- Eval Judge 与 Groundedness：确定性断言优先，LLM Judge 提供辅助评分，要求 Groundedness 时必须存在 Knowledge Tool 证据。
+- system/department/user 配额和费用账本：调用前额度校验、估算 usage、人工 adjustment 与 confirmed/void 结算基础。
+- Notebook 长任务与协作：viewer/editor 成员权限、后台 Artifact Job、历史来源和引用快照。
 
-当前尚未实现：
+当前仍未实现的上层能力：
 
-- 知识库、文档解析、分块、向量索引、混合检索和 RAG 引用。
-- Notebook Workspace、Source 和 Artifact 产品层。
-- 跨会话的可管理长期 Memory。
-- 面向运行时 Agent 的 Skill 管理。
-- AI Eval 数据集、用例、批次和结果中心。
-- 完整的模型成本账本、健康历史、用途级 fallback 和熔断。
-- MCP Server、MCP OAuth 和第三方 MCP Tool 生命周期。
+- 真正的 tenant 数据隔离、租户账单周期、Invoice、支付、税务和 Provider 对账文件。
+- Redis/Kafka/RabbitMQ 等外部消息基础设施和独立调度中心；当前 Worker 以 PostgreSQL 为队列事实。
+- MCP stdio、Shell、本地脚本、任意 URL 执行和旧 SSE 传输执行；当前仅开放受控远程 Streamable HTTP。
+- 远端 MCP OAuth revoke endpoint 和长连接 Session 池；当前断开只撤销本地加密 Token，每次调用使用短生命周期 Session。
+- Memory 自动候选提取与逐条确认工作流；当前不静默复制聊天原文。
+- Notebook 实时共同编辑、评论、分享链接、定时任务和跨节点进度推送。
 
 ## 3. Novex 参考边界
 
@@ -87,26 +100,26 @@ Novex 的 Rust、多服务、Redis、RabbitMQ、Milvus、Worker 和 Outbox 设�
 
 ## 4. 能力对齐决策
 
-| 能力                  | Novex 参考点                               | Admin Base 决策                           | 时机                     |
-| --------------------- | ------------------------------------------ | ----------------------------------------- | ------------------------ |
-| Web Search            | 多 Provider fallback、标准结果、attempts   | 采用，写成轻量 TypeScript 服务和受控 Tool | 优先                     |
-| 任意 `http.get`       | URL 获取和网络保护                         | 暂缓，不能与 Search 一起开放              | 安全代理成熟后           |
-| 模型用途路由          | Chat/RAG/Embedding/Rerank/Eval 等 purpose  | 渐进适配，不新增 Deployment/Profile 层    | 近期                     |
-| 用量与成本            | token、费用、延迟统计                      | 采用，先做调用账本和聚合                  | 近期                     |
-| Provider 健康         | 健康、失败和延迟历史                       | 采用轻量版本                              | 近期                     |
-| fallback              | purpose route 和备用模型                   | 每个用途支持一个有序候选列表              | 近期                     |
-| 熔断和 call lease     | 持久熔断、调用租约、原生取消               | 暂缓                                      | 真实故障和并发压力出现后 |
-| Knowledge/RAG         | Dataset/Document/Chunk/Embedding/Retrieval | PostgreSQL-first 重新实现                 | 中期                     |
-| Milvus                | 独立向量数据库                             | 暂缓，先评估 `pgvector`                   | 数据规模触发后           |
-| Parser Worker         | 异步解析队列                               | 暂缓，v1 允许受限同步/后台任务            | 大文件吞吐触发后         |
-| Notebook              | Workspace/Source/Artifact/grounded Ask     | 在 RAG 和引用之后适配                     | 中期                     |
-| Citation              | 回答到文档块和来源的引用                   | 采用，作为 RAG 必选项                     | 中期                     |
-| Memory                | Scope、Policy、Memory Snippet              | 显式写入、可查看删除的轻量版本            | 后期                     |
-| Runtime Skill         | 指令、资源和 Tool 组合                     | 仅做指令 + 允许 Tool，不执行任意代码      | 后期                     |
-| Eval/Trace            | Dataset/Case/Run/Result、trace replay      | 采用轻量按需版本                          | RAG 后                   |
-| MCP                   | Server、Tool、OAuth、Gateway               | 暂缓                                      | 多个外部 MCP 系统接入时  |
-| Redis/RabbitMQ/Outbox | 分布式运行和任务恢复                       | 暂缓                                      | 单进程无法满足 SLA 时    |
-| 多租户 AI 基础        | tenant scope                               | 不在当前主线                              | 明确多租户项目时         |
+| 能力                  | Novex 参考点                               | Admin Base 决策                                                | 时机               |
+| --------------------- | ------------------------------------------ | -------------------------------------------------------------- | ------------------ |
+| Web Search            | 多 Provider fallback、标准结果、attempts   | 采用，写成轻量 TypeScript 服务和受控 Tool                      | 优先               |
+| 任意 `http.get`       | URL 获取和网络保护                         | 暂缓，不能与 Search 一起开放                                   | 安全代理成熟后     |
+| 模型用途路由          | Chat/RAG/Embedding/Rerank/Eval 等 purpose  | 渐进适配，不新增 Deployment/Profile 层                         | 近期               |
+| 用量与成本            | token、费用、延迟统计                      | 采用，先做调用账本和聚合                                       | 近期               |
+| Provider 健康         | 健康、失败和延迟历史                       | 采用轻量版本                                                   | 近期               |
+| fallback              | purpose route 和备用模型                   | 每个用途支持一个有序候选列表                                   | 近期               |
+| 熔断和 call lease     | 持久熔断、调用租约、原生取消               | 已实现持久熔断、half-open 和 Worker 租约；外部请求原生取消待补 | 已交付基础         |
+| Knowledge/RAG         | Dataset/Document/Chunk/Embedding/Retrieval | PostgreSQL-first 重新实现                                      | 中期               |
+| Milvus                | 独立向量数据库                             | 暂缓，先评估 `pgvector`                                        | 数据规模触发后     |
+| Parser Worker         | 异步解析队列                               | 已有 PostgreSQL Worker 基础；Parser/OCR Job 尚未接入           | 按解析吞吐扩展     |
+| Notebook              | Workspace/Source/Artifact/grounded Ask     | 在 RAG 和引用之后适配                                          | 中期               |
+| Citation              | 回答到文档块和来源的引用                   | 采用，作为 RAG 必选项                                          | 中期               |
+| Memory                | Scope、Policy、Memory Snippet              | 显式写入、可查看删除的轻量版本                                 | 后期               |
+| Runtime Skill         | 指令、资源和 Tool 组合                     | 仅做指令 + 允许 Tool，不执行任意代码                           | 后期               |
+| Eval/Trace            | Dataset/Case/Run/Result、trace replay      | 采用轻量按需版本                                               | RAG 后             |
+| MCP                   | Server、Tool、OAuth、Gateway               | 已交付受控远程 Streamable HTTP 基础                            | 按真实 Server 扩展 |
+| Redis/RabbitMQ/Outbox | 分布式运行和任务恢复                       | 已交付 PostgreSQL Queue/Outbox 基础，外部 Broker 暂缓          | SLA 触发后升级     |
+| 多租户 AI 基础        | tenant scope                               | 不在当前主线                                                   | 明确多租户项目时   |
 
 ## 5. Web Search v1 已实现
 
@@ -175,13 +188,14 @@ v1 验收状态：
 
 Knowledge/RAG 是 Notebook 的基础，不应先做 Notebook 外壳再补检索。
 
-建议数据模型：
+已实现数据模型：
 
 ```text
 sys_ai_knowledge_base
 sys_ai_document
 sys_ai_document_chunk
-sys_ai_embedding_job       # 可选；仅在异步处理出现后增加
+sys_ai_rag_run
+sys_ai_rag_citation
 ```
 
 建议处理链路：
@@ -206,10 +220,10 @@ v1 范围：
 - 文档保留解析状态、字符数、chunk 数、hash、版本和最后处理时间。
 - chunk 保留顺序、原始页码/段落、标题层级、文本、token 估算和来源 metadata。
 - Embedding 模型必须是已启用的 `embedding` 用途模型。
-- 先确认部署 PostgreSQL 是否支持 `pgvector`，不把支持情况当作默认事实。
+- 当前不假设部署 PostgreSQL 已安装 `pgvector`：Migration 创建生成式 `tsvector` 和 GIN 索引，Embedding 暂存 JSON，由 TypeScript 计算余弦分数；数据量和部署条件满足后再迁移到 `pgvector`。
 - 支持知识库和文档范围过滤，普通用户不能越权检索未授权来源。
 - 回答必须返回引用；无法从来源支撑时明确表示证据不足。
-- v1 支持向量 + PostgreSQL 全文/关键词的混合检索；Rerank 可作为可选模型用途。
+- v1 支持向量 + PostgreSQL 全文/关键词的混合检索；可选 Rerank 在权限过滤后处理最多 50 条候选，每条最多发送 1800 字符，失败时自动保留混合检索顺序。
 
 v1 不做：
 
@@ -226,6 +240,39 @@ v1 不做：
 - 每条引用可以定位到文件、页码/段落和 chunk。
 - 删除或停用来源后不再参与回答。
 - Embedding Provider 失败时任务状态、错误和重试行为可追踪。
+
+v1 当前交付状态：
+
+- `/system/ai/knowledge` 提供知识来源和检索问答两个工作区。
+- 来源复用 `sys_file`，同库相同 hash 拒绝重复；同名新 hash 生成新版本并停用旧版本。
+- 索引状态为 `pending -> processing -> ready | failed`，失败原因脱敏后可见并可重试。
+- `global | department | user` 可见性在列表、文档命令、检索和按 ID 查询中统一执行。
+- `embedding`、`rerank` 和 `ragAnswer` 均复用用途模型路由、Invocation/Attempt、Provider 健康和有序回退链路。
+- Embedding 索引批次固定为 10；模型能力中的 `dimensions` 会传给 OpenAI-compatible Embedding 请求并校验返回向量维度。
+- Rerank 使用 AI SDK 7 的 `rerank()` 和受控 DashScope/Cohere-compatible 适配器。Rerank 查询、候选正文、API Key 和 Authorization 不进入调用账本或操作日志。
+- RAG Run 保存查询 hash、回答 Invocation 和 Citation 快照，不把 Prompt 或回答正文写入调用账本。
+- 当前未实现 Parser/OCR Job、网页同步和 `pgvector` 原生索引；Agent Knowledge Tool 已复用本服务完成受控接入。
+
+DashScope 推荐配置映射：
+
+| 配置                         | Admin Base 归属                 | 当前值                                   |
+| ---------------------------- | ------------------------------- | ---------------------------------------- |
+| Embedding Base URL / API Key | 独立 AI Provider，加密保存密钥  | `compatible-mode/v1` 连接                |
+| Embedding 模型               | AI Model + `embedding` 用途路由 | `text-embedding-v4`，`dimensions = 1024` |
+| Rerank Base URL / API Key    | 独立 AI Provider，加密保存密钥  | `compatible-api/v1` 连接                 |
+| Rerank 模型                  | AI Model + `rerank` 用途路由    | `qwen3-rerank`                           |
+| 索引批次                     | Knowledge 检索策略              | 10                                       |
+| Rerank 候选 / 文本上限       | Knowledge 检索策略              | 50 / 1800 字符                           |
+
+两个 Base URL 不同，因此应创建两个 Provider 连接。密钥不写入 `.env.example`、文档或源码；本地和生产均通过 Provider 管理页写入现有加密字段。
+
+已有环境变量时可以执行一次引导导入：
+
+```bash
+pnpm ai:configure:dashscope-rag
+```
+
+命令读取 `DASHSCOPE_*`、`EMBEDDING_*` 和 `RERANKER_*`，把两个连接、两个模型和两个用途路由写入数据库，并通过现有 AES-256-GCM 服务加密密钥。运行时随后只读取数据库资源。`EMBEDDING_BATCH_SIZE`、`RERANKER_CANDIDATE_LIMIT` 和 `RERANKER_MAX_DOCUMENT_CHARS` 必须与当前源码治理策略 `10 / 50 / 1800` 一致，否则命令拒绝导入，避免环境变量看似生效但实际没有进入检索链路。
 
 ## 7. Notebook v1
 
@@ -250,7 +297,7 @@ sys_ai_notebook_artifact
 职责：
 
 - `Notebook`：名称、描述、所有者、状态、默认模型和可选 System Prompt。
-- `Source`：引用知识库或具体文档，不复制文档内容和向量。
+- `Source`：引用知识库或具体文档；公开网站先保存为受管 Markdown 文档快照，再复用同一索引和引用链路。
 - `Artifact`：由来源生成的摘要、提纲、FAQ、简报等可保存产物。
 - `Grounded Ask`：只检索当前 Notebook 的有效来源，并返回可定位引用。
 
@@ -267,17 +314,47 @@ v1 Artifact：
 - FAQ。
 - 自定义结构化简报。
 
-v1 不做音频概览、播客生成、公开分享和多人实时协作。
+v1 不做音频概览、播客生成、公开分享和多人实时共同编辑；已支持 owner 管理 viewer/editor 协作者。
+
+v1 当前交付状态：
+
+- `sys_ai_notebook`、`sys_ai_notebook_source`、`sys_ai_notebook_artifact` 已建立 PostgreSQL 契约。
+- Notebook 显式区分 `global | department | user`，所有读取、来源、问答和 Artifact 命令复用数据范围。
+- Source 引用整个知识库或单个已索引文档，不复制 chunk 或 Embedding；来源选择支持服务端搜索和分页。
+- 网站来源支持公开 HTML URL：逐跳校验 DNS/重定向并拒绝内网和保留地址，只提取正文文本，生成带原 URL、Canonical URL、域名、标题、发布时间、抓取时间和内容哈希的受管 Markdown 快照，然后自动分块、Embedding、索引并加入当前 Notebook。
+- 联网搜索支持通过 Tavily、Brave、SearXNG 有序 Provider 链发现候选来源；搜索结果不直接入库，用户选择后重新走网站来源安全抓取链路，单次最多 10 条并允许部分成功。
+- Deep Research 已复用 PostgreSQL Worker 和 Workflow Run/Step：模型规划互补检索词，按查询轮转选择 URL，并发安全导入，最后只基于本次成功导入的文档生成带引用 `brief` Artifact；运行可查询、取消并检查计划、检索、导入和报告步骤证据。
+- 直接上传到 Knowledge 的文件使用 `usage_type = knowledge`，不进入普通文件管理、普通分组、普通下载和回收站链路；普通管理文件可按权限导入为独立 Knowledge 快照，新文件使用独立物理路径并记录来源元数据，原文件后续移动或删除不影响知识文档；`user_content` 保留给未来 C 端上传域。
+- Grounded Ask 只检索当前有效来源；空来源拒绝执行，不能退化成搜索全部知识库。
+- 移除来源只影响后续问答；历史 RAG Citation、Artifact 来源版本和引用 quote 保留快照。
+- Artifact 支持摘要、提纲、FAQ、自定义结构化简报和新版本重新生成，并关联 RAG Run、Invocation 与实际模型。
+- Artifact 可同步执行或进入 PostgreSQL Worker 队列；Job 可追踪、失败重试和取消。
+- `sys_ai_notebook_member` 提供 viewer/editor 协作，owner/admin 管理成员；viewer 只读，editor 可管理来源和 Artifact。
+- `/system/ai/notebook` 使用来源、问答、引用/产物三栏工作台，桌面局部滚动，窄屏纵向排列。
+- `/system/ai/notebook` 以底部统一输入框承载“问来源”和“联网研究”：研究模式自动规划检索方向、导入并索引可信来源、生成引用报告；检索方向数和来源上限收进紧凑设置 Popover，活动 Run 可从输入框上方直接打开。页面仍保留联网搜索结果选择、导入结果分桶、运行轮询、取消、步骤时间线和最终报告入口。
 
 验收标准：
 
 - 未选择来源时不允许声称“基于资料回答”。
 - 问答只能检索当前 Notebook 来源。
+- 网站导入不能携带浏览器 Cookie 或登录态，不能执行脚本、绕过验证码/付费墙，也不能访问 localhost、内网、链路本地或云元数据地址。
+- 搜索摘要不能直接成为引用来源；只有重新抓取、建立快照并完成索引的选中 URL 才能进入 Notebook。
+- Deep Research 部分来源导入失败时保留成功来源和失败 Step；报告只能使用该 Run 成功导入的文档 ID，不能扩大到整个知识库。
 - 引用点击后能打开文件预览并定位到页码/段落，无法精确定位时至少展示 chunk 原文。
 - 移除来源后新问答不再使用该来源，历史回答保留当时引用快照。
 - Artifact 保存模型、Prompt、来源版本、引用和生成 Run，支持重新生成。
 
 ## 8. 模型运行治理
+
+截至 2026-08-24，本节已经完成首版实现：
+
+- `/system/ai/runtime` 提供用途路由、Provider 健康和调用 Trace 三个工作区。
+- `sys_ai_purpose_route` 与 `sys_ai_purpose_model` 保存主模型和最多四个有序候选。
+- `sys_ai_invocation` 与 `sys_ai_invocation_attempt` 保存不可变调用证据，并按普通输入、缓存读取、缓存写入和输出的每 1M Token 价格估算费用。
+- Chat、Structured、Embedding、Legacy Agent、Mastra Agent 和 RAG 回答共用用途解析；Eval 已预留用途并将在对应业务接入时复用。
+- 回退只发生在响应输出前；已经开始输出的流保持原模型并明确失败。
+- Provider 健康按真实业务调用聚合成功率、P50/P95 和最近错误，人工连接测试单独计数。
+- 模型价格目录只更新候选快照；管理员确认后才写入模型价格，手工编辑会清除目录来源元数据，官方账单仍是结算真值。
 
 Admin Base 当前 `Provider -> Model -> default by usage` 足以支撑现阶段，不需要立即复制 Novex 的
 Provider、Deployment、Profile、Route 多层模型。下一步只增加稳定用途解析：
@@ -300,7 +377,7 @@ type AiModelPurpose =
 - 建立调用账本：Provider、Model、purpose、Run/Message、输入/输出 token、缓存 token、耗时、结果和估算费用。
 - 建立 Provider 健康历史：最近成功、连续失败、P50/P95 延迟和最后错误类型。
 - Playground、Chat、Agent、RAG 和 Eval 都调用同一个 purpose resolver，不各自复制默认模型逻辑。
-- 只有当持续 Provider 故障已经影响服务时，再增加持久熔断和 half-open 状态。
+- Provider/用途熔断状态持久化到 PostgreSQL，open 冷却后通过带租约的单探针进入 half-open，成功关闭、失败重新打开。
 
 验收标准：
 
@@ -311,9 +388,10 @@ type AiModelPurpose =
 
 ## 9. Eval 与 Trace
 
-现有 Run、Step 和 Approval 已提供运行事实，应先把这些数据变成可调试界面，再建立轻量 Eval。
+现有 Run、Step、Approval、Invocation 和 Attempt 是 Eval 的运行事实。v1 已复用这些记录建立轻量 Eval，
+没有增加第二套模型调用或 Trace 存储。
 
-建议数据模型：
+已实现数据模型：
 
 ```text
 sys_ai_eval_dataset
@@ -327,11 +405,23 @@ v1 流程：
 1. 在 Agent Run 详情查看输入、模型、Tool Step、Approval、输出、token、耗时和错误。
 2. 将真实 Run 保存为 Eval Case。
 3. 为 Case 记录期望文本标准、期望/禁止 Tool、标签和固定输入。
-4. 管理员按需运行数据集，不引入队列。
+4. 管理员可同步运行，也可通过 PostgreSQL Worker 队列执行数据集。
 5. 汇总通过率、Tool 准确率、延迟、token 和成本。
 
-RAG 加入后再增加引用完整性、检索命中和 groundedness 指标。LLM Judge 只能作为辅助指标，不能替代
-确定性断言和人工复核。
+v1 当前交付状态：
+
+- `db:migrate` 与 `db:seed` 幂等提供 `Admin Base Agent 基线回归` 数据集，固化基础指令、计算器 Tool 和联网搜索 Tool 三类 Case；外部搜索 Case 明确标记环境依赖且不会自动执行。
+
+- `/system/ai/eval` 提供 Dataset、Case、Run 和 Result 工作台；Agent Run 详情可直接保存 Case。
+- Dataset 显式使用 `global | department | user` 归属，Case 继承 Dataset 的可见范围。
+- 每个 Case 通过现有 Agent Runtime 执行并创建独立 Agent Run；内部 Chat Session 执行后隐藏，Trace 事实保留。
+- 支持期望/禁止文本、期望/禁止 Tool、最大延迟、输入/输出 Token 和估算成本断言。
+- 无人值守 Eval 遇到需要 Approval 的 Tool 时创建审批证据并明确拒绝，不自动执行高风险动作。
+- 重跑总是新增 Run/Result，结果详情可回到实际 Provider、Model 和 fallback Attempt。
+
+Case 可显式启用 LLM Judge 和 Groundedness。确定性断言先执行，Judge 不能覆盖确定性失败；要求
+Groundedness 但没有完成的 `knowledge-search` Step 证据时直接失败，不允许模型凭空判断。Judge 仍只能
+作为辅助指标，不能替代确定性断言和人工复核。
 
 验收标准：
 
@@ -342,7 +432,7 @@ RAG 加入后再增加引用完整性、检索命中和 groundedness 指标。LL
 
 ## 10. Memory 与 Runtime Skill
 
-### 10.1 Memory
+### 10.1 Memory（已交付基础）
 
 长期 Memory 与当前会话上下文压缩不同。上下文压缩服务于单个会话窗口；Memory 是跨会话、可持续、
 可管理的数据。
@@ -357,7 +447,7 @@ v1 只支持：
 
 不允许默认静默提取所有对话，也不把完整聊天原文长期复制到 Memory。
 
-### 10.2 Runtime Skill
+### 10.2 Runtime Skill（已交付基础）
 
 运行时 Skill 与仓库中的 `.codex/skills` 开发 Skill 是两个概念：
 
@@ -373,20 +463,21 @@ name / code / description / instructions / allowedToolIds / agentIds / status
 Runtime Skill 只能组合文本指令和服务端注册 Tool，不允许上传或执行 JavaScript、Shell、Python、二进制、
 任意 URL handler 或文件系统脚本。
 
-## 11. MCP 的进入条件
+## 11. MCP 治理基础
 
-MCP 不是当前必要能力。第一方受控 Tool 对 Web Search、系统查询、知识检索和模块开发更简单、安全，
-也更容易审计。
+第一方受控 Tool 对 Web Search、系统查询、知识检索和模块开发仍然是默认选择。MCP 基础只用于接入
+已知远程系统，并统一进入 Tool Registry、权限、审批和审计链路。
 
-只有同时满足下列条件才进入 MCP 设计：
+当前开放边界：
 
-- 已有多个业务系统通过 MCP 暴露能力。
-- 为每个系统手写连接器已经产生明显重复成本。
-- OAuth、凭据轮换、Server 状态、Tool allowlist 和审计模型已经明确。
-- Agent Approval 和数据权限能够覆盖第三方 Tool 的副作用。
-- 生产环境能够限制 MCP Server 出站网络和本地进程权限。
+- 仅允许 HTTPS；非生产仅对 localhost/127.0.0.1 放宽 HTTP。
+- 仅执行 Streamable HTTP，SSE 只保留配置兼容。
+- 支持无认证、Client Credentials 和 Authorization Code + PKCE。
+- 同步后的 Tool 默认停用，必须进入 allowlist，并设置风险、审批和启用状态。
+- Access/Refresh Token 加密保存和自动刷新；删除 Server 会停用映射 Tool。
 
-即使引入 MCP，也必须经过统一 Tool Registry 适配，不能让管理员输入任意 stdio 命令或 URL 后直接执行。
+不支持 stdio、Shell、脚本、本地二进制或任意 URL 执行。详细边界见
+[`ai-mcp-governance.md`](./ai-mcp-governance.md)。
 
 ## 12. 分阶段交付顺序
 
@@ -394,42 +485,44 @@ MCP 不是当前必要能力。第一方受控 Tool 对 Web Search、系统查�
 
 - 实现 Web Search Provider chain、标准结果、来源 UI 和 Tool Step 审计。
 - 加严模型 `toolCalling` 兼容性检查。
-- 完善 Run/Step 调试详情。
-- 增加调用用量/成本账本和 Provider 健康历史。
-- 增加 purpose-based 主模型和 fallback。
+- 已完成 Run/Step 调试详情及 Invocation/Attempt Trace。
+- 已完成调用用量/成本账本和 Provider 健康历史。
+- 已完成 purpose-based 主模型和有序 fallback。
 
 ### Phase B：Knowledge/RAG v1
 
-- 确认 `pgvector` 可用性和部署策略。
-- 建立知识库、文档和 chunk 模型。
-- 复用文件模块完成解析、版本、索引和状态管理。
-- 实现 Embedding、混合检索、权限过滤和引用。
-- 提供知识检索 Agent Tool。
+- 已完成不依赖 `pgvector` 的 PostgreSQL-first 部署策略。
+- 已完成知识库、文档、chunk、RAG Run 和 Citation 模型。
+- 已完成文件复用、解析、版本、索引、状态和文件引用保护。
+- 已完成 Embedding、混合检索、权限过滤、Grounded Ask 和引用。
+- 已将知识检索作为受控 Agent Tool 接入，并继续复用 Knowledge 数据范围和引用证据。
 
 ### Phase C：Notebook v1
 
-- 建立 Notebook、Source 和 Artifact。
-- 提供来源选择、grounded Ask、引用面板和来源预览。
-- 支持摘要、提纲、FAQ 和自定义简报。
+- 已完成 Notebook、Source 和 Artifact 数据模型与权限审计。
+- 已完成来源选择、grounded Ask、引用面板和来源/引用快照。
+- 已完成摘要、提纲、FAQ 和自定义简报的生成、查看、重新生成与删除。
+- 已完成 viewer/editor 协作和后台 Worker Artifact 任务。
 
 ### Phase D：Eval/Trace
 
-- 完成 Run/Step/Approval 调试工作台。
-- 支持从 Run 保存 Eval Case。
-- 建立 Dataset、Case、Run 和 Result，按需执行。
-- 增加确定性、工具、延迟、token、成本和 RAG 指标。
+- 已完成 Run/Step/Approval 与 Invocation/Attempt 调试工作台。
+- 已支持从当前用户真实 Run 保存 Eval Case。
+- 已建立带全局、部门、个人范围的 Dataset、Case、Run 和 Result，并支持同步或 Worker 队列执行。
+- 已增加文本、工具、审批、延迟、Token 和成本的确定性断言与指标。
+- 已增加 LLM Judge 和基于 `knowledge-search` Step 证据的 groundedness 指标；没有证据时确定性失败。
 
-### Phase E：Memory 与 Runtime Skill
+### Phase E：Memory 与 Runtime Skill（已完成基础）
 
-- 增加显式 User/Agent Memory 和管理页面。
-- 增加只包含指令和允许 Tool 的 Runtime Skill。
-- 将 Skill 选择接入 Agent，而不引入任意代码执行。
+- 已增加显式 User/Agent Memory 和管理页面。
+- 已增加只包含指令和允许 Tool 的 Runtime Skill。
+- 已将 Skill 选择接入 Agent，且不引入任意代码执行。
 
-### Phase F：条件触发的高级能力
+### Phase F：治理基础与后续扩展
 
-- MCP Gateway/OAuth。
-- 持久熔断和调用租约。
-- Parser/Eval Worker、队列和 Outbox。
+- MCP Gateway/OAuth 已完成受控远程基础。
+- 持久熔断、half-open 和 PostgreSQL Worker 租约已完成基础。
+- Eval/Notebook Worker、队列和 Outbox 已完成基础；Parser/OCR Job 待接入。
 - PostgreSQL 之外的向量数据库。
 - Deployment/Profile 等更细模型抽象。
 
@@ -443,7 +536,7 @@ MCP 不是当前必要能力。第一方受控 Tool 对 Web Search、系统查�
 4. Notebook。
 5. Eval。
 6. Memory 和 Runtime Skill。
-7. MCP、分布式 Worker 和高级模型路由，仅在触发条件满足后实施。
+7. MCP、PostgreSQL Worker、配额和高级 Eval 已完成基础，外部 Broker、真多租户和正式财务结算按负载与业务触发。
 
 这个顺序使每个上层产品都建立在可验证的下层能力上：Notebook 依赖 RAG 和引用，Eval 依赖可靠
 Trace，Memory 和 Skill 依赖成熟的权限与 Tool 治理。它也避免为了对齐 Novex 而把 Admin Base

@@ -586,6 +586,76 @@ export async function getLatestSessionAgentRun(input: {
   return { ...run, steps };
 }
 
+export async function getAiAgentRunTrace(input: {
+  id: number;
+  userId: number;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const run = (await dbClient
+    .prepare(
+      `SELECT r.id, r.session_id AS "sessionId", r.agent_id AS "agentId", a.name AS "agentName",
+        a.code AS "agentCode", r.status, r.total_steps AS "totalSteps",
+        r.input_tokens AS "inputTokens", r.output_tokens AS "outputTokens",
+        r.duration_ms AS "durationMs", r.error_message AS "errorMessage",
+        r.parent_run_id AS "parentRunId", r.source_approval_id AS "sourceApprovalId",
+        r.started_at AS "startedAt", r.finished_at AS "finishedAt"
+       FROM sys_ai_agent_run r INNER JOIN sys_ai_agent a ON a.id = r.agent_id
+       WHERE r.id = ? AND r.user_id = ?`,
+    )
+    .get(input.id, input.userId)) as Record<string, unknown> | undefined;
+  if (!run) return null;
+  const steps = await dbClient
+    .prepare(
+      `SELECT id, step_no AS "stepNo", step_type AS "stepType", status,
+        tool_name AS "toolName", tool_call_id AS "toolCallId", input_json AS "inputJson",
+        output_json AS "outputJson", usage_json AS "usageJson", duration_ms AS "durationMs",
+        error_message AS "errorMessage", started_at AS "startedAt", finished_at AS "finishedAt"
+       FROM sys_ai_agent_run_step WHERE run_id = ? ORDER BY step_no ASC, id ASC`,
+    )
+    .all(input.id);
+  const invocations = (await dbClient
+    .prepare(
+      `SELECT i.id, i.purpose, i.source_type AS "sourceType", i.status,
+        i.attempt_count AS "attemptCount", i.fallback_used AS "fallbackUsed",
+        i.input_tokens AS "inputTokens", i.output_tokens AS "outputTokens",
+        i.estimated_cost AS "estimatedCost", i.currency, i.duration_ms AS "durationMs",
+        i.error_type AS "errorType", i.error_message AS "errorMessage",
+        i.started_at AS "startedAt", i.finished_at AS "finishedAt"
+       FROM sys_ai_invocation i WHERE i.run_id = ? ORDER BY i.id ASC`,
+    )
+    .all(input.id)) as Array<Record<string, unknown> & { id: number }>;
+  const invocationIds = invocations.map((item) => Number((item as { id: number }).id));
+  const attempts: Array<Record<string, unknown> & { invocationId: number }> = invocationIds.length
+    ? await dbClient
+        .prepare(
+          `SELECT invocation_id AS "invocationId", attempt_no AS "attemptNo", status,
+            provider_name AS "providerName", provider_code AS "providerCode",
+            model_name AS "modelName", model_identifier AS "modelIdentifier",
+            input_tokens AS "inputTokens", output_tokens AS "outputTokens",
+            estimated_cost AS "estimatedCost", currency, latency_ms AS "latencyMs",
+            first_token_ms AS "firstTokenMs", error_type AS "errorType",
+            error_message AS "errorMessage", started_at AS "startedAt", finished_at AS "finishedAt"
+           FROM sys_ai_invocation_attempt
+           WHERE invocation_id IN (${invocationIds.map(() => "?").join(", ")})
+           ORDER BY invocation_id ASC, attempt_no ASC`,
+        )
+        .all(...invocationIds) as Array<Record<string, unknown> & { invocationId: number }>
+    : [];
+  return {
+    ...run,
+    steps,
+    invocations: invocations.map((invocation) => ({
+      ...invocation,
+      attempts: attempts.filter(
+        (attempt) =>
+          Number((attempt as { invocationId: number }).invocationId) ===
+          Number((invocation as { id: number }).id),
+      ),
+    })),
+  };
+}
+
 async function refreshApprovalSession(input: {
   sessionId: number;
   userId: number;

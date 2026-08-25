@@ -1,6 +1,6 @@
 # Admin Base 当前技术栈与架构
 
-> 当前核对：2026-08-14
+> 当前核对：2026-08-24
 > 目标：记录当前项目真实技术栈、模块边界、运行链路和架构约束。后续新增能力时，先更新本文，再改实现。
 
 AI 服务商连接、模型、Playground、Chat 和 Agent 的详细职责见
@@ -10,41 +10,49 @@ Web Search 的已交付边界以及 Knowledge/RAG、Notebook、Eval、Memory、R
 除明确标为已实现的能力外，均不等于当前实现。
 AI SDK、DeepSeek Harness、Mastra 和 Pi 的 Runtime 选型结论见
 [`docs/ai-runtime-framework-comparison.md`](./ai-runtime-framework-comparison.md)。
+长期 Memory/Skill/Knowledge Tool、MCP、Worker/Outbox 和配额账本的运行边界分别见
+[`docs/ai-memory-and-skills.md`](./ai-memory-and-skills.md)、
+[`docs/ai-mcp-governance.md`](./ai-mcp-governance.md)、
+[`docs/ai-worker-and-outbox.md`](./ai-worker-and-outbox.md) 和
+[`docs/ai-quota-and-billing.md`](./ai-quota-and-billing.md)。
+CRM、企业知识库、数据查询和供应链的端到端组合示例见
+[`docs/ai-business-use-case-cookbook.md`](./ai-business-use-case-cookbook.md)。
+Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
+[`docs/ai-notebook-citation-experience.md`](./ai-notebook-citation-experience.md)。
 
 ## 1. 当前技术栈
 
-| 层级          | 当前选型                                    | 当前用途                                                   |
-| ------------- | ------------------------------------------- | ---------------------------------------------------------- |
-| 应用宿主      | Next.js 16 App Router                       | 承载后台页面和 `/api` route handler                        |
-| UI 框架       | React 19、Ant Design 6、`@ant-design/icons` | 后台页面、表单、表格、Drawer、Modal、图标                  |
-| 数据请求      | TanStack React Query 5                      | 列表、详情、辅助数据缓存和 mutation 状态                   |
-| 客户端状态    | Zustand 5                                   | 登录态、权限、菜单、布局偏好等全局状态                     |
-| API 框架      | Hono 4                                      | API route、middleware、错误处理、权限校验                  |
-| 数据库        | PostgreSQL                                  | 当前唯一主目标数据库                                       |
-| ORM / SQL     | Drizzle ORM 0.45、`postgres` driver         | schema、typed query、事务和手写 SQL 兼容层                 |
-| 校验          | Zod 4                                       | API 入参和 CRUD schema 校验                                |
-| 认证          | Bearer token + `sys_access_token`           | 登录后生成 token，token 保存权限快照                       |
-| 密码          | bcryptjs                                    | 用户密码 hash                                              |
-| 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                        |
-| 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                     |
-| 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                        |
-| AI 模型运行时 | AI SDK 7                                    | Provider、生成、流式、Tool Calling、结构化输出和 Embedding |
-| AI 编排内核   | Mastra Core 1.59                            | 渐进式 Agent/Workflow 编排；当前仅通用助手 canary          |
-| 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志         |
-| 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                   |
-| 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                       |
-| 单测          | Vitest 4                                    | API、service、CRUD、权限测试                               |
-| E2E           | Playwright 1.57                             | 浏览器流测试；当前默认会重置数据库，不能作为普通本地检查   |
-| 工具链        | TypeScript 5.9、ESLint 9、Prettier 3、tsx   | 类型检查、代码检查、格式化、脚本运行                       |
+| 层级          | 当前选型                                    | 当前用途                                                            |
+| ------------- | ------------------------------------------- | ------------------------------------------------------------------- |
+| 应用宿主      | Next.js 16 App Router                       | 承载后台页面和 `/api` route handler                                 |
+| UI 框架       | React 19、Ant Design 6、`@ant-design/icons` | 后台页面、表单、表格、Drawer、Modal、图标                           |
+| 数据请求      | TanStack React Query 5                      | 列表、详情、辅助数据缓存和 mutation 状态                            |
+| 客户端状态    | Zustand 5                                   | 登录态、权限、菜单、布局偏好等全局状态                              |
+| API 框架      | Hono 4                                      | API route、middleware、错误处理、权限校验                           |
+| 数据库        | PostgreSQL                                  | 当前唯一主目标数据库                                                |
+| ORM / SQL     | Drizzle ORM 0.45、`postgres` driver         | schema、typed query、事务和手写 SQL 兼容层                          |
+| 校验          | Zod 4                                       | API 入参和 CRUD schema 校验                                         |
+| 认证          | Bearer token + `sys_access_token`           | 登录后生成 token，token 保存权限快照                                |
+| 密码          | bcryptjs                                    | 用户密码 hash                                                       |
+| 密钥加密      | Node `crypto` AES-256-GCM                   | SMTP 密码、S3 Secret 等敏感字段加密                                 |
+| 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                              |
+| 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                                 |
+| AI 模型运行时 | AI SDK 7                                    | Provider、生成、流式、Tool Calling、结构化输出、Embedding 和 Rerank |
+| AI 编排内核   | Mastra Core 1.59                            | 渐进式 Agent/Workflow 编排；当前仅通用助手 canary                   |
+| 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志                  |
+| 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                            |
+| 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                                |
+| 单测          | Vitest 4                                    | API、service、CRUD、权限测试                                        |
+| E2E           | Playwright 1.57                             | 浏览器流测试；当前默认会重置数据库，不能作为普通本地检查            |
+| 工具链        | TypeScript 5.9、ESLint 9、Prettier 3、tsx   | 类型检查、代码检查、格式化、脚本运行                                |
 
 当前没有引入：
 
-- Redis、队列、定时任务。
-- OpenAPI/Swagger 文档生成。
-- Dockerfile、docker-compose、CI 配置。
-- 多租户和完整代码生成器。
+- Redis、Kafka、RabbitMQ 和独立任务调度中心；AI 长任务使用 PostgreSQL Queue/Outbox Worker。
+- 完整多租户；当前 AI 配额只支持 system/department/user 主体，不提供 tenant 隔离。
 
-这些能力属于生产级增强或插件化范围，不进入当前源码启动主路径。
+静态 OpenAPI、GitHub Actions CI、验收依赖 Compose 和受治理模块生成器已经存在；它们不改变
+Next.js + Hono 单应用和 PostgreSQL-first 的源码启动主路径。
 
 ## 2. 总体架构
 
@@ -174,29 +182,44 @@ CRUD factory 当前能力：
 
 当前核心表：
 
-| 表                                      | 作用                                                      |
-| --------------------------------------- | --------------------------------------------------------- |
-| `sys_user`                              | 用户、密码 hash、部门、状态、锁定和密码策略字段、系统保护 |
-| `sys_role`                              | 角色、状态、`data_scope`、系统保护                        |
-| `sys_user_role`                         | 用户角色关系                                              |
-| `sys_role_dept`                         | 角色自定义数据权限部门                                    |
-| `sys_rule`                              | 菜单、路由、按钮/API 权限                                 |
-| `sys_role_rule`                         | 角色权限关系                                              |
-| `sys_dept`                              | 部门树                                                    |
-| `sys_access_token`                      | 登录 token hash、权限快照、IP/User-Agent、过期和最近活跃  |
-| `sys_user_password_history`             | 用户历史密码 hash，用于密码历史策略                       |
-| `sys_password_reset_token`              | 忘记密码重置 token hash、过期时间和使用状态               |
-| `sys_login_record`                      | 登录日志                                                  |
-| `sys_operation_log`                     | 后台操作日志，记录用户、接口、模块、动作和结果            |
-| `sys_notice` / `sys_notice_read`        | 通知公告和用户已读状态                                    |
-| `sys_dict` / `sys_dict_item`            | 字典和字典项                                              |
-| `sys_config_group` / `sys_config_items` | 普通系统参数、文件策略、安全/登录/token 策略              |
-| `sys_storage`                           | 本地/S3-compatible 存储配置                               |
-| `sys_file_group` / `sys_file`           | 文件分组、文件元数据、sha256、存储归属                    |
-| `sys_mail_account`                      | SMTP 账号配置                                             |
-| `sys_ai_web_search_provider`            | Tavily、Brave、SearXNG 搜索连接、密钥和调用优先级         |
-| `sys_ai_workflow_run`                   | 可信 AI Workflow 运行、状态、输入输出和 Request ID        |
-| `sys_ai_workflow_run_step`              | Workflow 确定性步骤、耗时、输入输出和错误                 |
+| 表                                                                    | 作用                                                                             |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `sys_user`                                                            | 用户、密码 hash、部门、状态、锁定和密码策略字段、系统保护                        |
+| `sys_role`                                                            | 角色、状态、`data_scope`、系统保护                                               |
+| `sys_user_role`                                                       | 用户角色关系                                                                     |
+| `sys_role_dept`                                                       | 角色自定义数据权限部门                                                           |
+| `sys_rule`                                                            | 菜单、路由、按钮/API 权限                                                        |
+| `sys_role_rule`                                                       | 角色权限关系                                                                     |
+| `sys_dept`                                                            | 部门树                                                                           |
+| `sys_access_token`                                                    | 登录 token hash、权限快照、IP/User-Agent、过期和最近活跃                         |
+| `sys_user_password_history`                                           | 用户历史密码 hash，用于密码历史策略                                              |
+| `sys_password_reset_token`                                            | 忘记密码重置 token hash、过期时间和使用状态                                      |
+| `sys_login_record`                                                    | 登录日志                                                                         |
+| `sys_operation_log`                                                   | 后台操作日志，记录用户、接口、模块、动作和结果                                   |
+| `sys_notice` / `sys_notice_read`                                      | 通知公告和用户已读状态                                                           |
+| `sys_dict` / `sys_dict_item`                                          | 字典和字典项                                                                     |
+| `sys_config_group` / `sys_config_items`                               | 普通系统参数、文件策略、安全/登录/token 策略                                     |
+| `sys_storage`                                                         | 本地/S3-compatible 存储配置                                                      |
+| `sys_file_group` / `sys_file`                                         | 文件分组、文件元数据、sha256、存储归属及 `general/knowledge/user_content` 用途域 |
+| `sys_mail_account`                                                    | SMTP 账号配置                                                                    |
+| `sys_ai_web_search_provider`                                          | Tavily、Brave、SearXNG 搜索连接、密钥和调用优先级                                |
+| `sys_ai_workflow_run`                                                 | 可信 AI Workflow 运行、状态、输入输出和 Request ID                               |
+| `sys_ai_workflow_run_step`                                            | Workflow 确定性步骤、耗时、输入输出和错误                                        |
+| `sys_ai_purpose_route` / `sys_ai_purpose_model`                       | Chat、Agent、RAG、Eval 等用途的主模型和有序候选模型                              |
+| `sys_ai_invocation` / `sys_ai_invocation_attempt`                     | 逻辑调用、Provider/Model 尝试、Token、费用、延迟和脱敏错误                       |
+| `sys_ai_knowledge_base` / `sys_ai_document` / `sys_ai_document_chunk` | 带全局、部门、个人可见范围的知识库、文件/网站快照来源版本、文本分块和 Embedding  |
+| `sys_ai_rag_run` / `sys_ai_rag_citation`                              | Grounded Ask 运行、模型 Invocation 关联和可定位引用                              |
+| `sys_ai_notebook` / `sys_ai_notebook_source`                          | 带可见范围的 Notebook 工作区及其知识库/文档引用                                  |
+| `sys_ai_eval_dataset` / `sys_ai_eval_case`                            | 带可见范围的 Eval 数据集、固定输入、期望和确定性断言                             |
+| `sys_ai_eval_run` / `sys_ai_eval_result`                              | 不可覆盖的同步评测批次、结果、指标及 Agent Run Trace 关联                        |
+| `sys_ai_notebook_artifact`                                            | 带来源版本、引用、RAG Run 和模型 Invocation 快照的生成产物                       |
+| `sys_ai_memory`                                                       | 用户显式保存的跨会话 User/Agent Memory、状态和过期策略                           |
+| `sys_ai_runtime_skill` / `sys_ai_agent_skill`                         | Runtime Skill 指令、Agent 绑定及允许 Tool 关系                                   |
+| `sys_ai_mcp_server` / `sys_ai_mcp_connection` / `sys_ai_mcp_tool`     | MCP Server、加密 OAuth 连接、远端 Tool 生命周期和 allowlist                      |
+| `sys_ai_provider_circuit`                                             | Provider/用途持久熔断、half-open 探针租约和失败计数                              |
+| `sys_ai_job`                                                          | PostgreSQL Worker Job、幂等键、优先级、重试和领取租约                            |
+| `sys_ai_quota_policy` / `sys_ai_billing_ledger`                       | system/department/user 配额和估算/调整/结算账本                                  |
+| `sys_ai_notebook_member`                                              | Notebook viewer/editor 协作成员                                                  |
 
 数据库策略：
 
@@ -207,7 +230,20 @@ CRUD factory 当前能力：
 - `created_by`、`updated_by`、`deleted_by` 由 CRUD factory 或显式 route 写入。
 - migration 当前在 `src/server/db/migrations.ts` 中维护手写 SQL。
 - `sys_config_items` 只承载普通参数和策略参数；`sys_storage`、`sys_mail_account` 是独立资源型配置，后端 API、权限、默认实例和测试连接逻辑不合并。
-- `sys_ai_provider` 保存连接、凭据和网络相关的请求超时；`sys_ai_model` 保存各模型自己的上下文窗口、最大输出、能力和价格。运行时先选模型，再解析其 Provider，不能把多模型容量合并到 Provider。
+- `sys_ai_provider` 保存连接、凭据和网络相关的请求超时；`sys_ai_model` 保存各模型自己的上下文窗口、最大输出、能力、普通输入/缓存读写/输出价格、价格来源和核验日期。运行时先选模型，再解析其 Provider，不能把多模型容量合并到 Provider。
+- AI 用途路由和调用账本是全局系统数据，显式使用 `dataScope: false`：只有具备系统权限的管理员可查看或修改。账本默认不保存 Prompt、回复正文或 Provider 密钥。
+- Knowledge 记录显式区分 `global | department | user`。部门和个人归属由服务端写入，列表、按 ID 操作、检索和问答使用同一可见性条件，显式传入未授权知识库 ID 不能绕过过滤。
+- 文件字节继续复用 `sys_storage` 和 `sys_file`，但管理域由 `sys_file.usage_type` 隔离：`general` 只进入普通后台文件管理，`knowledge` 只由 Knowledge/Notebook 来源管理，`user_content` 预留给 C 端上传 API。普通文件列表、下载、移动、回收站和分组统计都不能越过用途域；知识上传不创建普通文件分组记录。从普通文件库导入时，服务端复制物理对象到新路径并创建独立 `knowledge` 文件记录，来源元数据只用于审计追溯，原普通文件的移动、修改或删除不会影响知识文档。
+- Notebook 联网搜索只负责发现候选 URL，选中结果必须重新经过公开 URL 校验、正文抓取、Markdown 快照、分块和索引链路。Deep Research 复用 Worker Job、Workflow Run/Step、Web Search、Website Source、Knowledge/RAG、Citation、Invocation 和 Artifact，不建立第二套检索或 Trace 模型。
+- Knowledge/RAG v1 复用 `sys_file`，支持 TXT、Markdown、PDF 和 DOCX；使用 PostgreSQL `tsvector`/GIN 取得关键词候选，并在 TypeScript 中与 JSON Embedding 计算余弦混合分数。授权过滤完成后，已配置的 `rerank` 用途模型会对最多 50 条候选重排序；调用失败时保留混合检索顺序并记录降级 Trace。当前不假设部署环境已安装 `pgvector`，后续可在不改变 Document/Chunk/RAG API 的前提下迁移向量列。
+- 知识库按实例保存 `auto | documentation | paragraph | sentence | recursive | fixed` 分块模板、目标长度和语义重叠。Markdown 默认保留标题、段落与代码块，PDF/DOCX/TXT 默认使用递归语义边界。每次索引把实际配置和 chunker 版本快照写入文档与 chunk 元数据；修改知识库配置后需要显式重新索引。
+- RAG 问题正文默认只保存 SHA-256，不写入 RAG Run；回答正文不写入调用账本。引用保存当时的 chunk quote，回答 Invocation 可回到统一 Trace 查看 Provider、Model、Token、费用与回退尝试。
+- Notebook 显式使用 `global | department | user` 归属。Source 只引用 Knowledge Base 或 Document；公开网站先经过 SSRF 防护抓取、正文提取和 Markdown 快照，再进入与文件相同的 Document/Chunk/Embedding 链路，Notebook 不维护第二套检索实现。问答将当前来源作为检索白名单并继续叠加 Knowledge 数据范围。移除 Source 不级联删除历史 RAG Citation，Artifact 保存当次来源版本、引用 quote、RAG Run、Invocation 和实际模型，新版本生成不覆盖旧产物。
+- Eval 显式使用 `global | department | user` 数据集归属，Case 继承数据集可见范围。执行复用真实 Agent Runtime，每个 Case 保存独立 Agent Run，并从 Result 回链 Run/Step/Approval 与 Invocation/Attempt。同步 Eval 不自动批准工具；需要人工审批的调用会留下拒绝证据并使 Case 失败。重跑只新增 Run/Result，不覆盖历史。
+- Memory 只接受手工或用户确认写入，按当前用户所有权读取；Runtime Skill 只组合指令和已注册 Tool，不执行上传代码。Agent Knowledge Tool 继续叠加 Knowledge 数据范围。
+- MCP 仅允许受控远程 Streamable HTTP。同步 Tool 默认不可信，必须 allowlist 后执行；OAuth Secret 和 Token 加密保存且不回显。
+- AI Worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期、幂等键、重试和取消。它是 PostgreSQL Queue/Outbox 基础，不等于外部 Broker 或任务调度中心。
+- AI 配额目前按 system/department/user 汇总调用与同币种账本；usage 为模型价格估算，可由管理员确认或作废，但不是 Provider 官方发票。
 - `/system/ai/setup` 是普通接入入口，只编排现有 Provider/Model 契约：发现阶段不落库，完成阶段使用单事务创建连接、批量模型和默认用途；高级管理页面继续保留全部配置能力。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。
@@ -323,7 +359,9 @@ AI Chat / Agent / future Workflow
 - Workflow Run/Step 由 `sys_ai_workflow_run*` 持久化，并继续受 `sys_rule`、Request ID 和操作日志治理。
 - Web Search 由 `sys_ai_web_search_provider` 和系统内置 `web-search` Tool 提供；仅接受 query/limit，
   按 Provider sort 回退，并把服务端来源写入 Step、SSE 和 Assistant metadata。
-- 当前不启用 Mastra Memory，不迁移 `sys_ai_chat_*`，也不双写消息。
+- `ai-reliability-service` 是模型用途解析、调用账本、缓存感知费用估算和有序失败回退的共享边界。Chat、Structured、Embedding、Rerank、Legacy Agent 和 Mastra Agent 共用该边界；已经输出流内容的调用不会切换模型，避免拼接不同模型的半段回答。
+- Provider 健康从不可变 Attempt 查询时聚合，业务调用和人工连接测试分开统计；P50/P95 只使用成功的真实业务调用。Provider/用途熔断状态持久化到 PostgreSQL，并用条件更新控制单个 half-open 探针。
+- 当前不启用 Mastra Memory，不迁移 `sys_ai_chat_*`，也不双写消息；长期 Memory 使用 Admin Base 自有 `sys_ai_memory`。
 - `@mastra/pg` 仍只预留独立 `mastra_runtime` schema，并固定 `disableInit: true`；当前 Workflow 不使用
   Mastra Storage。正式启用 Snapshot/Suspend 持久化前必须将导出 DDL 纳入 Admin Base migration。
 
@@ -333,7 +371,7 @@ AI Chat / Agent / future Workflow
 - 不把 Docker 作为唯一启动方式；源码直接启动是主路径。
 - 不复制 XinAdmin 或 ContiNew 的代码和 API；只对齐后台能力和工程化标准。
 - 不在当前阶段引入 SQLite 兼容目标。
-- 不在当前阶段引入完整多租户、任务调度中心或分布式 AI 基础设施。
-- Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill 和 MCP 按演进路线图分期
-  实施，不把计划能力写成当前能力，也不为对齐参考项目提前引入 Redis、队列或独立向量数据库。
+- 不在当前阶段引入完整多租户、外部 Broker、任务调度中心或独立向量数据库。
+- Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill、MCP、持久熔断和 PostgreSQL Worker
+  已完成基础版本；后续按真实负载扩展，不为对齐参考项目提前引入 Redis 或 Milvus。
 - 新增后台页面必须同时维护 route manifest、seed rule/action、API 权限、页面入口和 `admin:check-routes`。

@@ -1,6 +1,6 @@
 # AI 模块边界与使用流程
 
-Updated: 2026-08-14
+Updated: 2026-08-24
 
 本文定义 AI 服务商、模型管理、AI Playground、AI Chat 和 AI Agent 的职责。它们是同一套
 AI Runtime 的不同层级，不应合并为一个配置页面，也不应在各业务页面重复保存密钥和模型参数。
@@ -58,7 +58,7 @@ Provider 或 Model；管理员勾选模型并确认默认用途后，连接、�
 - 外部服务使用的准确 `modelId` 和后台显示名称。
 - Chat、Embedding、Image 或 Rerank 用途。
 - 结构化输出、工具调用、视觉和推理等能力声明。
-- 上下文窗口、最大输出、价格和默认业务用途。
+- 上下文窗口、最大输出、普通输入、缓存读取、缓存写入、输出价格和默认业务用途。
 - 启停状态以及测试调用。
 
 “同步模型”只读取所选连接的远端模型列表并填充表单候选项，不会自动批量创建数据库记录。
@@ -66,6 +66,10 @@ Provider 或 Model；管理员勾选模型并确认默认用途后，连接、�
 系统会兼容常见的上下文窗口和最大输出字段，但 `/models` 没有统一的容量元数据标准；上游未返回
 限制时保持空值，管理员可以从常用规格选择或手工输入。不支持模型列表接口的兼容服务仍允许手工输入
 模型 ID。系统不维护容易过期的“模型 ID 到容量”硬编码真值表。
+
+价格也不属于标准 `/models` 契约。常见 Provider 会自动带出官方价格页，管理员核验后维护每 100 万
+Token 的普通输入、缓存读、缓存写和输出价格，并记录核验日期。缓存用量和费用公式见
+[`docs/ai-pricing-governance.md`](./ai-pricing-governance.md)。
 
 ## 4. AI Playground
 
@@ -134,7 +138,7 @@ AI SDK 7 继续负责 Provider 协议和模型调用。Mastra Core 作为同一�
 - 两种运行时都复用同一套 Provider/Model、服务端 Tool Registry、审批策略和 Chat SSE 契约。
 - 一次请求只会选择一种运行时。Mastra 请求失败时不会静默回退，避免 Tool 被重复执行。
 - Mastra RequestContext 携带当前 `userId`、abilities、requestId 和已解析 data scope。
-- 当前不启用 Mastra Memory、Studio、MCP、RAG 或 Eval，也不写 Mastra Storage 表。
+- 不启用 Mastra 自带 Memory、Studio、MCP Storage 或 Runtime DDL。Admin Base 使用自己的 Memory、MCP、RAG、Eval、权限、审计和 PostgreSQL 表，并只把 Mastra 作为渐进式 Agent/Workflow 编排内核。
 
 M2 已增加服务端静态 Workflow Registry 和首个 `ai-runtime-preflight` 确定性工作流。它检查 Agent、
 Provider、Model、Tool Registry、审批策略和 RequestContext，只读取配置，不调用外部模型。Workflow
@@ -164,7 +168,7 @@ Provider、Model、Tool Registry、审批策略和 RequestContext，只读取配
 
 ## 11. 下一层产品能力
 
-Web Search、Knowledge/RAG、Notebook、Eval、Memory 和 Runtime Skill 位于现有 AI Runtime 之上，
+Web Search、Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill 和 MCP 位于现有 AI Runtime 之上，
 不是 Provider、Model、Playground、Chat 或 Agent 的别名：
 
 - Web Search v1 已实现为受控 `web-search` Agent Tool，返回可追溯的公开网络来源，不等于任意 URL
@@ -175,5 +179,7 @@ Web Search、Knowledge/RAG、Notebook、Eval、Memory 和 Runtime Skill 位于�
 - Memory 是跨会话、可查看和删除的长期信息，不等于单会话上下文摘要。
 - Runtime Skill 是指令和允许 Tool 的受控组合，不等于仓库中的 Codex 开发 Skill，也不执行任意代码。
 
-其中 Web Search 已交付，其他能力仍属于规划范围。详细采用、暂缓、基础设施触发条件和验收标准见
+上述能力均已交付基础版本，并统一复用 Admin Base 的 Provider/Model、用途路由、Invocation/Attempt、
+Tool Registry、Approval、数据范围和 operation log。MCP 不等于任意远程代码执行；当前只开放受控
+Streamable HTTP。详细边界和剩余范围见
 [`ai-capability-evolution-roadmap.md`](./ai-capability-evolution-roadmap.md)。

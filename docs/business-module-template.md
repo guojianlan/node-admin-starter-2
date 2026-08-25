@@ -4,6 +4,11 @@ This guide is the delivery checklist for every new Admin Base backend module. A 
 
 Starter files live in [`templates/module-crud`](../templates/module-crud).
 
+需要设计 CRM、供应链、企业知识库、Notebook/PPT 或 AI 经营数据查询时，先参考
+[`docs/ai-business-use-case-cookbook.md`](./ai-business-use-case-cookbook.md)。该手册给出了业务事实、
+Knowledge、Memory、Agent Tool、Approval、Worker 和 Eval 的职责边界，以及可直接交给 Coding Agent 的
+需求示例。
+
 ## 80% CRUD Generator
 
 Use the project-local generator for ordinary CRUD modules before writing files by hand:

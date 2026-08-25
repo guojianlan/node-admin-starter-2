@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Button,
+  Checkbox,
   Collapse,
   Descriptions,
   Empty,
@@ -64,6 +65,7 @@ type SetupModel = {
   modelType: "chat" | "embedding" | "image" | "rerank";
   contextWindow?: number | null;
   maxOutputTokens?: number | null;
+  toolCalling: boolean;
   source: "provider" | "manual";
 };
 
@@ -250,6 +252,7 @@ export function AiSetupPage() {
         modelType: model.modelType,
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxOutputTokens,
+        toolCalling: false,
         source: "provider" as const,
       }));
       setModels(nextModels);
@@ -286,6 +289,7 @@ export function AiSetupPage() {
         modelType: manualModelType,
         contextWindow: null,
         maxOutputTokens: null,
+        toolCalling: false,
         source: "manual",
       },
     ]);
@@ -328,6 +332,7 @@ export function AiSetupPage() {
             modelType: model.modelType,
             contextWindow: model.contextWindow,
             maxOutputTokens: model.maxOutputTokens,
+            toolCalling: model.toolCalling,
           })),
           defaults: {
             chat: defaultChat || null,
@@ -682,6 +687,31 @@ export function AiSetupPage() {
                       render: (value) => formatTokenLimit(Number(value) || null),
                     },
                     {
+                      title: "Agent",
+                      dataIndex: "toolCalling",
+                      width: 92,
+                      render: (value, record) =>
+                        record.modelType === "chat" ? (
+                          <Checkbox
+                            checked={Boolean(value)}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setModels((current) =>
+                                current.map((item) =>
+                                  item.modelId === record.modelId
+                                    ? { ...item, toolCalling: checked }
+                                    : item,
+                                ),
+                              );
+                            }}
+                          >
+                            工具
+                          </Checkbox>
+                        ) : (
+                          "-"
+                        ),
+                    },
+                    {
                       title: "来源",
                       dataIndex: "source",
                       width: 100,
@@ -697,8 +727,8 @@ export function AiSetupPage() {
                 <Empty description="暂时没有模型，请在上方手工添加模型 ID" />
               )}
               <Typography.Text type="secondary">
-                已选择 {selectedModelIds.length}{" "}
-                个模型；未知容量可在完成后进入模型管理补充常用规格。
+                已选择 {selectedModelIds.length} 个模型；需要用于 Agent 的 Chat
+                模型必须勾选“工具”，未知容量可在完成后进入模型管理补充。
               </Typography.Text>
             </div>
           ) : null}
@@ -802,7 +832,10 @@ export function AiSetupPage() {
               </Descriptions>
               <div className="ai-setup-review-models">
                 {selectedModels.map((model) => (
-                  <Tag key={model.modelId}>{model.modelId}</Tag>
+                  <Tag key={model.modelId} color={model.toolCalling ? "cyan" : undefined}>
+                    {model.modelId}
+                    {model.toolCalling ? " · Agent" : ""}
+                  </Tag>
                 ))}
               </div>
             </div>

@@ -1,5 +1,6 @@
 tmp/
 generated/module-drafts/
+generated/knowledge/
 node_modules/
 .next/
 out/

@@ -49,11 +49,16 @@ import {
   resolveAiOutputTokens,
   streamAiText,
 } from "@/server/services/ai-runtime-service";
+import {
+  resolveAiRuntimeCandidates,
+  runAiHealthCheck,
+} from "@/server/services/ai-reliability-service";
 import { buildAiSdkChatRuntime } from "@/server/services/ai-sdk-runtime";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { assertSystemCodeUnchanged } from "@/server/services/protected-records";
 import { decryptSecret, encryptSecret } from "@/server/services/secret";
 import { resolveListOrder } from "@/server/services/list-query";
+import { getOfficialAiPricingSource } from "@/shared/ai-pricing-sources";
 
 const emptyToNull = (value: unknown) => (value === "" ? null : value);
 const optionalUrl = z.preprocess(emptyToNull, z.string().url().optional().nullable());
@@ -159,11 +164,15 @@ const aiModelSchema = z.object({
   contextWindow: optionalNumber,
   maxOutputTokens: optionalNumber,
   inputPrice: optionalText,
+  cachedInputPrice: optionalText,
+  cacheWritePrice: optionalText,
   outputPrice: optionalText,
   currency: z.preprocess(
     (value) => (value === "" || value == null ? "USD" : value),
     z.string().min(1),
   ),
+  pricingSourceUrl: optionalUrl,
+  pricingVerifiedAt: z.preprocess(emptyToNull, z.string().date().optional().nullable()),
   status: z.coerce.number().default(1),
   sort: z.coerce.number().default(0),
   remark: optionalText,
@@ -264,6 +273,7 @@ const aiSetupModelSchema = z
       .max(aiOutputTokenInputLimit)
       .optional()
       .nullable(),
+    toolCalling: z.boolean().default(false),
   })
   .refine(
     (value) =>
@@ -388,8 +398,16 @@ type AiModelRow = {
   contextWindow: number | null;
   maxOutputTokens: number | null;
   inputPrice: string | null;
+  cachedInputPrice: string | null;
+  cacheWritePrice: string | null;
   outputPrice: string | null;
   currency: string;
+  pricingSourceUrl: string | null;
+  pricingVerifiedAt: string | null;
+  pricingSourceType: "manual" | "catalog" | "provider";
+  pricingCatalogKey: string | null;
+  pricingSourceHash: string | null;
+  pricingSyncedAt: string | null;
   isDefaultChat: boolean;
   isDefaultStructured: boolean;
   isDefaultEmbedding: boolean;
@@ -874,8 +892,16 @@ async function getModelRow(id: number) {
         m.context_window AS "contextWindow",
         m.max_output_tokens AS "maxOutputTokens",
         m.input_price AS "inputPrice",
+        m.cached_input_price AS "cachedInputPrice",
+        m.cache_write_price AS "cacheWritePrice",
         m.output_price AS "outputPrice",
         m.currency,
+        m.pricing_source_url AS "pricingSourceUrl",
+        m.pricing_verified_at AS "pricingVerifiedAt",
+        m.pricing_source_type AS "pricingSourceType",
+        m.pricing_catalog_key AS "pricingCatalogKey",
+        m.pricing_source_hash AS "pricingSourceHash",
+        m.pricing_synced_at AS "pricingSyncedAt",
         m.is_default_chat AS "isDefaultChat",
         m.is_default_structured AS "isDefaultStructured",
         m.is_default_embedding AS "isDefaultEmbedding",
@@ -1027,6 +1053,7 @@ async function buildAiPlaygroundStreamResponse(
   const runtime = await streamAiText({
     ...payload,
     abortSignal,
+    trace: { sourceType: "playground" },
   });
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -1048,14 +1075,17 @@ async function buildAiPlaygroundStreamResponse(
       });
 
       try {
-        for await (const text of runtime.stream.textStream) {
-          if (text) send("delta", { text });
+        let finishReason = "stop";
+        let rawFinishReason: string | undefined;
+        let usage: unknown = {};
+        for await (const part of runtime.stream.fullStream) {
+          if (part.type === "text-delta" && part.text) send("delta", { text: part.text });
+          if (part.type === "finish") {
+            finishReason = part.finishReason;
+            rawFinishReason = part.rawFinishReason;
+            usage = part.totalUsage;
+          }
         }
-        const [finishReason, rawFinishReason, usage] = await Promise.all([
-          runtime.stream.finishReason,
-          runtime.stream.rawFinishReason,
-          runtime.stream.usage,
-        ]);
         send("finish", {
           finishReason,
           rawFinishReason,
@@ -1156,7 +1186,8 @@ async function buildAiChatStreamResponse(input: {
   if (session.agentId && (!agent || agent.status !== 1))
     throw new Error("当前会话绑定的 Agent 不存在或已停用");
   const selectedModelId = session.modelId || agent?.modelId || null;
-  const config = await getAiRuntimeConfig("chat", selectedModelId);
+  const purpose = agent ? "agent" : "chat";
+  const [config] = await resolveAiRuntimeCandidates({ purpose, modelId: selectedModelId });
   const maxOutputTokens = resolveAiOutputTokens({ modelLimit: config.model.maxOutputTokens });
   const systemPrompt = [agent?.instructions, session.systemPrompt].filter(Boolean).join("\n\n");
   const governed = governAiChatContext({
@@ -1202,12 +1233,19 @@ async function buildAiChatStreamResponse(input: {
     plainRuntime = agentRuntime
       ? null
       : await streamAiText({
-          usage: "chat",
+          purpose,
           messages: governed.messages,
           modelId: selectedModelId,
           maxOutputTokens,
           temperature,
           abortSignal: input.abortSignal,
+          trace: {
+            sourceType: "chat",
+            sourceId: assistantMessageId,
+            requestId: input.requestId,
+            userId: input.userId,
+            sessionId: input.sessionId,
+          },
         });
   } catch (error) {
     await updateAiChatMessage({
@@ -1784,6 +1822,13 @@ aiRoutes.post(
               name: model.name,
               modelId: model.modelId,
               modelType: model.modelType,
+              capabilitiesJson:
+                model.modelType === "chat"
+                  ? JSON.stringify({
+                      chat: true,
+                      ...(model.toolCalling ? { toolCalling: true } : {}),
+                    })
+                  : undefined,
               contextWindow: model.contextWindow,
               maxOutputTokens: model.maxOutputTokens,
               status: 1,
@@ -1794,9 +1839,10 @@ aiRoutes.post(
               .prepare(
                 `INSERT INTO sys_ai_model
                   (provider_id, name, model_id, model_type, capabilities_json, context_window,
-                   max_output_tokens, currency, is_default_chat, is_default_structured,
+                   max_output_tokens, currency, pricing_source_url,
+                   is_default_chat, is_default_structured,
                    is_default_embedding, status, sort, created_by, updated_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, 1, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, 1, ?, ?, ?)
                  RETURNING id`,
               )
               .get(
@@ -1807,6 +1853,7 @@ aiRoutes.post(
                 normalized.capabilitiesJson,
                 normalized.contextWindow ?? null,
                 normalized.maxOutputTokens ?? null,
+                getOfficialAiPricingSource(provider.providerType)?.url ?? null,
                 payload.defaults.chat === model.modelId,
                 payload.defaults.structured === model.modelId,
                 payload.defaults.embedding === model.modelId,
@@ -1962,7 +2009,13 @@ aiRoutes.post("/ai/provider/test", authRequired(), ability("system.aiProvider.te
     async () => {
       const row = await getProviderRow(payload.id);
       if (!row) throw new Error("AI Provider 不存在");
-      result = await testProviderConnection(row, payload);
+      result = await runAiHealthCheck({
+        provider: row,
+        model: payload.modelId ? { modelId: payload.modelId, name: payload.modelId } : null,
+        purpose: payload.mode === "embedding" ? "embedding" : "chat",
+        requestId: c.get("requestId"),
+        execute: () => testProviderConnection(row, payload),
+      });
     },
   );
   return c.json(success(result, "测试完成"));
@@ -2061,8 +2114,16 @@ aiRoutes.get("/ai/model", authRequired(), ability("system.aiModel.query"), async
           m.context_window AS "contextWindow",
           m.max_output_tokens AS "maxOutputTokens",
           m.input_price AS "inputPrice",
+          m.cached_input_price AS "cachedInputPrice",
+          m.cache_write_price AS "cacheWritePrice",
           m.output_price AS "outputPrice",
           m.currency,
+          m.pricing_source_url AS "pricingSourceUrl",
+          m.pricing_verified_at AS "pricingVerifiedAt",
+          m.pricing_source_type AS "pricingSourceType",
+          m.pricing_catalog_key AS "pricingCatalogKey",
+          m.pricing_source_hash AS "pricingSourceHash",
+          m.pricing_synced_at AS "pricingSyncedAt",
           m.is_default_chat AS "isDefaultChat",
           m.is_default_structured AS "isDefaultStructured",
           m.is_default_embedding AS "isDefaultEmbedding",
@@ -2099,13 +2160,17 @@ aiRoutes.post("/ai/model", authRequired(), ability("system.aiModel.create"), asy
       details: { modelId: payload.modelId, providerId: payload.providerId },
     },
     async () => {
-      if (!(await getAiProvider(payload.providerId))) throw new Error("AI Provider 不存在");
+      const provider = await getAiProvider(payload.providerId);
+      if (!provider) throw new Error("AI Provider 不存在");
+      const pricingSourceUrl =
+        payload.pricingSourceUrl || getOfficialAiPricingSource(provider.providerType)?.url || null;
       await sqlite
         .prepare(
           `INSERT INTO sys_ai_model
               (provider_id, name, model_id, model_type, capabilities_json, context_window, max_output_tokens,
-               input_price, output_price, currency, status, sort, remark, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               input_price, cached_input_price, cache_write_price, output_price, currency,
+               pricing_source_url, pricing_verified_at, status, sort, remark, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           payload.providerId,
@@ -2116,8 +2181,12 @@ aiRoutes.post("/ai/model", authRequired(), ability("system.aiModel.create"), asy
           payload.contextWindow ?? null,
           payload.maxOutputTokens ?? null,
           payload.inputPrice || null,
+          payload.cachedInputPrice || null,
+          payload.cacheWritePrice || null,
           payload.outputPrice || null,
           payload.currency,
+          pricingSourceUrl,
+          payload.pricingVerifiedAt || null,
           payload.status,
           payload.sort,
           payload.remark || null,
@@ -2150,6 +2219,15 @@ aiRoutes.put("/ai/model/:id", authRequired(), ability("system.aiModel.update"), 
       if (payload.providerId && !(await getAiProvider(payload.providerId))) {
         throw new Error("AI Provider 不存在");
       }
+      const manuallyChangedPricing = [
+        "inputPrice",
+        "cachedInputPrice",
+        "cacheWritePrice",
+        "outputPrice",
+        "currency",
+        "contextWindow",
+        "maxOutputTokens",
+      ].some((field) => Object.prototype.hasOwnProperty.call(payload, field));
       await sqlite
         .prepare(
           `UPDATE sys_ai_model
@@ -2161,8 +2239,16 @@ aiRoutes.put("/ai/model/:id", authRequired(), ability("system.aiModel.update"), 
                  context_window = ?,
                  max_output_tokens = ?,
                  input_price = ?,
+                 cached_input_price = ?,
+                 cache_write_price = ?,
                  output_price = ?,
                  currency = COALESCE(?, currency),
+                 pricing_source_url = ?,
+                 pricing_verified_at = ?,
+                 pricing_source_type = CASE WHEN ? THEN 'manual' ELSE pricing_source_type END,
+                 pricing_catalog_key = CASE WHEN ? THEN NULL ELSE pricing_catalog_key END,
+                 pricing_source_hash = CASE WHEN ? THEN NULL ELSE pricing_source_hash END,
+                 pricing_synced_at = CASE WHEN ? THEN NULL ELSE pricing_synced_at END,
                  status = COALESCE(?, status),
                  sort = COALESCE(?, sort),
                  remark = ?,
@@ -2182,8 +2268,24 @@ aiRoutes.put("/ai/model/:id", authRequired(), ability("system.aiModel.update"), 
             ? row.maxOutputTokens
             : (payload.maxOutputTokens ?? null),
           payload.inputPrice === undefined ? row.inputPrice : payload.inputPrice || null,
+          payload.cachedInputPrice === undefined
+            ? row.cachedInputPrice
+            : payload.cachedInputPrice || null,
+          payload.cacheWritePrice === undefined
+            ? row.cacheWritePrice
+            : payload.cacheWritePrice || null,
           payload.outputPrice === undefined ? row.outputPrice : payload.outputPrice || null,
           payload.currency ?? null,
+          payload.pricingSourceUrl === undefined
+            ? row.pricingSourceUrl
+            : payload.pricingSourceUrl || null,
+          payload.pricingVerifiedAt === undefined
+            ? row.pricingVerifiedAt
+            : payload.pricingVerifiedAt || null,
+          manuallyChangedPricing,
+          manuallyChangedPricing,
+          manuallyChangedPricing,
+          manuallyChangedPricing,
           payload.status ?? null,
           payload.sort ?? null,
           payload.remark === undefined ? row.remark : payload.remark || null,
@@ -2306,7 +2408,17 @@ aiRoutes.post("/ai/model/test", authRequired(), ability("system.aiModel.test"), 
     async () => {
       const row = await getModelRow(payload.id);
       if (!row) throw new Error("AI 模型不存在");
-      result = await testModelConnection(row, payload);
+      result = await runAiHealthCheck({
+        provider: {
+          id: row.providerId,
+          code: row.providerCode || `provider-${row.providerId}`,
+          name: row.providerName || "未知 Provider",
+        },
+        model: row,
+        purpose: row.modelType === "embedding" ? "embedding" : "chat",
+        requestId: c.get("requestId"),
+        execute: () => testModelConnection(row, payload),
+      });
     },
   );
   return c.json(success(result, "模型调用正常"));

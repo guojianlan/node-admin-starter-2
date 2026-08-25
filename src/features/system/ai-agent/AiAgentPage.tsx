@@ -10,6 +10,7 @@ import {
   PlusOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SaveOutlined,
   SafetyCertificateOutlined,
   SendOutlined,
   StopOutlined,
@@ -20,6 +21,7 @@ import {
   Alert,
   Button,
   Card,
+  Descriptions,
   Drawer,
   Empty,
   Form,
@@ -108,6 +110,32 @@ type StepRow = {
   durationMs?: number | null;
   errorMessage?: string | null;
 };
+
+type RunTrace = RunRow & {
+  finishedAt?: string | null;
+  steps: StepRow[];
+  invocations: Array<{
+    id: number;
+    purpose: string;
+    status: string;
+    attemptCount: number;
+    fallbackUsed: boolean;
+    inputTokens: number;
+    outputTokens: number;
+    durationMs?: number | null;
+    attempts: Array<{
+      attemptNo: number;
+      providerName: string;
+      modelName: string;
+      status: string;
+      latencyMs?: number | null;
+      firstTokenMs?: number | null;
+      errorMessage?: string | null;
+    }>;
+  }>;
+};
+
+type EvalDatasetOption = { id: number; name: string; caseCount: number };
 
 type DebugStatus = "idle" | "running" | "completed" | "waiting_approval" | "failed" | "stopped";
 
@@ -243,11 +271,13 @@ export function AiAgentPage() {
   const queryClient = useQueryClient();
   const [agentForm] = Form.useForm();
   const [toolForm] = Form.useForm();
+  const [evalCaseForm] = Form.useForm();
   const [agentModal, setAgentModal] = useState(false);
   const [toolModal, setToolModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentRow | null>(null);
   const [editingTool, setEditingTool] = useState<ToolRow | null>(null);
   const [activeRun, setActiveRun] = useState<RunRow | null>(null);
+  const [evalCaseModalOpen, setEvalCaseModalOpen] = useState(false);
   const [debugAgent, setDebugAgent] = useState<AgentRow | null>(null);
   const [debugPrompt, setDebugPrompt] = useState("");
   const [debugSessionId, setDebugSessionId] = useState<number | null>(null);
@@ -273,10 +303,15 @@ export function AiAgentPage() {
     queryKey: ["system-ai-agent-runs"],
     queryFn: () => request<RunRow[]>("/api/system/ai/agent/runs"),
   });
-  const stepsQuery = useQuery({
-    queryKey: ["system-ai-agent-run-steps", activeRun?.id],
+  const runTraceQuery = useQuery({
+    queryKey: ["system-ai-agent-run-trace", activeRun?.id],
     enabled: Boolean(activeRun),
-    queryFn: () => request<StepRow[]>(`/api/system/ai/agent/runs/${activeRun?.id}/steps`),
+    queryFn: () => request<RunTrace>(`/api/system/ai/agent/runs/${activeRun?.id}/trace`),
+  });
+  const evalDatasetsQuery = useQuery({
+    queryKey: ["system-ai-eval-datasets"],
+    enabled: evalCaseModalOpen,
+    queryFn: () => request<EvalDatasetOption[]>("/api/system/ai/eval/datasets"),
   });
   const debugApprovalsQuery = useQuery({
     queryKey: ["system-ai-agent-debug-approvals", debugSessionId],
@@ -329,6 +364,20 @@ export function AiAgentPage() {
         queryClient.invalidateQueries({ queryKey: ["system-ai-agents"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-options"] }),
       ]);
+    },
+  });
+  const saveRunAsEvalCase = useMutation({
+    mutationFn: (values: { datasetId: number; name?: string }) => {
+      if (!activeRun) throw new Error("请先选择 Agent Run");
+      return request(`/api/system/ai/eval/cases/from-run/${activeRun.id}`, {
+        method: "POST",
+        body: values,
+      });
+    },
+    onSuccess: async () => {
+      feedback.success("Run 已保存为 Eval Case");
+      setEvalCaseModalOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["system-ai-eval-datasets"] });
     },
   });
   const runWorkflow = useMutation({
@@ -1376,32 +1425,189 @@ export function AiAgentPage() {
         size="large"
         open={Boolean(activeRun)}
         onClose={() => setActiveRun(null)}
+        loading={runTraceQuery.isLoading}
+        extra={
+          activeRun ? (
+            <AuthButton auth="system.aiEval.saveCase">
+              <Button
+                icon={<SaveOutlined />}
+                onClick={() => {
+                  evalCaseForm.setFieldsValue({
+                    datasetId: undefined,
+                    name: `Run #${activeRun.id} · ${activeRun.agentName}`,
+                  });
+                  setEvalCaseModalOpen(true);
+                }}
+              >
+                保存为 Eval Case
+              </Button>
+            </AuthButton>
+          ) : null
+        }
       >
-        <Space orientation="vertical" size={14} style={{ width: "100%" }}>
-          {(stepsQuery.data ?? []).map((step) => (
-            <Card
-              key={step.id}
+        {runTraceQuery.data ? (
+          <Space orientation="vertical" size={18} style={{ width: "100%" }}>
+            <Descriptions size="small" bordered column={2}>
+              <Descriptions.Item label="状态">
+                <Tag>{runTraceQuery.data.status}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="总耗时">
+                {runTraceQuery.data.durationMs == null
+                  ? "-"
+                  : `${runTraceQuery.data.durationMs} ms`}
+              </Descriptions.Item>
+              <Descriptions.Item label="步骤">{runTraceQuery.data.totalSteps}</Descriptions.Item>
+              <Descriptions.Item label="Token">
+                {runTraceQuery.data.inputTokens} 输入 / {runTraceQuery.data.outputTokens} 输出
+              </Descriptions.Item>
+              <Descriptions.Item label="开始">
+                {runTraceQuery.data.startedAt
+                  ? new Date(runTraceQuery.data.startedAt).toLocaleString()
+                  : "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="结束">
+                {runTraceQuery.data.finishedAt
+                  ? new Date(runTraceQuery.data.finishedAt).toLocaleString()
+                  : "-"}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Typography.Title level={5}>模型调用</Typography.Title>
+            <Table
+              rowKey="id"
               size="small"
-              title={
-                <Space>
-                  <Tag>{step.stepNo}</Tag>
-                  <Typography.Text>{step.stepType}</Typography.Text>
-                  {step.toolName ? <Typography.Text code>{step.toolName}</Typography.Text> : null}
-                </Space>
-              }
-              extra={<Tag>{step.status}</Tag>}
-            >
-              <Typography.Text type="secondary">输入</Typography.Text>
-              <JsonPreview value={step.inputJson} />
-              <Typography.Text type="secondary">输出</Typography.Text>
-              <JsonPreview value={step.outputJson || step.usageJson} />
-              {step.errorMessage ? (
-                <Typography.Text type="danger">{step.errorMessage}</Typography.Text>
-              ) : null}
-            </Card>
-          ))}
-        </Space>
+              pagination={false}
+              dataSource={runTraceQuery.data.invocations}
+              expandable={{
+                expandedRowRender: (invocation) => (
+                  <Table
+                    rowKey="attemptNo"
+                    size="small"
+                    pagination={false}
+                    dataSource={invocation.attempts}
+                    columns={[
+                      { title: "尝试", dataIndex: "attemptNo", width: 70 },
+                      { title: "Provider", dataIndex: "providerName" },
+                      { title: "模型", dataIndex: "modelName" },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        render: (value) => <Tag>{value}</Tag>,
+                      },
+                      {
+                        title: "首响",
+                        dataIndex: "firstTokenMs",
+                        render: (value) => (value == null ? "-" : `${value} ms`),
+                      },
+                      {
+                        title: "耗时",
+                        dataIndex: "latencyMs",
+                        render: (value) => (value == null ? "-" : `${value} ms`),
+                      },
+                      {
+                        title: "错误",
+                        dataIndex: "errorMessage",
+                        ellipsis: true,
+                        render: (value) => value || "-",
+                      },
+                    ]}
+                  />
+                ),
+                rowExpandable: (invocation) => invocation.attempts.length > 0,
+              }}
+              columns={[
+                { title: "Trace", dataIndex: "id", width: 90, render: (value) => `#${value}` },
+                { title: "用途", dataIndex: "purpose" },
+                { title: "状态", dataIndex: "status", render: (value) => <Tag>{value}</Tag> },
+                {
+                  title: "尝试",
+                  dataIndex: "attemptCount",
+                  render: (value, row) =>
+                    row.fallbackUsed ? <Tag color="warning">{value} 次</Tag> : value,
+                },
+                { title: "Token", render: (_, row) => `${row.inputTokens} / ${row.outputTokens}` },
+                {
+                  title: "耗时",
+                  dataIndex: "durationMs",
+                  render: (value) => (value == null ? "-" : `${value} ms`),
+                },
+              ]}
+            />
+
+            <Typography.Title level={5}>执行步骤</Typography.Title>
+            <Table
+              rowKey="id"
+              size="small"
+              pagination={false}
+              dataSource={runTraceQuery.data.steps}
+              expandable={{
+                expandedRowRender: (step) => (
+                  <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+                    <Typography.Text type="secondary">输入</Typography.Text>
+                    <JsonPreview value={step.inputJson} />
+                    <Typography.Text type="secondary">输出</Typography.Text>
+                    <JsonPreview value={step.outputJson || step.usageJson} />
+                    {step.errorMessage ? (
+                      <Typography.Text type="danger">{step.errorMessage}</Typography.Text>
+                    ) : null}
+                  </Space>
+                ),
+              }}
+              columns={[
+                { title: "步骤", dataIndex: "stepNo", width: 70 },
+                { title: "类型", dataIndex: "stepType", width: 100 },
+                {
+                  title: "工具",
+                  dataIndex: "toolName",
+                  render: (value) =>
+                    value ? <Typography.Text code>{value}</Typography.Text> : "-",
+                },
+                { title: "状态", dataIndex: "status", render: (value) => <Tag>{value}</Tag> },
+                {
+                  title: "耗时",
+                  dataIndex: "durationMs",
+                  render: (value) => (value == null ? "-" : `${value} ms`),
+                },
+              ]}
+            />
+          </Space>
+        ) : null}
       </Drawer>
+
+      <Modal
+        title="保存为 Eval Case"
+        open={evalCaseModalOpen}
+        width={560}
+        confirmLoading={saveRunAsEvalCase.isPending}
+        onCancel={() => setEvalCaseModalOpen(false)}
+        onOk={() =>
+          void evalCaseForm.validateFields().then((values) => saveRunAsEvalCase.mutateAsync(values))
+        }
+      >
+        <Form form={evalCaseForm} layout="vertical">
+          <Form.Item name="datasetId" label="Eval 数据集" rules={[{ required: true }]}>
+            <Select
+              loading={evalDatasetsQuery.isLoading}
+              placeholder="选择要保存到的数据集"
+              options={(evalDatasetsQuery.data ?? []).map((dataset) => ({
+                value: dataset.id,
+                label: `${dataset.name} · ${dataset.caseCount} Cases`,
+              }))}
+              notFoundContent={
+                evalDatasetsQuery.isLoading ? <Spin size="small" /> : "请先在 AI Eval 创建数据集"
+              }
+            />
+          </Form.Item>
+          <Form.Item name="name" label="Case 名称">
+            <Input maxLength={160} />
+          </Form.Item>
+          <Alert
+            showIcon
+            type="info"
+            title="将固定当前 Run 的输入、Agent、输出和已成功调用的工具"
+          />
+        </Form>
+      </Modal>
 
       <Drawer
         title={

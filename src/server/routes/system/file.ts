@@ -67,9 +67,20 @@ async function getFileObjectRows(ids: number[]) {
         s.root_path AS rootPath
        FROM sys_file f
        LEFT JOIN sys_storage s ON s.id = f.storage_id
-       WHERE f.id IN (${placeholders(ids)})`,
+       WHERE f.id IN (${placeholders(ids)}) AND f.usage_type = 'general'`,
     )
     .all(...ids)) as FileObjectRow[];
+}
+
+async function assertGeneralFileIds(ids: number[]) {
+  if (!ids.length) return;
+  const rows = (await sqlite
+    .prepare(
+      `SELECT id FROM sys_file
+       WHERE id IN (${placeholders(ids)}) AND usage_type = 'general'`,
+    )
+    .all(...ids)) as Array<{ id: number }>;
+  if (rows.length !== new Set(ids).size) throw new Error("文件不存在或不属于普通文件管理");
 }
 
 function chunkRoot() {
@@ -135,9 +146,17 @@ const fileCrud = createCrudRoutes({
     quickSearchFields: ["originalName", "filename", "sha256"],
     sortableFields: ["id", "size", "createdAt", "updatedAt"],
     defaultSort: { field: "id", order: "desc" },
+    baseWhere: [eq(sysFile.usageType, "general")],
   },
   hooks: {
+    beforeUpdate: async (_ctx, id, values) => {
+      await assertGeneralFileIds([id]);
+      return values;
+    },
+    beforeDelete: async (_ctx, ids) => assertGeneralFileIds(ids),
+    beforeRestore: async (_ctx, ids) => assertGeneralFileIds(ids),
     beforeForceDelete: async (_ctx, ids) => {
+      await assertGeneralFileIds(ids);
       const rows = await getFileObjectRows(ids);
       await Promise.all(rows.map((row) => deleteStoredObject(row)));
     },
@@ -265,7 +284,9 @@ fileRoutes.delete("/file/group/:id", authRequired(), ability("system.file.delete
         .get(id);
       if (child) throw new Error("请先删除子文件夹");
       const file = await sqlite
-        .prepare("SELECT id FROM sys_file WHERE group_id = ? AND deleted_at IS NULL LIMIT 1")
+        .prepare(
+          "SELECT id FROM sys_file WHERE group_id = ? AND usage_type = 'general' AND deleted_at IS NULL LIMIT 1",
+        )
         .get(id);
       if (file) throw new Error("请先删除文件夹下的文件");
       await sqlite.prepare("DELETE FROM sys_file_group WHERE id = ?").run(id);
@@ -330,7 +351,7 @@ fileRoutes.get(
           s.root_path AS rootPath
          FROM sys_file f
          LEFT JOIN sys_storage s ON s.id = f.storage_id
-         WHERE f.id = ? AND f.deleted_at IS NULL`,
+         WHERE f.id = ? AND f.usage_type = 'general' AND f.deleted_at IS NULL`,
       )
       .get(id)) as (FileObjectRow & { originalName: string }) | undefined;
     if (!row) throw new Error("文件不存在");
@@ -385,7 +406,8 @@ fileRoutes.post("/file/chunk/part", authRequired(), ability("system.file.upload"
   const partNumber = Number(body.partNumber || 0);
   const expectedSha256 = String(body.sha256 || "");
   const file = body.file;
-  if (!uploadId || !Number.isFinite(partNumber) || partNumber <= 0) throw new Error("分片参数不正确");
+  if (!uploadId || !Number.isFinite(partNumber) || partNumber <= 0)
+    throw new Error("分片参数不正确");
   if (!(file instanceof File)) throw new Error("请选择分片文件");
   const session = (await sqlite
     .prepare(
@@ -418,125 +440,151 @@ fileRoutes.post("/file/chunk/part", authRequired(), ability("system.file.upload"
   return c.json(success({ partNumber, sha256 }, "分片上传成功"));
 });
 
-fileRoutes.post("/file/chunk/complete", authRequired(), ability("system.file.upload"), async (c) => {
-  const user = c.get("user");
-  const payload = z.object({ uploadId: z.string().min(1) }).parse(await c.req.json());
-  const result = await runWithOperationLog(
-    c,
-    {
-      module: "system.file",
-      action: "chunkComplete",
-      resource: "/file/chunk",
-      resourceId: payload.uploadId,
-    },
-    async () => {
-      const session = (await sqlite
-        .prepare(
-          `SELECT upload_id AS uploadId, filename, mime, size, total_parts AS totalParts, group_id AS groupId, user_id AS userId, status, expires_at AS expiresAt
+fileRoutes.post(
+  "/file/chunk/complete",
+  authRequired(),
+  ability("system.file.upload"),
+  async (c) => {
+    const user = c.get("user");
+    const payload = z.object({ uploadId: z.string().min(1) }).parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.file",
+        action: "chunkComplete",
+        resource: "/file/chunk",
+        resourceId: payload.uploadId,
+      },
+      async () => {
+        const session = (await sqlite
+          .prepare(
+            `SELECT upload_id AS uploadId, filename, mime, size, total_parts AS totalParts, group_id AS groupId, user_id AS userId, status, expires_at AS expiresAt
            FROM sys_file_upload_session
            WHERE upload_id = ?`,
-        )
-        .get(payload.uploadId)) as
-        | {
-            uploadId: string;
-            filename: string;
-            mime: string | null;
-            size: number;
-            totalParts: number;
-            groupId: number | null;
-            userId: number;
-            status: string;
-            expiresAt: string;
-          }
-        | undefined;
-      if (!session || session.userId !== user.id) throw new Error("上传会话不存在");
-      if (session.status !== "uploading") throw new Error("上传会话状态不可用");
-      if (new Date(session.expiresAt).getTime() <= Date.now()) throw new Error("上传会话已过期");
-      const parts = (await sqlite
-        .prepare(
-          `SELECT part_number AS partNumber, path, size, sha256
+          )
+          .get(payload.uploadId)) as
+          | {
+              uploadId: string;
+              filename: string;
+              mime: string | null;
+              size: number;
+              totalParts: number;
+              groupId: number | null;
+              userId: number;
+              status: string;
+              expiresAt: string;
+            }
+          | undefined;
+        if (!session || session.userId !== user.id) throw new Error("上传会话不存在");
+        if (session.status !== "uploading") throw new Error("上传会话状态不可用");
+        if (new Date(session.expiresAt).getTime() <= Date.now()) throw new Error("上传会话已过期");
+        const parts = (await sqlite
+          .prepare(
+            `SELECT part_number AS partNumber, path, size, sha256
            FROM sys_file_upload_part
            WHERE upload_id = ?
            ORDER BY part_number ASC`,
-        )
-        .all(payload.uploadId)) as Array<{ partNumber: number; path: string; size: number; sha256: string }>;
-      if (parts.length !== session.totalParts) throw new Error("分片数量不完整");
-      for (let index = 0; index < session.totalParts; index += 1) {
-        if (parts[index]?.partNumber !== index + 1) throw new Error("分片编号不连续");
-      }
-      const buffers = await Promise.all(
-        parts.map(async (part) => {
-          const content = await fs.readFile(part.path);
-          const actualSha256 = crypto.createHash("sha256").update(content).digest("hex");
-          if (actualSha256 !== part.sha256) throw new Error(`分片 ${part.partNumber} 校验失败`);
-          return content;
-        }),
-      );
-      const buffer = Buffer.concat(buffers);
-      if (buffer.length !== Number(session.size)) throw new Error("合并文件大小不匹配");
-      const file = new File([buffer], session.filename, {
-        type: session.mime || "application/octet-stream",
-      });
-      const uploaded = await uploadFileToDefaultStorage({
-        file,
-        groupId: session.groupId ?? 1,
-        userId: user.id,
-      });
-      await sqlite
-        .prepare("UPDATE sys_file_upload_session SET status = 'completed', updated_at = now() WHERE upload_id = ?")
-        .run(payload.uploadId);
-      await fs.rm(path.join(chunkRoot(), payload.uploadId), { recursive: true, force: true });
-      return uploaded;
-    },
-  );
-  return c.json(success(result, "上传完成"));
-});
+          )
+          .all(payload.uploadId)) as Array<{
+          partNumber: number;
+          path: string;
+          size: number;
+          sha256: string;
+        }>;
+        if (parts.length !== session.totalParts) throw new Error("分片数量不完整");
+        for (let index = 0; index < session.totalParts; index += 1) {
+          if (parts[index]?.partNumber !== index + 1) throw new Error("分片编号不连续");
+        }
+        const buffers = await Promise.all(
+          parts.map(async (part) => {
+            const content = await fs.readFile(part.path);
+            const actualSha256 = crypto.createHash("sha256").update(content).digest("hex");
+            if (actualSha256 !== part.sha256) throw new Error(`分片 ${part.partNumber} 校验失败`);
+            return content;
+          }),
+        );
+        const buffer = Buffer.concat(buffers);
+        if (buffer.length !== Number(session.size)) throw new Error("合并文件大小不匹配");
+        const file = new File([buffer], session.filename, {
+          type: session.mime || "application/octet-stream",
+        });
+        const uploaded = await uploadFileToDefaultStorage({
+          file,
+          groupId: session.groupId ?? 1,
+          userId: user.id,
+        });
+        await sqlite
+          .prepare(
+            "UPDATE sys_file_upload_session SET status = 'completed', updated_at = now() WHERE upload_id = ?",
+          )
+          .run(payload.uploadId);
+        await fs.rm(path.join(chunkRoot(), payload.uploadId), { recursive: true, force: true });
+        return uploaded;
+      },
+    );
+    return c.json(success(result, "上传完成"));
+  },
+);
 
-fileRoutes.delete("/file/chunk/clean-expired", authRequired(), ability("system.file.delete"), async (c) => {
-  await runWithOperationLog(
-    c,
-    {
-      module: "system.file",
-      action: "cleanExpiredUploadSessions",
-      resource: "/file/chunk",
-    },
-    async () => {
-      const rows = (await sqlite
-        .prepare("SELECT upload_id AS uploadId FROM sys_file_upload_session WHERE expires_at < now() AND status = 'uploading'")
-        .all()) as Array<{ uploadId: string }>;
-      for (const row of rows) {
-        await fs.rm(path.join(chunkRoot(), row.uploadId), { recursive: true, force: true });
-      }
-      await sqlite
-        .prepare("UPDATE sys_file_upload_session SET status = 'expired', updated_at = now() WHERE expires_at < now() AND status = 'uploading'")
-        .run();
-    },
-  );
-  return c.json(success(null, "清理成功"));
-});
+fileRoutes.delete(
+  "/file/chunk/clean-expired",
+  authRequired(),
+  ability("system.file.delete"),
+  async (c) => {
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.file",
+        action: "cleanExpiredUploadSessions",
+        resource: "/file/chunk",
+      },
+      async () => {
+        const rows = (await sqlite
+          .prepare(
+            "SELECT upload_id AS uploadId FROM sys_file_upload_session WHERE expires_at < now() AND status = 'uploading'",
+          )
+          .all()) as Array<{ uploadId: string }>;
+        for (const row of rows) {
+          await fs.rm(path.join(chunkRoot(), row.uploadId), { recursive: true, force: true });
+        }
+        await sqlite
+          .prepare(
+            "UPDATE sys_file_upload_session SET status = 'expired', updated_at = now() WHERE expires_at < now() AND status = 'uploading'",
+          )
+          .run();
+      },
+    );
+    return c.json(success(null, "清理成功"));
+  },
+);
 
-fileRoutes.delete("/file/chunk/:uploadId", authRequired(), ability("system.file.upload"), async (c) => {
-  const user = c.get("user");
-  const uploadId = c.req.param("uploadId");
-  await runWithOperationLog(
-    c,
-    {
-      module: "system.file",
-      action: "cancelChunkUpload",
-      resource: "/file/chunk",
-      resourceId: uploadId,
-    },
-    async () => {
-      await sqlite
-        .prepare(
-          "UPDATE sys_file_upload_session SET status = 'cancelled', updated_at = now() WHERE upload_id = ? AND user_id = ?",
-        )
-        .run(uploadId, user.id);
-      await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
-    },
-  );
-  return c.json(success(null, "已取消上传"));
-});
+fileRoutes.delete(
+  "/file/chunk/:uploadId",
+  authRequired(),
+  ability("system.file.upload"),
+  async (c) => {
+    const user = c.get("user");
+    const uploadId = c.req.param("uploadId");
+    await runWithOperationLog(
+      c,
+      {
+        module: "system.file",
+        action: "cancelChunkUpload",
+        resource: "/file/chunk",
+        resourceId: uploadId,
+      },
+      async () => {
+        await sqlite
+          .prepare(
+            "UPDATE sys_file_upload_session SET status = 'cancelled', updated_at = now() WHERE upload_id = ? AND user_id = ?",
+          )
+          .run(uploadId, user.id);
+        await fs.rm(path.join(chunkRoot(), uploadId), { recursive: true, force: true });
+      },
+    );
+    return c.json(success(null, "已取消上传"));
+  },
+);
 
 const fileReferenceSchema = z.object({
   fileId: z.coerce.number(),
@@ -677,7 +725,7 @@ fileRoutes.get("/file/list/trash", authRequired(), ability("system.file.query"),
     quickSearchFields: ["originalName", "filename", "sha256"],
     sortableFields: ["id", "size", "deletedAt", "createdAt"],
     defaultSort: { field: "deletedAt", order: "desc" },
-    baseWhere: ["f.deleted_at IS NOT NULL"],
+    baseWhere: ["f.deleted_at IS NOT NULL", "f.usage_type = 'general'"],
   });
   return c.json(success(page));
 });
@@ -699,6 +747,7 @@ fileRoutes.put(
         details: { originalName: payload.originalName },
       },
       async () => {
+        await assertGeneralFileIds([id]);
         await sqlite
           .prepare(
             "UPDATE sys_file SET original_name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
@@ -723,6 +772,7 @@ fileRoutes.put("/file/list/move", authRequired(), ability("system.file.upload"),
       details: { ids: payload.ids, groupId: payload.groupId },
     },
     async () => {
+      await assertGeneralFileIds(payload.ids);
       await sqlite
         .prepare(
           `UPDATE sys_file SET group_id = ?, updated_at = ? WHERE id IN (${placeholders(payload.ids)})`,
@@ -760,7 +810,8 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
         s.root_path AS rootPath
        FROM sys_file f
        LEFT JOIN sys_storage s ON s.id = f.storage_id
-       WHERE f.id IN (${placeholders(payload.ids)}) AND f.deleted_at IS NULL`,
+       WHERE f.id IN (${placeholders(payload.ids)})
+         AND f.usage_type = 'general' AND f.deleted_at IS NULL`,
         )
         .all(...payload.ids)) as Array<{
         group_id: number | null;
@@ -785,9 +836,10 @@ fileRoutes.post("/file/list/copy", authRequired(), ability("system.file.upload")
       }>;
       const insert = sqlite.prepare(
         `INSERT INTO sys_file
-      (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type, sha256, metadata_json, uploader_id, created_at, updated_at)
+      (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type,
+       usage_type, sha256, metadata_json, uploader_id, created_at, updated_at)
      VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'general', ?, ?, ?, ?, ?)`,
       );
 
       for (const row of rows) {
@@ -855,7 +907,7 @@ fileRoutes.delete(
             `SELECT DISTINCT f.id
              FROM sys_file f
              INNER JOIN sys_file_reference r ON r.file_id = f.id
-             WHERE f.deleted_at IS NOT NULL`,
+             WHERE f.deleted_at IS NOT NULL AND f.usage_type = 'general'`,
           )
           .all()) as Array<{ id: number }>;
         if (referenced.length) throw new Error("回收站中存在被业务引用的文件，不能清空");
@@ -876,11 +928,13 @@ fileRoutes.delete(
           s.root_path AS rootPath
          FROM sys_file f
          LEFT JOIN sys_storage s ON s.id = f.storage_id
-         WHERE f.deleted_at IS NOT NULL`,
+         WHERE f.deleted_at IS NOT NULL AND f.usage_type = 'general'`,
           )
           .all()) as FileObjectRow[];
         await Promise.all(rows.map((row) => deleteStoredObject(row)));
-        await sqlite.prepare("DELETE FROM sys_file WHERE deleted_at IS NOT NULL").run();
+        await sqlite
+          .prepare("DELETE FROM sys_file WHERE deleted_at IS NOT NULL AND usage_type = 'general'")
+          .run();
         return rows.length;
       },
     );

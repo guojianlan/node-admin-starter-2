@@ -1,8 +1,12 @@
 # Admin Base Framework Completion Status
 
-Updated: 2026-08-14
+Updated: 2026-08-24
 
 This document records the final handoff status for the Admin Base backend framework completeness work. The target is 95%-100% completion for the current core backend framework mainline. Deferred plugin-scale or business-specific capabilities are listed separately and are not counted as gaps in the core mainline.
+
+CRM、企业知识库、Notebook/PPT、经营数据查询和供应链 Agent 如何组合使用，见
+[`docs/ai-business-use-case-cookbook.md`](./ai-business-use-case-cookbook.md)。其中的 CRM 和供应链能力是
+业务落地参考，不计入基础框架已经完成的通用能力。
 
 ## Final Status
 
@@ -54,7 +58,13 @@ The backend framework can now support a long-running business project baseline:
 - Security policies affect real login, password, token, and forced-change behavior.
 - Notifications have publish lifecycle, scoped visibility, message-center reading, and read analytics.
 - File uploads enforce safety policy and support large upload sessions.
-- AI Runtime can be configured through providers/models and verified through AI Playground. It now exposes reusable chat, structured-output, single/batch embedding services. AI Chat supports persisted message states, CJK-aware context compaction, model-aware output budgets, per-session model/System Prompt, usage/export, regeneration, Agent selection, permission-aware tools, persisted Runs/Steps, atomic human approval, and linked continuation Runs. AI SDK 7 remains the Provider runtime; Mastra Core is available as an embedded `general-assistant` canary behind `ADMIN_BASE_AI_ORCHESTRATOR=mastra` without changing the existing Chat, Approval, permission, or audit contracts.
+- AI Runtime can be configured through providers/models and verified through AI Playground. It exposes reusable chat, structured-output, single/batch embedding services, purpose-level primary/fallback routing, immutable Invocation/Attempt cost evidence, Provider success/P50/P95 health, and linked Run/Step Trace. AI Chat supports persisted message states, CJK-aware context compaction, model-aware output budgets, per-session model/System Prompt, usage/export, regeneration, Agent selection, permission-aware tools, persisted Runs/Steps, atomic human approval, and linked continuation Runs. AI SDK 7 remains the Provider runtime; Mastra Core is available as an embedded `general-assistant` canary behind `ADMIN_BASE_AI_ORCHESTRATOR=mastra` without changing the existing Chat, Approval, permission, or audit contracts.
+- Model pricing supports ordinary input, cache read, cache write and output cost evidence. The governed LiteLLM catalog adds validated snapshots, deterministic Provider/model matching, diff preview, selective application, source Hash and manual-override provenance; it never silently overwrites model prices or claims official verification.
+- Knowledge/RAG v1 shares the storage layer while isolating ordinary admin files, Knowledge-owned sources, and reserved C-end user content through `general | knowledge | user_content`. Direct Knowledge uploads never appear in ordinary file groups, lists, downloads, moves, or trash; importing from the ordinary file library creates an independent Knowledge-owned physical snapshot, so deleting the original cannot break retrieval or citations. It supports scoped knowledge bases, TXT/Markdown/PDF/DOCX parsing, versioned deterministic chunks, dimension-aware Embedding, PostgreSQL full-text plus cosine retrieval, optional governed Rerank with graceful degradation, grounded answers, RAG Runs, and inspectable citations. It does not require `pgvector` in the first deployment.
+- Notebook v1 organizes visible knowledge bases or ready documents into owned workspaces, supports SSRF-safe website import, governed Web Search discovery with selected-result import, and a unified bottom composer for grounded Ask or AI-planned Deep Research. Research runs persist Workflow/Step progress and cited report Artifacts, while grounded answers remain restricted to current sources and preserve historical citation/source snapshots.
+- Eval/Trace v1 provides scoped Dataset/Case management, save-from-real-Run, immutable synchronous Run/Result history, deterministic text/tool/approval/latency/Token/cost assertions, and Result links to the existing Agent Run/Step/Approval and Invocation/Attempt evidence. Unattended Eval explicitly denies approval-required tools.
+- AI Governance adds explicit cross-session User/Agent Memory, Runtime Skills, an Agent Knowledge Tool, controlled remote MCP Streamable HTTP/OAuth/Tool lifecycle, persistent Provider circuit breakers, PostgreSQL Worker jobs, system/department/user quotas, and estimated/adjustable/settleable billing ledger entries.
+- Notebook supports owner-managed viewer/editor collaborators and optional queued Artifact generation. Eval Cases can add LLM Judge and evidence-based groundedness checks without allowing model judgement to override deterministic failures.
 - The admin shell supports visited-page tabs and optional in-memory page retention. `ADMIN_PAGE_PERSISTENCE_MODE` in `src/config/admin-navigation.ts` selects `disabled`, `tabs`, or `tabs-cache` behavior.
 - Dashboard is a system status center rather than demo metrics.
 - New business modules have a repeatable implementation template, route/permission checks, CLI draft generator, and Web draft/publish generator.
@@ -69,12 +79,13 @@ The backend framework can now support a long-running business project baseline:
   six system-owned tools. Runs, steps, approvals, plan hashes, affected files, validation evidence,
   expiry, execution, and operation logs are visible through the existing Agent debugging workflow.
 
-The current AI baseline includes governed Web Search and server-derived public-network sources. It
-does not yet include Knowledge/RAG document citations, Notebook, cross-session Memory, runtime
-Agent Skills, Eval datasets, MCP, or distributed AI workers. Their
-adoption order and acceptance boundaries are recorded in
-[`docs/ai-capability-evolution-roadmap.md`](ai-capability-evolution-roadmap.md); roadmap items are not
-counted as delivered core capabilities.
+The current AI baseline includes governed Web Search, server-derived public-network sources,
+purpose-level model reliability, Knowledge/RAG, document citations, Notebook workspaces,
+Eval/Trace, cross-session Memory, Runtime Agent Skills, Agent Knowledge Tool, controlled MCP,
+persistent circuit breakers, PostgreSQL Worker jobs, and quota/billing foundations. It does not
+claim full tenant isolation, an external message broker, Provider invoice reconciliation, realtime
+Notebook co-editing, or unrestricted MCP transports. The exact boundaries are recorded in
+[`docs/ai-capability-evolution-roadmap.md`](ai-capability-evolution-roadmap.md).
 
 ## AI-First Framework Packages
 
@@ -83,6 +94,7 @@ counted as delivered core capabilities.
 | Package A: agent-ready development contract           |   100% | Repository `AGENTS.md`, AI development lifecycle, project-owned `admin-module`/`admin-ui`/`admin-qa` skills, risk-based `admin:verify` command, and module handoff guidance are implemented.                                                                                                                   |
 | Package B: governed module generation and publication |   100% | CLI/Web/Coding Agent share one strict schema; the generator declares supported capabilities; publication has per-file diffs, identity/conflict checks, immutable plan hashes, isolated preflight, serialized source mutation, publish journals/backups, partial-failure recovery, and guarded source rollback. |
 | Package C: constrained in-product development Agent   |   100% | `module_design`, draft, diff, validation, publication, and rollback tools reuse Package B services; system identity, permissions, production rejection, Approval, expiry, replay protection, Run/Step visibility, and operation logs are enforced.                                                             |
+| AI Pricing Catalog v1                                 |   100% | A validated, hashed LiteLLM snapshot is paged and matched by Provider/model identity; administrators preview field-level differences and explicitly apply selected values while manual edits reset catalog provenance.                                                                                         |
 
 Package B ownership is explicit: a draft is generator-owned, while published files become normal
 repository-owned source. Regeneration is diff-only and cannot overwrite a handwritten target.
@@ -109,8 +121,9 @@ The first orchestration package is implemented with a deliberately narrow blast 
   silently retries through legacy.
 - PostgreSQL storage is reserved under `mastra_runtime` with `disableInit: true`; M0/M1 creates no
   Mastra tables and performs no runtime DDL.
-- Memory, Workflow persistence, Studio, MCP, RAG, Eval, and full Agent migration remain separate
-  future packages.
+- Mastra-owned Memory, Studio, MCP storage, and full Agent migration remain outside the current
+  boundary. Admin Base Memory, MCP, Knowledge/RAG, Notebook, Eval/Trace, Worker, and billing use the
+  existing PostgreSQL, AI SDK, permission, approval, and audit contracts rather than Mastra-owned storage.
 
 Automated M0/M1 acceptance covers runtime selection, invalid configuration, PostgreSQL isolation,
 RequestContext propagation, Tool approval/execution mapping, real Mastra stream normalization, and
@@ -165,6 +178,41 @@ M3 automated acceptance on 2026-08-14:
 - Real Tavily/Brave credentials and browser visual acceptance remain environment/manual boundaries;
   they are not represented as automated passes.
 
+## AI Reliability And Knowledge/RAG
+
+The current AI reliability and grounded-knowledge package adds:
+
+- Shared `chat | structured | embedding | rerank | agent | ragAnswer | evalJudge` purpose routes,
+  with one primary model and an ordered candidate list.
+- Immutable logical Invocation and per-Provider/Model Attempt evidence with tokens, estimated cost,
+  first response/total latency, sanitized errors, Request ID, Session, Run, and Step links.
+- Provider business success rate, P50/P95 latency, latest success/failure, and separate health-test
+  counts. Fallback stops once streamed output begins so different model answers are never joined.
+- `/system/ai/runtime` for routing, health, cost ledger, Invocation/Attempt Trace, and Agent Run links.
+- `/system/ai/knowledge` for scoped knowledge bases, existing-file sources, indexing, retrieval,
+  grounded answers, RAG Runs, and citation inspection.
+- PostgreSQL generated `tsvector`/GIN keyword candidates plus JSON Embedding cosine scoring. This
+  keeps v1 PostgreSQL-first without claiming `pgvector` is installed.
+- Authorized hybrid candidates can pass through the ordered `rerank` purpose route. The adapter
+  caps candidates and text, records Invocation/Attempt health evidence, and degrades to hybrid
+  ordering without persisting the query, candidate text, or Provider credentials.
+- Global, department, and user knowledge visibility enforced on list, command, direct-ID retrieval,
+  search, and Ask paths; operation logs never store the raw question.
+
+Automated acceptance on 2026-08-20:
+
+- `pnpm admin:verify --full` passed TypeScript, ESLint, 406/406 Vitest tests in 26 files,
+  260/260 API and 32/32 page inventories, route/permission consistency, and the Next.js production
+  build including `/system/ai/runtime` and `/system/ai/knowledge`.
+- After final source-reference and lexical-fallback hardening, the focused Reliability/Knowledge/
+  Agent tests and `pnpm admin:verify --quick` passed again.
+- After the governed DashScope Rerank integration, `pnpm test` passed 407/407 tests in 26 files;
+  `pnpm admin:verify --quick`, focused ESLint, and `git diff --check` also passed. A real encrypted
+  local DashScope configuration returned a 1024-dimensional `text-embedding-v4` vector and a
+  successful `qwen3-rerank` result. Browser visual QA remains deferred.
+- Browser visual QA and additional production Provider environments remain manual/environment
+  boundaries by current project decision.
+
 Package B automated acceptance on 2026-08-03:
 
 - `pnpm generate:module-schema` synchronized the published JSON Schema.
@@ -208,20 +256,44 @@ The consolidated release candidate was verified on 2026-08-19 with the current s
 - Real external Provider credentials and browser visual acceptance remain environment/manual
   boundaries and are not represented as automated passes.
 
+## AI Governance Foundation Acceptance
+
+Automated code-level acceptance on 2026-08-24:
+
+- Migration `0043_ai_governance_foundation` was applied successfully to the current development database.
+- `pnpm lint` passed with zero warnings.
+- `pnpm test` passed 500/500 tests in 30 files.
+- Focused Memory/Skill/MCP/Circuit/Worker/Quota, Notebook collaboration, and Eval Judge tests passed 13/13 in 3 files.
+- `pnpm typecheck`, `pnpm test:check-cases`, `pnpm admin:check-routes`, and `git diff --check` passed.
+- Machine-readable coverage is 334/334 API operations and 35/35 App Router pages.
+- Browser visual QA, real third-party MCP OAuth/Tool execution, external Provider Judge/RAG execution, production Worker deployment, and formal invoice reconciliation remain environment/manual acceptance boundaries. They are not represented as automated passes.
+
+## Notebook Web Research And File Isolation Acceptance
+
+Automated code-level acceptance on 2026-08-24:
+
+- Migration `0046_ai_research_and_file_usage` was applied successfully to the current development database.
+- Focused Notebook, Website Source, Web Search, Knowledge/RAG, Citation, Deep Research, cancellation, partial-import, and file-isolation regression passed 28/28 tests in 5 files.
+- `pnpm admin:verify --full` passed TypeScript, full-repository ESLint, 525/525 Vitest tests in 33 files, 342/342 API operations, 35/35 App Router pages, route/permission consistency, and the Next.js 16.3.1 production build.
+- The production build generated the Notebook, Knowledge, Eval, Governance, Runtime, Chat, Agent, Provider, Model, Playground, Setup, and Web Search pages together with the existing system routes.
+- Search snippets are never persisted as source text; selected URLs are refetched through Website Source security. Deep Research reports are restricted to documents imported by their Workflow Run, and partial failures remain inspectable.
+- Direct Knowledge upload stores `usage_type = knowledge`; automated acceptance proves it is visible in Knowledge documents but hidden from ordinary file listing and ordinary file download. Ordinary-library import creates a second `knowledge` file record and physical path, records provenance and survives force deletion of the original.
+- Real external Tavily/Brave calls, long-running production Worker deployment, browser visual acceptance, and production smoke remain environment/manual boundaries and are not represented as automated passes.
+
 ## Deferred Scope
 
 These capabilities remain intentionally out of the current core mainline:
 
-| Capability                               | Reason                                                                                                                                                                                                   |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-tenant architecture                | Requires tenant isolation across auth, data scope, storage, and audit; this would change many core contracts.                                                                                            |
-| Task scheduler center                    | Notice scheduled visibility currently works by query-time filtering; scheduler introduces runtime and retry semantics outside the core baseline.                                                         |
-| Advanced AI evaluation and quota billing | Agent/Tool/Run/Step/Approval and single-process recovery foundations are implemented; automated eval suites, tenant quota enforcement, distributed workers, and billing remain a separate product layer. |
-| Knowledge/RAG and Notebook               | These require document parsing, chunking, retrieval, authorization, and citations before the Notebook product layer is valid. Their staged design is recorded separately.                                |
-| Runtime Memory, Skills, and MCP          | These require explicit write policy, Tool trust boundaries, credentials, OAuth, and lifecycle governance; they remain roadmap capabilities.                                                              |
-| Full plugin marketplace                  | Requires packaging, install, trust, version, and permission models that exceed the current admin framework.                                                                                              |
-| Field-level permission UI                | Data scope and action permission are complete enough for the baseline; field-level UI can be added later as an extension point.                                                                          |
-| Realtime WebSocket messages              | Message center supports polling/read workflows; realtime delivery can be added after a runtime channel is selected.                                                                                      |
+| Capability                               | Reason                                                                                                                                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-tenant architecture                | Requires tenant isolation across auth, data scope, storage, and audit; this would change many core contracts.                                                                                                 |
+| Task scheduler center                    | Notice scheduled visibility currently works by query-time filtering; scheduler introduces runtime and retry semantics outside the core baseline.                                                              |
+| Formal tenant billing and reconciliation | system/department/user quota and estimated ledger settlement exist, but tenant isolation, invoice cycles, payment, tax and Provider statement reconciliation remain separate layers.                          |
+| Advanced Notebook collaboration          | viewer/editor collaboration and queued Artifact generation exist; realtime co-editing, comments, public sharing, schedules and cross-node progress push remain separate product work.                         |
+| External brokers and unrestricted MCP    | PostgreSQL Worker and controlled remote Streamable HTTP MCP exist; Redis/Kafka/RabbitMQ, scheduler-center UI, stdio/Shell/script transports, arbitrary URLs and long-lived MCP Session pools remain deferred. |
+| Full plugin marketplace                  | Requires packaging, install, trust, version, and permission models that exceed the current admin framework.                                                                                                   |
+| Field-level permission UI                | Data scope and action permission are complete enough for the baseline; field-level UI can be added later as an extension point.                                                                               |
+| Realtime WebSocket messages              | Message center supports polling/read workflows; realtime delivery can be added after a runtime channel is selected.                                                                                           |
 
 ## Handoff Checklist
 
@@ -239,4 +311,4 @@ pnpm build
 pnpm smoke
 ```
 
-The working tree should be clean and all package commits should be pushed to `origin/codex/admin-base-migration-plan`.
+The working tree should be clean and the intended package commits should be pushed to the current release branch before merge or tagging.

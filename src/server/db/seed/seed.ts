@@ -107,6 +107,97 @@ async function seedDefaultWebsiteFiles(dbClient: DbClient, now: string) {
   }
 }
 
+async function seedDefaultAiEvalDataset(dbClient: DbClient) {
+  await dbClient
+    .prepare(
+      `INSERT INTO sys_ai_eval_dataset
+        (name, description, scope_type, status, sort, created_by, updated_by)
+       SELECT
+        'Admin Base Agent 基线回归',
+        '系统内置的 Agent 核心能力回归集。执行前需要配置可用的 Agent 用途模型；联网搜索用例还需要启用 Web Search Provider。',
+        'global', 1, 0, 1, 1
+       WHERE EXISTS (SELECT 1 FROM sys_user WHERE id = 1)
+         AND EXISTS (SELECT 1 FROM sys_ai_agent WHERE code = 'general-assistant' AND deleted_at IS NULL)
+         AND NOT EXISTS (
+           SELECT 1 FROM sys_ai_eval_dataset
+           WHERE name = 'Admin Base Agent 基线回归' AND deleted_at IS NULL
+         )`,
+    )
+    .run();
+
+  const cases = [
+    {
+      name: "基础指令遵循",
+      description: "验证 Agent 能稳定遵循精确输出指令。",
+      inputText: "请只回复：Admin Base Eval OK",
+      expectedText: "Admin Base Eval OK",
+      assertions: {
+        contains: ["Admin Base Eval OK"],
+        forbiddenTools: ["web-search", "browser-location"],
+      },
+      tags: ["baseline", "instruction"],
+      sort: 10,
+    },
+    {
+      name: "计算器工具调用",
+      description: "验证确定性计算会调用受控 calculator 工具。",
+      inputText: "请使用计算器计算 125 * 8，并在最终答案中包含计算结果。",
+      expectedText: "1000",
+      assertions: {
+        contains: ["1000"],
+        expectedTools: ["calculator"],
+        forbiddenTools: ["web-search", "browser-location"],
+      },
+      tags: ["baseline", "tool", "calculator"],
+      sort: 20,
+    },
+    {
+      name: "联网搜索工具调用",
+      description: "验证时效性问题会进入 Web Search；运行环境需要启用搜索 Provider。",
+      inputText: "请联网查询深圳今天的天气，并给出信息来源。",
+      expectedText: null,
+      assertions: { expectedTools: ["web-search"], forbiddenTools: ["browser-location"] },
+      tags: ["baseline", "tool", "web-search", "external"],
+      sort: 30,
+    },
+  ];
+
+  for (const item of cases) {
+    await dbClient
+      .prepare(
+        `INSERT INTO sys_ai_eval_case
+          (dataset_id, name, description, agent_id, input_text, expected_text,
+           assertions_json, tags_json, status, sort, created_by, updated_by)
+         SELECT dataset.id, ?, ?, agent.id, ?, ?, ?, ?, 1, ?, 1, 1
+         FROM (
+           SELECT id FROM sys_ai_eval_dataset
+           WHERE name = 'Admin Base Agent 基线回归' AND deleted_at IS NULL
+           ORDER BY id ASC LIMIT 1
+         ) dataset
+         CROSS JOIN (
+           SELECT id FROM sys_ai_agent
+           WHERE code = 'general-assistant' AND deleted_at IS NULL
+           ORDER BY id ASC LIMIT 1
+         ) agent
+         WHERE NOT EXISTS (
+           SELECT 1 FROM sys_ai_eval_case eval_case
+           WHERE eval_case.dataset_id = dataset.id AND eval_case.name = ?
+             AND eval_case.deleted_at IS NULL
+         )`,
+      )
+      .run(
+        item.name,
+        item.description,
+        item.inputText,
+        item.expectedText,
+        JSON.stringify(item.assertions),
+        JSON.stringify(item.tags),
+        item.sort,
+        item.name,
+      );
+  }
+}
+
 async function syncSequences(dbClient: DbClient) {
   const tables = [
     "sys_dept",
@@ -138,6 +229,22 @@ async function syncSequences(dbClient: DbClient) {
     "sys_ai_agent_run",
     "sys_ai_agent_run_step",
     "sys_ai_tool_approval",
+    "sys_ai_workflow_run",
+    "sys_ai_workflow_run_step",
+    "sys_ai_invocation",
+    "sys_ai_invocation_attempt",
+    "sys_ai_knowledge_base",
+    "sys_ai_document",
+    "sys_ai_document_chunk",
+    "sys_ai_rag_run",
+    "sys_ai_rag_citation",
+    "sys_ai_notebook",
+    "sys_ai_notebook_source",
+    "sys_ai_notebook_artifact",
+    "sys_ai_eval_dataset",
+    "sys_ai_eval_case",
+    "sys_ai_eval_run",
+    "sys_ai_eval_result",
     "sys_notice",
   ];
 
@@ -216,6 +323,8 @@ export async function seedDatabase(dbClient: DbClient = sqlite) {
   await dbClient
     .prepare("INSERT INTO sys_user_role (user_id, role_id) VALUES (1, 1) ON CONFLICT DO NOTHING")
     .run();
+
+  await seedDefaultAiEvalDataset(dbClient);
 
   await dbClient
     .prepare(
@@ -428,7 +537,7 @@ ON CONFLICT DO NOTHING;
       key: "file.allowed_extensions",
       title: "允许扩展名",
       describe: "英文逗号分隔，留空时使用系统默认白名单",
-      values: "jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv,zip,mp3,mp4,webm",
+      values: "jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,md,markdown,csv,zip,mp3,mp4,webm",
       type: "textarea",
       sort: 2,
     },

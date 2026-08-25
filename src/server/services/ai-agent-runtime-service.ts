@@ -11,8 +11,10 @@ import {
 } from "./ai-agent-service";
 import { isAiToolApprovalRequired } from "./ai-agent-runtime-policy";
 import { getAiToolInputSchema } from "./ai-tool-registry";
+import { createAiFallbackLanguageModel } from "./ai-reliability-service";
+import { resolveAgentGovernedContext } from "./ai-governance-service";
 import type { AiRuntimeMessage } from "./ai-runtime-service";
-import { createAiRuntime } from "./ai-runtime-service";
+import { createAiRuntimePool } from "./ai-runtime-service";
 
 function toModelMessages(messages: AiRuntimeMessage[]): ModelMessage[] {
   return messages.map((message) => ({ role: message.role, content: message.content }));
@@ -39,15 +41,23 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
   const startedAt = performance.now();
   const agent = await getAiAgent(input.agentId);
   if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
-  const runtime = await createAiRuntime({
-    usage: "chat",
-    messages: input.messages,
+  const governed = await resolveAgentGovernedContext({ agentId: agent.id, userId: input.userId });
+  const governedMessages = governed.instructions
+    ? ([
+        { role: "system", content: governed.instructions },
+        ...input.messages,
+      ] as AiRuntimeMessage[])
+    : input.messages;
+  const runtimes = await createAiRuntimePool({
+    purpose: "agent",
+    messages: governedMessages,
     modelId: input.modelId || agent.modelId,
     maxOutputTokens: input.maxOutputTokens || agent.maxOutputTokens || undefined,
     temperature: input.temperature ?? agent.temperatureMilli / 1000,
     timeoutMs: input.timeoutMs,
     abortSignal: input.abortSignal,
   });
+  const runtime = runtimes[0];
   const runId = await createAgentRun({
     sessionId: input.sessionId,
     agentId: agent.id,
@@ -56,10 +66,25 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
     parentRunId: input.parentRunId,
     sourceApprovalId: input.sourceApprovalId,
   });
-  const toolRows = await listAiTools({ activeOnly: true, agentId: agent.id });
+  const configuredTools = await listAiTools({ activeOnly: true, agentId: agent.id });
+  const toolRows = governed.allowedToolIds
+    ? configuredTools.filter((item) => governed.allowedToolIds?.has(item.id))
+    : configuredTools;
   const toolMap = new Map(toolRows.map((item) => [item.code, item]));
   let stepNo = 0;
   const tools: ToolSet = {};
+  const fallbackModel = createAiFallbackLanguageModel({
+    purpose: "agent",
+    candidates: runtimes.map((item) => ({ config: item.config, model: item.sdkRuntime.model })),
+    trace: {
+      sourceType: "agent",
+      sourceId: input.inputMessageId,
+      requestId: input.requestId,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      runId,
+    },
+  });
 
   for (const toolRow of toolRows) {
     tools[toolRow.code] = tool({
@@ -107,7 +132,8 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
   let stream: ReturnType<typeof streamText>;
   try {
     stream = streamText({
-      model: runtime.sdkRuntime.model,
+      model: fallbackModel,
+      maxRetries: 0,
       messages: toModelMessages(runtime.messages),
       allowSystemInMessages: true,
       tools,

@@ -9,12 +9,7 @@ export type AiWorkflowRunStatus =
   | "failed"
   | "cancelled";
 
-export type AiWorkflowStepStatus =
-  | "running"
-  | "suspended"
-  | "completed"
-  | "failed"
-  | "skipped";
+export type AiWorkflowStepStatus = "running" | "suspended" | "completed" | "failed" | "skipped";
 
 function toJson(value: unknown) {
   return value == null ? null : JSON.stringify(value);
@@ -52,6 +47,7 @@ export async function createAiWorkflowRun(input: {
   resourceType?: string | null;
   resourceId?: string | null;
   workflowInput: unknown;
+  initialStatus?: "queued" | "running";
   dbClient?: DbClient;
 }) {
   const dbClient = input.dbClient ?? sqlite;
@@ -61,19 +57,32 @@ export async function createAiWorkflowRun(input: {
       `INSERT INTO sys_ai_workflow_run
         (workflow_code, orchestrator_run_id, user_id, status, request_id, resource_type,
          resource_id, input_json, started_at)
-       VALUES (?, ?, ?, 'running', ?, ?, ?, ?, now())
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'running' THEN now() ELSE NULL END)
        RETURNING id`,
     )
     .run(
       input.workflowCode,
       orchestratorRunId,
       input.userId,
+      input.initialStatus ?? "running",
       input.requestId ?? null,
       input.resourceType ?? null,
       input.resourceId ?? null,
       toJson(input.workflowInput),
+      input.initialStatus ?? "running",
     );
   return { id: Number(result.lastInsertRowid), orchestratorRunId };
+}
+
+export async function startAiWorkflowRun(id: number, dbClient: DbClient = sqlite) {
+  await dbClient
+    .prepare(
+      `UPDATE sys_ai_workflow_run
+       SET status = 'running', started_at = COALESCE(started_at, now()), error_message = NULL,
+         updated_at = now()
+       WHERE id = ? AND status = 'queued'`,
+    )
+    .run(id);
 }
 
 export async function finishAiWorkflowRun(input: {
@@ -205,11 +214,7 @@ export async function listAiWorkflowRuns(input: {
   return rows.map(hydrateRun);
 }
 
-export async function getAiWorkflowRun(input: {
-  id: number;
-  userId: number;
-  dbClient?: DbClient;
-}) {
+export async function getAiWorkflowRun(input: { id: number; userId: number; dbClient?: DbClient }) {
   const dbClient = input.dbClient ?? sqlite;
   const row = (await dbClient
     .prepare(

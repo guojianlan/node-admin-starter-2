@@ -71,6 +71,8 @@ const defaultAllowedExtensions = [
   "xls",
   "xlsx",
   "txt",
+  "md",
+  "markdown",
   "csv",
   "zip",
   "mp3",
@@ -78,7 +80,18 @@ const defaultAllowedExtensions = [
   "webm",
 ];
 
-const defaultDeniedExtensions = ["exe", "bat", "cmd", "sh", "php", "html", "htm", "js", "mjs", "svg"];
+const defaultDeniedExtensions = [
+  "exe",
+  "bat",
+  "cmd",
+  "sh",
+  "php",
+  "html",
+  "htm",
+  "js",
+  "mjs",
+  "svg",
+];
 const dangerousExtensions = ["html", "htm", "svg", "js", "mjs", "vbs", "sh", "bat", "cmd", "ps1"];
 
 const mimeRules: Record<string, string[]> = {
@@ -103,7 +116,11 @@ const magicRules: Record<string, Array<number[]>> = {
   gif: [[0x47, 0x49, 0x46, 0x38]],
   webp: [[0x52, 0x49, 0x46, 0x46]],
   pdf: [[0x25, 0x50, 0x44, 0x46]],
-  zip: [[0x50, 0x4b, 0x03, 0x04], [0x50, 0x4b, 0x05, 0x06], [0x50, 0x4b, 0x07, 0x08]],
+  zip: [
+    [0x50, 0x4b, 0x03, 0x04],
+    [0x50, 0x4b, 0x05, 0x06],
+    [0x50, 0x4b, 0x07, 0x08],
+  ],
 };
 
 function splitExtensions(value?: string | null) {
@@ -130,7 +147,9 @@ function joinPublicUrl(baseUrl: string | null | undefined, relativePath: string)
   return `${baseUrl.replace(/\/$/, "")}/${cleanPath.replace(/^\//, "")}`;
 }
 
-function createS3Client(storage: Pick<StorageRow, "endpoint" | "region" | "accessKey" | "secretKeyEncrypted">) {
+function createS3Client(
+  storage: Pick<StorageRow, "endpoint" | "region" | "accessKey" | "secretKeyEncrypted">,
+) {
   const secretAccessKey = decryptSecret(storage.secretKeyEncrypted);
   if (!storage.accessKey || !secretAccessKey) {
     throw new Error("S3 存储缺少 Access Key 或 Secret Key");
@@ -149,7 +168,9 @@ function createS3Client(storage: Pick<StorageRow, "endpoint" | "region" | "acces
 async function streamToBuffer(body: unknown) {
   if (!body) return Buffer.alloc(0);
   if (typeof (body as { transformToByteArray?: unknown }).transformToByteArray === "function") {
-    const bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+    const bytes = await (
+      body as { transformToByteArray: () => Promise<Uint8Array> }
+    ).transformToByteArray();
     return Buffer.from(bytes);
   }
   const chunks: Buffer[] = [];
@@ -172,7 +193,8 @@ export function classifyFile(input: { ext?: string | null; mime?: string | null 
   if (mime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext))
     return "image";
   if (mime.startsWith("video/") || ["mp4", "webm", "mov", "m4v"].includes(ext)) return "video";
-  if (mime.startsWith("audio/") || ["mp3", "wav", "ogg", "m4a", "flac"].includes(ext)) return "audio";
+  if (mime.startsWith("audio/") || ["mp3", "wav", "ogg", "m4a", "flac"].includes(ext))
+    return "audio";
   if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "md"].includes(ext))
     return "document";
   if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "archive";
@@ -261,12 +283,14 @@ export async function getUploadConfig(): Promise<UploadConfig> {
       ? splitExtensions(map.get("file.denied_extensions"))
       : defaultDeniedExtensions,
     enableSha256Dedupe: booleanConfig(map.get("file.enable_sha256_dedupe")),
-    mimeCheckEnabled: map.get("file.mime_check_enabled") == null
-      ? true
-      : booleanConfig(map.get("file.mime_check_enabled")),
-    magicCheckEnabled: map.get("file.magic_check_enabled") == null
-      ? true
-      : booleanConfig(map.get("file.magic_check_enabled")),
+    mimeCheckEnabled:
+      map.get("file.mime_check_enabled") == null
+        ? true
+        : booleanConfig(map.get("file.mime_check_enabled")),
+    magicCheckEnabled:
+      map.get("file.magic_check_enabled") == null
+        ? true
+        : booleanConfig(map.get("file.magic_check_enabled")),
     dangerousFileStrategy: ["reject", "isolated-download", "force-download"].includes(
       String(map.get("file.dangerous_file_strategy") ?? ""),
     )
@@ -284,10 +308,7 @@ export async function assertUploadAllowed(file: File, ext: string) {
   if (config.deniedExtensions.includes(normalizedExt)) {
     throw new Error("当前文件类型不允许上传");
   }
-  if (
-    config.dangerousFileStrategy === "reject" &&
-    dangerousExtensions.includes(normalizedExt)
-  ) {
+  if (config.dangerousFileStrategy === "reject" && dangerousExtensions.includes(normalizedExt)) {
     throw new Error("当前文件类型属于高风险类型，已按策略拒绝上传");
   }
   if (config.allowedExtensions.length && !config.allowedExtensions.includes(normalizedExt)) {
@@ -339,30 +360,36 @@ export async function testStorageConnection(storage: {
   await client.send(new HeadBucketCommand({ Bucket: storage.bucket }));
 }
 
-export async function uploadFileToDefaultStorage(input: {
-  file: File;
+async function storeBufferInDefaultStorage(input: {
+  originalName: string;
+  mime: string | null;
+  buffer: Buffer;
   groupId: number | null;
   userId: number;
+  enableSha256Dedupe: boolean;
+  usageType?: "general" | "knowledge" | "user_content";
+  metadata?: Record<string, unknown>;
 }) {
   const storage = await getDefaultStorage();
-  const extWithDot = safeExt(input.file.name);
+  const extWithDot = safeExt(input.originalName);
   const ext = extWithDot.replace(".", "");
-  const uploadConfig = await assertUploadAllowed(input.file, ext);
-  const buffer = Buffer.from(await input.file.arrayBuffer());
-  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  const sha256 = crypto.createHash("sha256").update(input.buffer).digest("hex");
 
-  if (uploadConfig.enableSha256Dedupe) {
+  if (input.enableSha256Dedupe) {
     const existing = (await sqlite
       .prepare(
         `SELECT id, url
          FROM sys_file
          WHERE storage_id = ?
            AND sha256 = ?
+           AND usage_type = ?
            AND deleted_at IS NULL
          ORDER BY id ASC
          LIMIT 1`,
       )
-      .get(storage.id, sha256)) as { id: number; url: string } | undefined;
+      .get(storage.id, sha256, input.usageType ?? "general")) as
+      | { id: number; url: string }
+      | undefined;
     if (existing) return { ...existing, deduped: true };
   }
 
@@ -373,7 +400,7 @@ export async function uploadFileToDefaultStorage(input: {
   if (storage.type === "local") {
     const absoluteDir = path.join(localRoot(storage.rootPath), dateDir);
     await fs.mkdir(absoluteDir, { recursive: true });
-    await fs.writeFile(path.join(absoluteDir, filename), buffer);
+    await fs.writeFile(path.join(absoluteDir, filename), input.buffer);
   } else {
     if (!storage.bucket) throw new Error("S3 存储缺少 bucket");
     const client = createS3Client(storage);
@@ -381,36 +408,38 @@ export async function uploadFileToDefaultStorage(input: {
       new PutObjectCommand({
         Bucket: storage.bucket,
         Key: relativePath,
-        Body: buffer,
-        ContentType: input.file.type || "application/octet-stream",
+        Body: input.buffer,
+        ContentType: input.mime || "application/octet-stream",
       }),
     );
   }
 
   const now = nowIso();
-  const fileType = classifyFile({ ext, mime: input.file.type });
+  const fileType = classifyFile({ ext, mime: input.mime });
   const url = joinPublicUrl(storage.baseUrl, relativePath);
   const result = await sqlite
     .prepare(
       `INSERT INTO sys_file
-        (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type, sha256, metadata_json, uploader_id, created_at, updated_at)
+        (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type,
+         usage_type, sha256, metadata_json, uploader_id, created_at, updated_at)
        VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
     )
     .run(
-      input.groupId ?? 1,
+      input.usageType === "knowledge" ? null : (input.groupId ?? 1),
       storage.id,
-      input.file.name,
+      input.originalName,
       filename,
       relativePath,
       url,
-      input.file.size,
+      input.buffer.length,
       ext,
-      input.file.type || null,
+      input.mime,
       fileType,
+      input.usageType ?? "general",
       sha256,
-      JSON.stringify({ storageType: storage.type }),
+      JSON.stringify({ storageType: storage.type, ...(input.metadata ?? {}) }),
       input.userId,
       now,
       now,
@@ -421,6 +450,66 @@ export async function uploadFileToDefaultStorage(input: {
     url,
     deduped: false,
   };
+}
+
+export async function uploadFileToDefaultStorage(input: {
+  file: File;
+  groupId: number | null;
+  userId: number;
+  usageType?: "general" | "knowledge" | "user_content";
+}) {
+  const ext = safeExt(input.file.name).replace(".", "");
+  const uploadConfig = await assertUploadAllowed(input.file, ext);
+  return storeBufferInDefaultStorage({
+    originalName: input.file.name,
+    mime: input.file.type || null,
+    buffer: Buffer.from(await input.file.arrayBuffer()),
+    groupId: input.groupId,
+    userId: input.userId,
+    enableSha256Dedupe: uploadConfig.enableSha256Dedupe,
+    usageType: input.usageType,
+  });
+}
+
+const trustedGeneratedTextExtensions = new Set(["txt", "md", "markdown", "json", "csv"]);
+
+export async function storeTrustedGeneratedText(input: {
+  name: string;
+  content: string;
+  userId: number;
+  groupId?: number | null;
+  source?: string;
+  usageType?: "general" | "knowledge" | "user_content";
+  metadata?: Record<string, unknown>;
+}) {
+  const originalName = path.basename(input.name);
+  const ext = safeExt(originalName).replace(".", "");
+  if (!trustedGeneratedTextExtensions.has(ext)) {
+    throw new Error("系统生成文件仅支持 TXT、Markdown、JSON 和 CSV 文本");
+  }
+  const buffer = Buffer.from(input.content, "utf8");
+  if (buffer.length > 20 * 1024 * 1024) throw new Error("系统生成文本不能超过 20 MB");
+  return storeBufferInDefaultStorage({
+    originalName,
+    mime:
+      ext === "json"
+        ? "application/json"
+        : ext === "csv"
+          ? "text/csv"
+          : ext === "md" || ext === "markdown"
+            ? "text/markdown"
+            : "text/plain",
+    buffer,
+    groupId: input.groupId ?? null,
+    userId: input.userId,
+    enableSha256Dedupe: true,
+    usageType: input.usageType,
+    metadata: {
+      trustedGenerated: true,
+      source: input.source ?? "system",
+      ...(input.metadata ?? {}),
+    },
+  });
 }
 
 export async function readStoredObject(row: FileObjectRow) {
@@ -486,4 +575,118 @@ export async function copyStoredObject(input: {
       ContentType: input.contentType ?? undefined,
     }),
   );
+}
+
+export async function copyStoredFileToUsage(input: {
+  sourceFileId: number;
+  sourceUsageType: "general" | "knowledge" | "user_content";
+  targetUsageType: "general" | "knowledge" | "user_content";
+  userId: number;
+  sha256?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const source = (await sqlite
+    .prepare(
+      `SELECT f.id, f.storage_id AS "storageId", f.original_name AS "originalName",
+        f.filename, f.path, f.size, f.ext, f.mime, f.type, f.sha256,
+        COALESCE(s.type, 'local') AS "storageType", s.endpoint, s.region, s.bucket,
+        s.access_key AS "accessKey", s.secret_key_encrypted AS "secretKeyEncrypted",
+        s.base_url AS "baseUrl", s.root_path AS "rootPath"
+       FROM sys_file f
+       LEFT JOIN sys_storage s ON s.id = f.storage_id
+       WHERE f.id = ? AND f.usage_type = ? AND f.deleted_at IS NULL`,
+    )
+    .get(input.sourceFileId, input.sourceUsageType)) as
+    | (FileObjectRow & {
+        id: number;
+        storageId: number | null;
+        originalName: string;
+        size: number;
+        ext: string | null;
+        mime: string | null;
+        type: string | null;
+        sha256: string | null;
+        baseUrl: string | null;
+      })
+    | undefined;
+  if (!source) throw new Error("源文件不存在或已进入回收站");
+
+  const extWithDot = source.ext ? `.${source.ext}` : safeExt(source.originalName);
+  const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const filename = `${crypto.randomUUID()}${extWithDot}`;
+  const targetPath = `${dateDir}/${filename}`;
+  const targetObject: FileObjectRow = { ...source, filename, path: targetPath };
+  await copyStoredObject({ source, targetPath, contentType: source.mime });
+
+  try {
+    const now = nowIso();
+    const result = await sqlite
+      .prepare(
+        `INSERT INTO sys_file
+          (group_id, storage_id, original_name, filename, path, url, size, ext, mime, type,
+           usage_type, sha256, metadata_json, uploader_id, created_at, updated_at)
+         VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`,
+      )
+      .run(
+        input.targetUsageType === "general" ? 1 : null,
+        source.storageId,
+        source.originalName,
+        filename,
+        targetPath,
+        joinPublicUrl(source.baseUrl, targetPath),
+        source.size,
+        source.ext,
+        source.mime,
+        source.type ?? classifyFile({ ext: source.ext, mime: source.mime }),
+        input.targetUsageType,
+        input.sha256 ?? source.sha256,
+        JSON.stringify({
+          importedFromFileId: source.id,
+          importedFromUsageType: input.sourceUsageType,
+          importedAt: now,
+          sourceSha256: input.sha256 ?? source.sha256,
+          ...(input.metadata ?? {}),
+        }),
+        input.userId,
+        now,
+        now,
+      );
+    return {
+      id: Number(result.lastInsertRowid),
+      originalName: source.originalName,
+      path: targetPath,
+      usageType: input.targetUsageType,
+    };
+  } catch (error) {
+    await deleteStoredObject(targetObject).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteUnreferencedStoredFile(input: {
+  fileId: number;
+  usageType: "general" | "knowledge" | "user_content";
+}) {
+  const referenced = await sqlite
+    .prepare("SELECT id FROM sys_file_reference WHERE file_id = ? LIMIT 1")
+    .get(input.fileId);
+  if (referenced) return false;
+  const row = (await sqlite
+    .prepare(
+      `SELECT f.id, f.filename, f.path, f.mime, f.storage_id AS "storageId",
+        COALESCE(s.type, 'local') AS "storageType", s.endpoint, s.region, s.bucket,
+        s.access_key AS "accessKey", s.secret_key_encrypted AS "secretKeyEncrypted",
+        s.root_path AS "rootPath"
+       FROM sys_file f LEFT JOIN sys_storage s ON s.id = f.storage_id
+       WHERE f.id = ? AND f.usage_type = ?`,
+    )
+    .get(input.fileId, input.usageType)) as FileObjectRow | undefined;
+  if (!row) return false;
+  await deleteStoredObject(row);
+  await sqlite
+    .prepare("DELETE FROM sys_file WHERE id = ? AND usage_type = ?")
+    .run(input.fileId, input.usageType);
+  return true;
 }

@@ -331,6 +331,7 @@ describe("AI provider configuration", () => {
             modelType: "chat",
             contextWindow: 128000,
             maxOutputTokens: 16384,
+            toolCalling: true,
           },
           {
             modelId: "guided-embedding",
@@ -373,7 +374,7 @@ describe("AI provider configuration", () => {
       .prepare(
         `SELECT model_id AS "modelId", is_default_chat AS "isDefaultChat",
           is_default_structured AS "isDefaultStructured",
-          is_default_embedding AS "isDefaultEmbedding"
+          is_default_embedding AS "isDefaultEmbedding", capabilities_json AS "capabilitiesJson"
          FROM sys_ai_model WHERE provider_id = ? ORDER BY id ASC`,
       )
       .all(Number(completeBody.data?.providerId))) as Array<Record<string, unknown>>;
@@ -382,6 +383,7 @@ describe("AI provider configuration", () => {
         modelId: "guided-chat",
         isDefaultChat: true,
         isDefaultStructured: true,
+        capabilitiesJson: '{"chat":true,"toolCalling":true}',
       }),
       expect.objectContaining({
         modelId: "guided-embedding",
@@ -1076,8 +1078,12 @@ describe("AI provider configuration", () => {
         contextWindow: 128000,
         maxOutputTokens: 4096,
         inputPrice: "0.15",
+        cachedInputPrice: "0.03",
+        cacheWritePrice: "0.18",
         outputPrice: "0.60",
         currency: "USD",
+        pricingSourceUrl: "https://pricing.business-ai.test/models",
+        pricingVerifiedAt: "2026-08-21",
         status: 1,
         sort: 1,
       }),
@@ -1099,14 +1105,31 @@ describe("AI provider configuration", () => {
     });
     expect(createEmbedding.status).toBe(200);
 
-    const models = await readJson<Page<{ id: number; modelId: string; providerName: string }>>(
+    const models = await readJson<
+      Page<{
+        id: number;
+        modelId: string;
+        providerName: string;
+        cachedInputPrice?: string | null;
+        cacheWritePrice?: string | null;
+        pricingSourceUrl?: string | null;
+        pricingVerifiedAt?: string | null;
+      }>
+    >(
       await app.request("/api/system/ai/model?keyword=Business", {
         headers: { authorization: `Bearer ${token}` },
       }),
     );
     expect(models.data?.data).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ modelId: "business-chat", providerName: "Business AI" }),
+        expect.objectContaining({
+          modelId: "business-chat",
+          providerName: "Business AI",
+          cachedInputPrice: "0.03",
+          cacheWritePrice: "0.18",
+          pricingSourceUrl: "https://pricing.business-ai.test/models",
+          pricingVerifiedAt: "2026-08-21",
+        }),
         expect.objectContaining({ modelId: "business-embedding", providerName: "Business AI" }),
       ]),
     );
@@ -1148,6 +1171,8 @@ describe("AI provider configuration", () => {
     expect(runtimeConfig.model).toMatchObject({
       modelId: "business-chat",
       modelType: "chat",
+      cachedInputPrice: "0.03",
+      cacheWritePrice: "0.18",
       capabilities: expect.objectContaining({ structured: true, toolCalling: true }),
     });
 
@@ -1503,7 +1528,7 @@ describe("AI provider configuration", () => {
         name: "Chat Model",
         modelId: "chat-model",
         modelType: "chat",
-        capabilitiesJson: '{"chat":true}',
+        capabilitiesJson: '{"chat":true,"toolCalling":true}',
         maxOutputTokens: 2048,
         status: 1,
         sort: 1,

@@ -1,7 +1,7 @@
 import { sqlite } from "@/server/db";
 import { decryptSecret } from "@/server/services/secret";
 
-export type AiModelUsage = "chat" | "structured" | "embedding";
+export type AiModelUsage = "chat" | "structured" | "embedding" | "rerank";
 
 export const aiProviderDefaultTimeoutMs = 300_000;
 export const aiProviderMinTimeoutMs = 5_000;
@@ -43,6 +43,11 @@ export type AiProviderRuntimeConfig = {
     capabilities: Record<string, unknown>;
     contextWindow?: number | null;
     maxOutputTokens?: number | null;
+    inputPrice?: string | null;
+    cachedInputPrice?: string | null;
+    cacheWritePrice?: string | null;
+    outputPrice?: string | null;
+    currency: string;
   };
 };
 
@@ -70,6 +75,11 @@ export type AiModelRow = {
   capabilitiesJson: string | null;
   contextWindow: number | null;
   maxOutputTokens: number | null;
+  inputPrice: string | null;
+  cachedInputPrice: string | null;
+  cacheWritePrice: string | null;
+  outputPrice: string | null;
+  currency: string;
   isDefaultChat: boolean;
   isDefaultStructured: boolean;
   isDefaultEmbedding: boolean;
@@ -122,6 +132,11 @@ function modelSelectSql(extraWhere: string) {
     capabilities_json AS "capabilitiesJson",
     context_window AS "contextWindow",
     max_output_tokens AS "maxOutputTokens",
+    input_price AS "inputPrice",
+    cached_input_price AS "cachedInputPrice",
+    cache_write_price AS "cacheWritePrice",
+    output_price AS "outputPrice",
+    currency,
     is_default_chat AS "isDefaultChat",
     is_default_structured AS "isDefaultStructured",
     is_default_embedding AS "isDefaultEmbedding",
@@ -167,6 +182,7 @@ export async function getAiModel(id: number) {
 }
 
 export async function getDefaultAiModel(usage: AiModelUsage) {
+  if (usage === "rerank") return undefined;
   const column =
     usage === "embedding"
       ? "is_default_embedding"
@@ -187,6 +203,9 @@ export async function getAiRuntimeConfig(
   );
   if (usage === "embedding" && model.modelType !== "embedding") {
     throw new AiRuntimeConfigurationError("默认 Embedding 模型类型不正确");
+  }
+  if (usage === "rerank" && model.modelType !== "rerank") {
+    throw new AiRuntimeConfigurationError("Rerank 模型类型不正确");
   }
   if ((usage === "chat" || usage === "structured") && model.modelType !== "chat") {
     throw new AiRuntimeConfigurationError("默认 Chat/Structured 模型类型不正确");
@@ -214,6 +233,11 @@ export async function getAiRuntimeConfig(
       capabilities: parseOptions(model.capabilitiesJson),
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
+      inputPrice: model.inputPrice,
+      cachedInputPrice: model.cachedInputPrice,
+      cacheWritePrice: model.cacheWritePrice,
+      outputPrice: model.outputPrice,
+      currency: model.currency,
     },
   };
 }

@@ -1,0 +1,82 @@
+{
+  "snapshotAt": "2026-08-24T00:00:00.000Z",
+  "fictional": true,
+  "suppliers": [
+    {
+      "code": "SUP-001",
+      "name": "东岭电子",
+      "onTimeRate": 0.96,
+      "defectRate": 0.004,
+      "riskLevel": "low"
+    },
+    {
+      "code": "SUP-002",
+      "name": "海川工业材料",
+      "onTimeRate": 0.78,
+      "defectRate": 0.012,
+      "riskLevel": "high"
+    },
+    {
+      "code": "SUP-003",
+      "name": "云峰精工",
+      "onTimeRate": 0.89,
+      "defectRate": 0.006,
+      "riskLevel": "medium"
+    }
+  ],
+  "inventory": [
+    {
+      "sku": "MCU-A17",
+      "warehouse": "深圳一仓",
+      "available": 820,
+      "locked": 180,
+      "inTransit": 500,
+      "safetyStock": 700,
+      "dailyDemand": 55
+    },
+    {
+      "sku": "SENSOR-X2",
+      "warehouse": "深圳一仓",
+      "available": 260,
+      "locked": 80,
+      "inTransit": 0,
+      "safetyStock": 400,
+      "dailyDemand": 32
+    },
+    {
+      "sku": "ALLOY-6061",
+      "warehouse": "东莞原料仓",
+      "available": 4200,
+      "locked": 900,
+      "inTransit": 3000,
+      "safetyStock": 3500,
+      "dailyDemand": 280
+    }
+  ],
+  "purchaseOrders": [
+    {
+      "poNo": "PO-202608-018",
+      "supplierCode": "SUP-001",
+      "sku": "MCU-A17",
+      "quantity": 500,
+      "plannedArrival": "2026-08-29",
+      "status": "in_transit"
+    },
+    {
+      "poNo": "PO-202608-022",
+      "supplierCode": "SUP-002",
+      "sku": "SENSOR-X2",
+      "quantity": 600,
+      "plannedArrival": "2026-09-12",
+      "status": "supplier_delayed"
+    },
+    {
+      "poNo": "PO-202608-025",
+      "supplierCode": "SUP-003",
+      "sku": "ALLOY-6061",
+      "quantity": 3000,
+      "plannedArrival": "2026-08-31",
+      "status": "confirmed"
+    }
+  ]
+}

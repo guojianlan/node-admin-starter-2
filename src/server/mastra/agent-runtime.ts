@@ -9,8 +9,10 @@ import {
   listAiTools,
 } from "@/server/services/ai-agent-service";
 import { isAiToolApprovalRequired } from "@/server/services/ai-agent-runtime-policy";
+import { createAiFallbackLanguageModel } from "@/server/services/ai-reliability-service";
+import { resolveAgentGovernedContext } from "@/server/services/ai-governance-service";
 import type { AiRuntimeMessage } from "@/server/services/ai-runtime-service";
-import { createAiRuntime } from "@/server/services/ai-runtime-service";
+import { createAiRuntimePool } from "@/server/services/ai-runtime-service";
 import { resolveDataScopeForUser } from "@/server/services/data-scope";
 import { createAdminBaseMastraRequestContext } from "./request-context";
 import { toMastraLanguageModel } from "./model-adapter";
@@ -61,15 +63,26 @@ export async function createMastraAiAgentStream(input: {
   const startedAt = performance.now();
   const agentRow = await getAiAgent(input.agentId);
   if (!agentRow || agentRow.status !== 1) throw new Error("Agent 不存在或已停用");
-  const runtime = await createAiRuntime({
-    usage: "chat",
-    messages: input.messages,
+  const governed = await resolveAgentGovernedContext({
+    agentId: agentRow.id,
+    userId: input.userId,
+  });
+  const governedMessages = governed.instructions
+    ? ([
+        { role: "system", content: governed.instructions },
+        ...input.messages,
+      ] as AiRuntimeMessage[])
+    : input.messages;
+  const runtimes = await createAiRuntimePool({
+    purpose: "agent",
+    messages: governedMessages,
     modelId: input.modelId || agentRow.modelId,
     maxOutputTokens: input.maxOutputTokens || agentRow.maxOutputTokens || undefined,
     temperature: input.temperature ?? agentRow.temperatureMilli / 1000,
     timeoutMs: input.timeoutMs,
     abortSignal: input.abortSignal,
   });
+  const runtime = runtimes[0];
   const runId = await createAgentRun({
     sessionId: input.sessionId,
     agentId: agentRow.id,
@@ -78,7 +91,10 @@ export async function createMastraAiAgentStream(input: {
     parentRunId: input.parentRunId,
     sourceApprovalId: input.sourceApprovalId,
   });
-  const toolRows = await listAiTools({ activeOnly: true, agentId: agentRow.id });
+  const configuredTools = await listAiTools({ activeOnly: true, agentId: agentRow.id });
+  const toolRows = governed.allowedToolIds
+    ? configuredTools.filter((item) => governed.allowedToolIds?.has(item.id))
+    : configuredTools;
   const toolMap = new Map(toolRows.map((item) => [item.code, item]));
   let stepNo = 0;
   const tools = createMastraToolSet({
@@ -126,13 +142,25 @@ export async function createMastraAiAgentStream(input: {
     requestId: input.requestId ?? `ai-agent-run-${runId}`,
     dataScope: await resolveDataScopeForUser(input.userId),
   });
+  const fallbackModel = createAiFallbackLanguageModel({
+    purpose: "agent",
+    candidates: runtimes.map((item) => ({ config: item.config, model: item.sdkRuntime.model })),
+    trace: {
+      sourceType: "agent",
+      sourceId: input.inputMessageId,
+      requestId: input.requestId,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      runId,
+    },
+  });
   const agentInput = separateAgentInstructions(runtime.messages, agentRow.instructions);
   const mastraAgent = new Agent({
     id: `admin-base-${agentRow.code}`,
     name: agentRow.name,
     description: agentRow.description ?? undefined,
     instructions: agentInput.instructions,
-    model: toMastraLanguageModel(runtime.sdkRuntime.model),
+    model: toMastraLanguageModel(fallbackModel),
     tools,
     maxRetries: 0,
   });

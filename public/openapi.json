@@ -354,6 +354,21 @@
     "/system/ai/model/test/stream": {
       "post": { "tags": ["ai"], "summary": "Stream configured AI chat model through AI SDK" }
     },
+    "/system/ai/pricing/catalog/status": {
+      "get": { "tags": ["ai"], "summary": "Read latest validated AI pricing catalog snapshot" }
+    },
+    "/system/ai/pricing/catalog/refresh": {
+      "post": { "tags": ["ai"], "summary": "Refresh and validate the community AI pricing catalog" }
+    },
+    "/system/ai/pricing/catalog/models": {
+      "get": { "tags": ["ai"], "summary": "Page AI pricing catalog candidates" }
+    },
+    "/system/ai/model/{id}/pricing/preview": {
+      "get": { "tags": ["ai"], "summary": "Preview catalog pricing differences for one model" }
+    },
+    "/system/ai/model/{id}/pricing/apply": {
+      "put": { "tags": ["ai"], "summary": "Explicitly apply selected catalog pricing fields" }
+    },
     "/system/ai/runtime-config/{usage}": {
       "get": { "tags": ["ai"], "summary": "Read sanitized default AI runtime config" }
     },
@@ -444,6 +459,265 @@
     },
     "/system/ai/approval/{id}/decision": {
       "post": { "tags": ["ai"], "summary": "Approve or deny tool execution" }
+    },
+    "/system/ai/runtime/purposes": {
+      "get": { "tags": ["ai"], "summary": "List purpose model routes and ordered candidates" }
+    },
+    "/system/ai/runtime/purposes/{purpose}": {
+      "put": { "tags": ["ai"], "summary": "Replace one purpose model route" }
+    },
+    "/system/ai/runtime/provider-health": {
+      "get": { "tags": ["ai"], "summary": "Aggregate Provider success and P50/P95 latency" }
+    },
+    "/system/ai/runtime/invocations": {
+      "get": { "tags": ["ai"], "summary": "Page logical AI invocations and estimated cost" }
+    },
+    "/system/ai/runtime/invocations/{id}": {
+      "get": { "tags": ["ai"], "summary": "Inspect one invocation and all fallback attempts" }
+    },
+    "/system/ai/knowledge": {
+      "get": { "tags": ["ai"], "summary": "List visible knowledge bases" },
+      "post": { "tags": ["ai"], "summary": "Create a scoped knowledge base" }
+    },
+    "/system/ai/knowledge/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update a visible knowledge base" },
+      "delete": { "tags": ["ai"], "summary": "Soft-delete a visible knowledge base" }
+    },
+    "/system/ai/knowledge/{id}/source-files": {
+      "get": { "tags": ["ai"], "summary": "Page eligible source files" }
+    },
+    "/system/ai/knowledge/{id}/documents": {
+      "get": { "tags": ["ai"], "summary": "Page knowledge source documents" },
+      "post": {
+        "tags": ["ai"],
+        "summary": "Import an independent Knowledge-owned snapshot from the ordinary file library"
+      }
+    },
+    "/system/ai/knowledge/{id}/documents/upload": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Upload a Knowledge-owned source outside ordinary file management"
+      }
+    },
+    "/system/ai/knowledge/documents/{id}/index": {
+      "post": { "tags": ["ai"], "summary": "Parse, chunk, and embed one document" }
+    },
+    "/system/ai/knowledge/documents/{id}/status": {
+      "put": { "tags": ["ai"], "summary": "Toggle indexed document retrieval status" }
+    },
+    "/system/ai/knowledge/documents/{id}": {
+      "delete": { "tags": ["ai"], "summary": "Remove a document from future retrieval" }
+    },
+    "/system/ai/knowledge/search": {
+      "post": { "tags": ["ai"], "summary": "Run scoped hybrid knowledge retrieval" }
+    },
+    "/system/ai/knowledge/ask": {
+      "post": { "tags": ["ai"], "summary": "Generate a grounded answer with citations" }
+    },
+    "/system/ai/knowledge/runs/{id}": {
+      "get": { "tags": ["ai"], "summary": "Inspect a RAG Run and citation snapshot" }
+    },
+    "/system/ai/notebook": {
+      "get": { "tags": ["ai"], "summary": "List visible Notebook workspaces" },
+      "post": { "tags": ["ai"], "summary": "Create a scoped Notebook" }
+    },
+    "/system/ai/notebook/options": {
+      "get": { "tags": ["ai"], "summary": "List Notebook models, users, and departments" }
+    },
+    "/system/ai/notebook/source-options": {
+      "get": { "tags": ["ai"], "summary": "Search and page permitted Notebook sources" }
+    },
+    "/system/ai/notebook/{id}": {
+      "get": { "tags": ["ai"], "summary": "Read one visible Notebook" },
+      "put": { "tags": ["ai"], "summary": "Update an owned Notebook" },
+      "delete": { "tags": ["ai"], "summary": "Soft-delete an owned Notebook" }
+    },
+    "/system/ai/notebook/{id}/members": {
+      "get": { "tags": ["ai"], "summary": "List Notebook collaborators" },
+      "put": { "tags": ["ai"], "summary": "Upsert a viewer or editor collaborator" }
+    },
+    "/system/ai/notebook/{id}/members/{userId}": {
+      "delete": { "tags": ["ai"], "summary": "Remove a Notebook collaborator" }
+    },
+    "/system/ai/notebook/{id}/sources": {
+      "get": { "tags": ["ai"], "summary": "List active Notebook source references" },
+      "post": { "tags": ["ai"], "summary": "Attach a knowledge base or document reference" }
+    },
+    "/system/ai/notebook/{id}/sources/website": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Fetch, snapshot, index, and attach a public HTML website source"
+      }
+    },
+    "/system/ai/notebook/{id}/sources/search": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Discover public sources through the governed Web Search Provider chain"
+      }
+    },
+    "/system/ai/notebook/{id}/sources/search/import": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Securely refetch and import selected search results"
+      }
+    },
+    "/system/ai/notebook/{id}/research": {
+      "get": { "tags": ["ai"], "summary": "Page persisted Deep Research runs" },
+      "post": { "tags": ["ai"], "summary": "Enqueue a cited Deep Research report" }
+    },
+    "/system/ai/notebook/{id}/research/{runId}": {
+      "get": { "tags": ["ai"], "summary": "Inspect Deep Research steps and evidence" },
+      "delete": { "tags": ["ai"], "summary": "Cancel a queued or running Deep Research run" }
+    },
+    "/system/ai/notebook/{id}/sources/{sourceId}": {
+      "delete": { "tags": ["ai"], "summary": "Remove a source from future Notebook runs" }
+    },
+    "/system/ai/notebook/{id}/ask": {
+      "post": { "tags": ["ai"], "summary": "Ask a grounded question against Notebook sources" }
+    },
+    "/system/ai/notebook/{id}/artifacts": {
+      "get": { "tags": ["ai"], "summary": "Page versioned Notebook Artifacts" },
+      "post": { "tags": ["ai"], "summary": "Generate a Notebook Artifact synchronously" }
+    },
+    "/system/ai/notebook/{id}/artifacts/async": {
+      "post": { "tags": ["ai"], "summary": "Enqueue Notebook Artifact generation" }
+    },
+    "/system/ai/notebook/artifacts/{id}/regenerate": {
+      "post": { "tags": ["ai"], "summary": "Generate a new Artifact version" }
+    },
+    "/system/ai/notebook/artifacts/{id}": {
+      "delete": { "tags": ["ai"], "summary": "Soft-delete a Notebook Artifact" }
+    },
+    "/system/ai/eval/datasets": {
+      "get": { "tags": ["ai"], "summary": "List visible Eval datasets" },
+      "post": { "tags": ["ai"], "summary": "Create a scoped Eval dataset" }
+    },
+    "/system/ai/eval/options": {
+      "get": { "tags": ["ai"], "summary": "List Eval Agents and permitted departments" }
+    },
+    "/system/ai/eval/datasets/{id}": {
+      "get": { "tags": ["ai"], "summary": "Read one Eval dataset" },
+      "put": { "tags": ["ai"], "summary": "Update one Eval dataset" },
+      "delete": { "tags": ["ai"], "summary": "Soft-delete one Eval dataset" }
+    },
+    "/system/ai/eval/datasets/{id}/cases": {
+      "get": { "tags": ["ai"], "summary": "List Eval Cases and Judge settings" },
+      "post": { "tags": ["ai"], "summary": "Create a deterministic or judged Eval Case" }
+    },
+    "/system/ai/eval/cases/{id}": {
+      "put": {
+        "tags": ["ai"],
+        "summary": "Update Eval assertions, Judge rubric, and groundedness"
+      },
+      "delete": { "tags": ["ai"], "summary": "Soft-delete an Eval Case" }
+    },
+    "/system/ai/eval/cases/from-run/{runId}": {
+      "post": { "tags": ["ai"], "summary": "Snapshot a real Agent Run into an Eval Case" }
+    },
+    "/system/ai/eval/datasets/{id}/runs": {
+      "post": { "tags": ["ai"], "summary": "Execute an Eval Dataset synchronously" }
+    },
+    "/system/ai/eval/runs": {
+      "get": { "tags": ["ai"], "summary": "Page immutable Eval Run history" }
+    },
+    "/system/ai/eval/runs/{id}": {
+      "get": { "tags": ["ai"], "summary": "Inspect one Eval Run" }
+    },
+    "/system/ai/eval/runs/{id}/results": {
+      "get": { "tags": ["ai"], "summary": "List Eval Result assertions and Judge metrics" }
+    },
+    "/system/ai/eval/results/{id}": {
+      "get": {
+        "tags": ["ai"],
+        "summary": "Inspect Result, Trace, Judge, and groundedness evidence"
+      }
+    },
+    "/system/ai/governance/options": {
+      "get": { "tags": ["ai"], "summary": "List sanitized AI Governance options" }
+    },
+    "/system/ai/governance/memories": {
+      "get": { "tags": ["ai"], "summary": "List current user's explicit long-term Memory" },
+      "post": { "tags": ["ai"], "summary": "Create explicit User or Agent Memory" }
+    },
+    "/system/ai/governance/memories/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update current-user-owned Memory" },
+      "delete": { "tags": ["ai"], "summary": "Delete current-user-owned Memory" }
+    },
+    "/system/ai/governance/skills": {
+      "get": { "tags": ["ai"], "summary": "List Runtime Agent Skills" },
+      "post": { "tags": ["ai"], "summary": "Create a Runtime Skill" }
+    },
+    "/system/ai/governance/skills/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update a Runtime Skill and bindings" },
+      "delete": { "tags": ["ai"], "summary": "Delete a non-system Runtime Skill" }
+    },
+    "/system/ai/governance/mcp/servers": {
+      "get": { "tags": ["ai"], "summary": "List controlled remote MCP Servers" },
+      "post": { "tags": ["ai"], "summary": "Create an MCP Server" }
+    },
+    "/system/ai/governance/mcp/servers/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update an MCP Server" },
+      "delete": { "tags": ["ai"], "summary": "Delete a Server and disable mapped Tools" }
+    },
+    "/system/ai/governance/mcp/servers/{id}/connect": {
+      "post": { "tags": ["ai"], "summary": "Connect an MCP Server with configured OAuth" }
+    },
+    "/system/ai/governance/mcp/oauth/callback": {
+      "get": {
+        "tags": ["ai"],
+        "summary": "Complete MCP Authorization Code + PKCE",
+        "security": []
+      }
+    },
+    "/system/ai/governance/mcp/servers/{id}/sync": {
+      "post": { "tags": ["ai"], "summary": "Initialize MCP and synchronize remote Tools" }
+    },
+    "/system/ai/governance/mcp/connections": {
+      "get": { "tags": ["ai"], "summary": "List masked MCP OAuth connections" }
+    },
+    "/system/ai/governance/mcp/connections/{id}": {
+      "delete": { "tags": ["ai"], "summary": "Revoke one local MCP Token connection" }
+    },
+    "/system/ai/governance/mcp/tools": {
+      "get": { "tags": ["ai"], "summary": "List synchronized MCP Tool policies" }
+    },
+    "/system/ai/governance/mcp/tools/{id}/policy": {
+      "put": { "tags": ["ai"], "summary": "Set allowlist, risk, approval, and status" }
+    },
+    "/system/ai/governance/circuits": {
+      "get": { "tags": ["ai"], "summary": "List persistent Provider-purpose circuits" },
+      "put": { "tags": ["ai"], "summary": "Update a circuit failure threshold and cooldown" }
+    },
+    "/system/ai/governance/circuits/reset": {
+      "post": { "tags": ["ai"], "summary": "Reset a circuit and half-open probe lease" }
+    },
+    "/system/ai/governance/quotas": {
+      "get": { "tags": ["ai"], "summary": "List system, department, and user quotas" },
+      "post": { "tags": ["ai"], "summary": "Create an AI quota policy" }
+    },
+    "/system/ai/governance/quotas/{id}": {
+      "put": { "tags": ["ai"], "summary": "Update an AI quota policy" }
+    },
+    "/system/ai/governance/billing": {
+      "get": { "tags": ["ai"], "summary": "Page AI usage and adjustment ledger entries" }
+    },
+    "/system/ai/governance/billing/adjustments": {
+      "post": { "tags": ["ai"], "summary": "Create an audited manual billing adjustment" }
+    },
+    "/system/ai/governance/billing/{id}/settlement": {
+      "put": { "tags": ["ai"], "summary": "Confirm or void one estimated usage entry" }
+    },
+    "/system/ai/governance/jobs": {
+      "get": { "tags": ["ai"], "summary": "Page PostgreSQL AI Worker Jobs" }
+    },
+    "/system/ai/governance/jobs/eval": {
+      "post": { "tags": ["ai"], "summary": "Enqueue an Eval Dataset Job" }
+    },
+    "/system/ai/governance/jobs/{id}/retry": {
+      "post": { "tags": ["ai"], "summary": "Retry an eligible failed AI Job" }
+    },
+    "/system/ai/governance/jobs/{id}/cancel": {
+      "post": { "tags": ["ai"], "summary": "Cancel a queued or running AI Job" }
     },
     "/system/module/generator/example": {
       "get": { "tags": ["system"], "summary": "Get CRUD module generator example config" }
