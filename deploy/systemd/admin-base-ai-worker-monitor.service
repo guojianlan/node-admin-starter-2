@@ -1,0 +1,21 @@
+[Unit]
+Description=Admin Base AI Worker Queue Monitor
+After=network-online.target postgresql.service admin-base-ai-worker.service
+Wants=network-online.target admin-base-ai-worker.service
+
+[Service]
+Type=simple
+User=admin-base
+Group=admin-base
+WorkingDirectory=/srv/admin-base
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/admin-base/admin-base.env
+ExecStart=/usr/bin/env pnpm ai:worker:monitor
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

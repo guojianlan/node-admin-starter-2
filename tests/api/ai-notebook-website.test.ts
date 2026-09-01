@@ -7,6 +7,7 @@ import { createAiNotebook } from "@/server/services/ai-notebook-service";
 import {
   defaultWebsiteSourceRuntime,
   fetchWebsiteSource,
+  isPublicIpAddress,
   type WebsiteSourceRuntime,
 } from "@/server/services/ai-website-source-service";
 import { encryptSecret } from "@/server/services/secret";
@@ -132,12 +133,21 @@ describe("AI Notebook website sources", () => {
     "http://10.0.0.1/private",
     "http://169.254.169.254/latest/meta-data",
     "http://[::1]/private",
+    "http://[ff02::1]/multicast",
+    "https://example.com:22/private-port",
     "file:///etc/passwd",
   ])("rejects unsafe URL %s", async (url) => {
     await expect(fetchWebsiteSource({ url, runtime: testRuntime(vi.fn()) })).rejects.toMatchObject({
       status: 400,
     });
   });
+
+  it.each(["ff02::1", "fe80::1", "fc00::1", "2001:db8::1", "::ffff:192.168.1.1"])(
+    "classifies reserved IPv6 address %s as non-public",
+    (address) => {
+      expect(isPublicIpAddress(address)).toBe(false);
+    },
+  );
 
   it("rejects private DNS answers and redirects that cross into a private host", async () => {
     await expect(
@@ -157,6 +167,24 @@ describe("AI Notebook website sources", () => {
         })),
       }),
     ).rejects.toMatchObject({ status: 400 });
+
+    const lookup = vi
+      .fn<WebsiteSourceRuntime["lookup"]>()
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }])
+      .mockResolvedValueOnce([{ address: "192.168.1.10", family: 4 }]);
+    const request = vi.fn<WebsiteSourceRuntime["request"]>().mockResolvedValue({
+      status: 302,
+      headers: { location: "https://private-redirect.example.com/" },
+      body: Buffer.alloc(0),
+    });
+    await expect(
+      fetchWebsiteSource({
+        url: "https://public-redirect.example.com/",
+        runtime: { lookup, request },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("returns useful errors for unsupported content, oversized responses, and timeouts", async () => {

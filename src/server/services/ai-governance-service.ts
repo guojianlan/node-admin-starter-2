@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { HTTPException } from "hono/http-exception";
 import { sqlite, type DbClient } from "@/server/db";
+import { saveAiAgent } from "./ai-agent-service";
+import { getAiWorkerQueueHealth } from "./ai-job-service";
+import { embedAiText } from "./ai-capability-runtime-service";
+import { INTERNAL_SYSTEM_MCP_AGENT_CODE, INTERNAL_SYSTEM_MCP_CODE } from "./ai-system-mcp-service";
 import { decryptSecret, encryptSecret } from "./secret";
 
 const mcpTimeoutMs = 30_000;
@@ -18,17 +22,16 @@ function placeholders(values: unknown[]) {
   return values.map(() => "?").join(", ");
 }
 
-function validateRemoteUrl(raw: string, label: string) {
+function validateRemoteUrl(raw: string, label: string, allowTrustedLocal = false) {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     throw new HTTPException(400, { message: `${label}不是有效 URL` });
   }
+  const localHttp = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
   const localDevelopment =
-    process.env.NODE_ENV !== "production" &&
-    url.protocol === "http:" &&
-    ["127.0.0.1", "localhost"].includes(url.hostname);
+    localHttp && (process.env.NODE_ENV !== "production" || allowTrustedLocal);
   if (url.protocol !== "https:" && !localDevelopment) {
     throw new HTTPException(400, { message: `${label}必须使用 HTTPS` });
   }
@@ -47,7 +50,28 @@ export type AiMemoryInput = {
   sourceMessageId?: number | null;
   status?: "active" | "archived";
   expiresAt?: string | null;
+  importance?: number;
 };
+
+function normalizeMemoryKey(content: string) {
+  const compact = content.toLowerCase().replace(/\s+/g, " ").trim();
+  const marker = compact.match(/^(?:我(?:喜欢|偏好|习惯|的|在意)|我的(?:偏好|习惯|目标)|remember)\s*/u);
+  if (!marker) return crypto.createHash("sha256").update(compact).digest("hex").slice(0, 32);
+  return compact
+    .slice(marker[0].length)
+    .split(/[：:，,。.!！?？]/u)[0]
+    .trim()
+    .slice(0, 160) || compact.slice(0, 160);
+}
+
+function extractMemoryCandidate(content: string) {
+  const match = content.match(
+    /(?:我(?:喜欢|偏好|习惯|的|在意)|我的(?:偏好|习惯|目标)|remember)\s*[^。.!！?？\n]{2,160}/iu,
+  );
+  if (!match) return null;
+  const value = match[0].trim();
+  return { content: value, normalizedKey: normalizeMemoryKey(value), confidence: 80 };
+}
 
 export async function listAiMemories(input: {
   userId: number;
@@ -66,7 +90,9 @@ export async function listAiMemories(input: {
       `SELECT memory.id, memory.scope_type AS "scopeType", memory.agent_id AS "agentId",
         agent.name AS "agentName", memory.content, memory.write_policy AS "writePolicy",
         memory.source_session_id AS "sourceSessionId", memory.source_message_id AS "sourceMessageId",
-        memory.status, memory.expires_at AS "expiresAt", memory.created_at AS "createdAt",
+        memory.status, memory.importance, memory.normalized_key AS "normalizedKey",
+        memory.last_accessed_at AS "lastAccessedAt", memory.access_count AS "accessCount",
+        memory.expires_at AS "expiresAt", memory.created_at AS "createdAt",
         memory.updated_at AS "updatedAt"
        FROM sys_ai_memory memory
        LEFT JOIN sys_ai_agent agent ON agent.id = memory.agent_id
@@ -109,11 +135,23 @@ export async function saveAiMemory(input: { id?: number; userId: number; payload
   await validateMemorySource(input.payload, input.userId);
   const content = input.payload.content.trim();
   if (!content) throw new HTTPException(400, { message: "Memory 内容不能为空" });
+  const normalizedKey = normalizeMemoryKey(content);
+  let embeddingJson: string | null = null;
+  try {
+    const embedding = await embedAiText({
+      value: content,
+      trace: { sourceType: "memory", sourceId: input.id, userId: input.userId },
+    });
+    embeddingJson = JSON.stringify(embedding.embedding);
+  } catch {
+    // Memory remains usable without an embedding when no embedding Provider is configured.
+  }
   if (input.id) {
     const result = await sqlite
       .prepare(
         `UPDATE sys_ai_memory SET scope_type = ?, agent_id = ?, content = ?, write_policy = ?,
          source_session_id = ?, source_message_id = ?, status = ?, expires_at = ?,
+         importance = ?, normalized_key = ?, embedding_json = COALESCE(?, embedding_json),
          updated_by = ?, updated_at = now()
          WHERE id = ? AND user_id = ? AND deleted_at IS NULL RETURNING id`,
       )
@@ -126,6 +164,9 @@ export async function saveAiMemory(input: { id?: number; userId: number; payload
         input.payload.sourceMessageId ?? null,
         input.payload.status ?? "active",
         input.payload.expiresAt ?? null,
+        Math.min(Math.max(Math.round(input.payload.importance ?? 50), 0), 100),
+        normalizedKey,
+        embeddingJson,
         input.userId,
         input.id,
         input.userId,
@@ -137,8 +178,9 @@ export async function saveAiMemory(input: { id?: number; userId: number; payload
     .prepare(
       `INSERT INTO sys_ai_memory
        (user_id, agent_id, scope_type, content, write_policy, source_session_id,
-        source_message_id, status, expires_at, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        source_message_id, status, expires_at, importance, normalized_key, embedding_json,
+        created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .run(
       input.userId,
@@ -150,10 +192,138 @@ export async function saveAiMemory(input: { id?: number; userId: number; payload
       input.payload.sourceMessageId ?? null,
       input.payload.status ?? "active",
       input.payload.expiresAt ?? null,
+      Math.min(Math.max(Math.round(input.payload.importance ?? 50), 0), 100),
+      normalizedKey,
+      embeddingJson,
       input.userId,
       input.userId,
     );
   return Number(result.lastInsertRowid);
+}
+
+export async function proposeAiMemoryCandidate(input: {
+  userId: number;
+  agentId?: number | null;
+  sessionId?: number | null;
+  messageId?: number | null;
+  content: string;
+}) {
+  const candidate = extractMemoryCandidate(input.content);
+  if (!candidate) return null;
+  const result = await sqlite
+    .prepare(
+      `INSERT INTO sys_ai_memory_candidate
+       (user_id, agent_id, source_session_id, source_message_id, content, normalized_key, confidence)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    )
+    .run(
+      input.userId,
+      input.agentId ?? null,
+      input.sessionId ?? null,
+      input.messageId ?? null,
+      candidate.content,
+      candidate.normalizedKey,
+      candidate.confidence,
+    );
+  return { id: Number(result.lastInsertRowid), ...candidate, status: "proposed" as const };
+}
+
+export async function createWorkflowMemoryCandidate(input: {
+  userId: number;
+  agentId?: number | null;
+  content: string;
+}) {
+  const content = input.content.trim();
+  if (!content) throw new HTTPException(400, { message: "Memory 候选内容不能为空" });
+  const normalizedKey = normalizeMemoryKey(content);
+  const result = await sqlite
+    .prepare(
+      `INSERT INTO sys_ai_memory_candidate
+       (user_id, agent_id, content, normalized_key, confidence, status)
+       VALUES (?, ?, ?, ?, 70, 'proposed') RETURNING id`,
+    )
+    .run(input.userId, input.agentId ?? null, content.slice(0, 4000), normalizedKey);
+  return {
+    id: Number(result.lastInsertRowid),
+    content: content.slice(0, 4000),
+    normalizedKey,
+    confidence: 70,
+    status: "proposed" as const,
+  };
+}
+
+export async function listAiMemoryCandidates(input: { userId: number; status?: string }) {
+  const params: Array<string | number> = [input.userId];
+  const filter = input.status ? "AND candidate.status = ?" : "";
+  if (input.status) params.push(input.status);
+  return sqlite
+    .prepare(
+      `SELECT candidate.id, candidate.agent_id AS "agentId", candidate.source_session_id AS "sourceSessionId",
+        candidate.source_message_id AS "sourceMessageId", candidate.content,
+        candidate.normalized_key AS "normalizedKey", candidate.confidence, candidate.status,
+        candidate.conflict_group AS "conflictGroup", candidate.merged_memory_id AS "mergedMemoryId",
+        candidate.rejection_reason AS "rejectionReason", candidate.created_at AS "createdAt"
+       FROM sys_ai_memory_candidate candidate
+       WHERE candidate.user_id = ? ${filter}
+       ORDER BY candidate.created_at DESC, candidate.id DESC`,
+    )
+    .all(...params);
+}
+
+export async function decideAiMemoryCandidate(input: {
+  id: number;
+  userId: number;
+  decision: "accept" | "reject";
+  reason?: string | null;
+}) {
+  const candidate = (await sqlite
+    .prepare(
+      `SELECT * FROM sys_ai_memory_candidate
+       WHERE id = ? AND user_id = ? AND status = 'proposed'`,
+    )
+    .get(input.id, input.userId)) as
+    | { id: number; agent_id: number | null; source_session_id: number | null; source_message_id: number | null; content: string; normalized_key: string }
+    | undefined;
+  if (!candidate) throw new HTTPException(409, { message: "Memory 候选不存在或已处理" });
+  if (input.decision === "reject") {
+    await sqlite
+      .prepare(
+        `UPDATE sys_ai_memory_candidate SET status = 'rejected', rejection_reason = ?, updated_at = now()
+         WHERE id = ? AND user_id = ? AND status = 'proposed'`,
+      )
+      .run(input.reason?.trim() || "用户拒绝保存", input.id, input.userId);
+    return { id: input.id, status: "rejected" as const };
+  }
+  const existing = (await sqlite
+    .prepare(
+      `SELECT id FROM sys_ai_memory WHERE user_id = ? AND normalized_key = ?
+         AND status = 'active' AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    )
+    .get(input.userId, candidate.normalized_key)) as { id: number } | undefined;
+  const memoryId = await saveAiMemory({
+    userId: input.userId,
+    payload: {
+      scopeType: candidate.agent_id ? "agent" : "user",
+      agentId: candidate.agent_id,
+      content: candidate.content,
+      writePolicy: "confirmed",
+      sourceSessionId: candidate.source_session_id,
+      sourceMessageId: candidate.source_message_id,
+      importance: 60,
+    },
+  });
+  if (existing && existing.id !== memoryId) {
+    await sqlite
+      .prepare("UPDATE sys_ai_memory SET status = 'archived', updated_at = now() WHERE id = ?")
+      .run(existing.id);
+  }
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_memory_candidate SET status = ?, merged_memory_id = ?, conflict_group = ?, updated_at = now()
+       WHERE id = ? AND user_id = ?`,
+    )
+    .run(existing ? "merged" : "accepted", memoryId, candidate.normalized_key, input.id, input.userId);
+  return { id: input.id, status: existing ? ("merged" as const) : ("accepted" as const), memoryId };
 }
 
 export async function deleteAiMemory(id: number, userId: number) {
@@ -292,11 +462,146 @@ export async function deleteAiRuntimeSkill(id: number, userId: number) {
   if (!result) throw new HTTPException(409, { message: "Skill 不存在或属于系统内置资源" });
 }
 
-export async function resolveAgentGovernedContext(input: { agentId: number; userId: number }) {
+export async function listAiRuntimeSkillVersions(skillId: number) {
+  return sqlite
+    .prepare(
+      `SELECT version.id, version.skill_id AS "skillId", version.version,
+        version.instructions, version.tool_ids_json AS "toolIdsJson",
+        version.agent_ids_json AS "agentIdsJson", version.compatibility_json AS "compatibilityJson",
+        version.content_hash AS "contentHash", version.status, version.published_at AS "publishedAt",
+        version.created_by AS "createdBy", version.created_at AS "createdAt"
+       FROM sys_ai_runtime_skill_version version
+       WHERE version.skill_id = ? ORDER BY version.version DESC`,
+    )
+    .all(skillId);
+}
+
+export async function createAiRuntimeSkillVersion(input: { skillId: number; userId: number }) {
+  return sqlite.transaction(async (tx) => {
+    const skill = (await tx
+      .prepare("SELECT instructions FROM sys_ai_runtime_skill WHERE id = ? AND deleted_at IS NULL")
+      .get(input.skillId)) as { instructions: string } | undefined;
+    if (!skill) throw new HTTPException(404, { message: "Runtime Skill 不存在" });
+    const tools = (await tx
+      .prepare("SELECT tool_id AS id FROM sys_ai_runtime_skill_tool WHERE skill_id = ? ORDER BY tool_id")
+      .all(input.skillId)) as Array<{ id: number }>;
+    const agents = (await tx
+      .prepare("SELECT agent_id AS id FROM sys_ai_agent_skill WHERE skill_id = ? ORDER BY agent_id")
+      .all(input.skillId)) as Array<{ id: number }>;
+    const toolIds = tools.map((row) => Number(row.id));
+    const agentIds = agents.map((row) => Number(row.id));
+    const contentHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ instructions: skill.instructions, toolIds, agentIds }))
+      .digest("hex");
+    const next = (await tx
+      .prepare("SELECT COALESCE(MAX(version), 0) + 1 AS version FROM sys_ai_runtime_skill_version WHERE skill_id = ?")
+      .get(input.skillId)) as { version: number };
+    const result = await tx
+      .prepare(
+        `INSERT INTO sys_ai_runtime_skill_version
+         (skill_id, version, instructions, tool_ids_json, agent_ids_json, compatibility_json, content_hash, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      )
+      .run(
+        input.skillId,
+        Number(next.version),
+        skill.instructions,
+        JSON.stringify(toolIds),
+        JSON.stringify(agentIds),
+        JSON.stringify({ requiredTools: toolIds, compatibleAgents: agentIds }),
+        contentHash,
+        input.userId,
+      );
+    return { id: Number(result.lastInsertRowid), version: Number(next.version) };
+  });
+}
+
+export async function publishAiRuntimeSkillVersion(input: {
+  skillId: number;
+  version: number;
+  userId: number;
+}) {
+  return sqlite.transaction(async (tx) => {
+    const row = (await tx
+      .prepare(
+        `SELECT id, tool_ids_json AS "toolIdsJson", agent_ids_json AS "agentIdsJson"
+         FROM sys_ai_runtime_skill_version WHERE skill_id = ? AND version = ?`,
+      )
+      .get(input.skillId, input.version)) as { id: number; toolIdsJson: string; agentIdsJson: string } | undefined;
+    if (!row) throw new HTTPException(404, { message: "Skill 版本不存在" });
+    const toolIds = parseJson<number[]>(row.toolIdsJson, []).map(Number);
+    const agentIds = parseJson<number[]>(row.agentIdsJson, []).map(Number);
+    if (toolIds.length) {
+      const count = (await tx
+        .prepare(`SELECT COUNT(*)::int AS total FROM sys_ai_tool WHERE id IN (${placeholders(toolIds)}) AND status = 1 AND deleted_at IS NULL AND handler_key IS NOT NULL`)
+        .get(...toolIds)) as { total: number };
+      if (Number(count.total) !== toolIds.length) throw new HTTPException(409, { message: "Skill 版本引用了不可执行或已停用 Tool" });
+    }
+    if (agentIds.length) {
+      const count = (await tx
+        .prepare(`SELECT COUNT(*)::int AS total FROM sys_ai_agent WHERE id IN (${placeholders(agentIds)}) AND status = 1 AND deleted_at IS NULL`)
+        .get(...agentIds)) as { total: number };
+      if (Number(count.total) !== agentIds.length) throw new HTTPException(409, { message: "Skill 版本引用了已停用 Agent" });
+    }
+    await tx.prepare("UPDATE sys_ai_runtime_skill_version SET status = 'retired' WHERE skill_id = ? AND status = 'published'").run(input.skillId);
+    await tx.prepare("UPDATE sys_ai_runtime_skill_version SET status = 'published', published_at = now() WHERE id = ?").run(row.id);
+    return { skillId: input.skillId, version: input.version, status: "published" as const };
+  });
+}
+
+/** Rollback is deliberately an audited publish of an older immutable version. */
+export async function rollbackAiRuntimeSkillVersion(input: {
+  skillId: number;
+  version: number;
+  userId: number;
+}) {
+  return publishAiRuntimeSkillVersion(input);
+}
+
+let lastMemoryMaintenanceAt = 0;
+export async function maintainAiMemoryState(now = Date.now()) {
+  if (now - lastMemoryMaintenanceAt < 60_000) return { decayed: 0, expiredCandidates: 0 };
+  lastMemoryMaintenanceAt = now;
+  const expired = await sqlite
+    .prepare(
+      `UPDATE sys_ai_memory_candidate SET status = 'expired', updated_at = now()
+       WHERE status = 'proposed' AND expires_at IS NOT NULL AND expires_at <= now()
+       RETURNING id`,
+    )
+    .all();
+  const memories = (await sqlite
+    .prepare(
+      `SELECT id, importance, last_accessed_at AS "lastAccessedAt", created_at AS "createdAt"
+       FROM sys_ai_memory WHERE status = 'active' AND deleted_at IS NULL AND importance > 0`,
+    )
+    .all()) as Array<{ id: number; importance: number; lastAccessedAt?: string | null; createdAt: string }>;
+  let decayed = 0;
+  for (const memory of memories) {
+    const reference = memory.lastAccessedAt || memory.createdAt;
+    const days = Math.floor((now - new Date(reference).getTime()) / 86_400_000);
+    if (days < 30) continue;
+    const nextImportance = Math.max(0, Number(memory.importance) - Math.floor(days / 30));
+    if (nextImportance === Number(memory.importance)) continue;
+    await sqlite
+      .prepare("UPDATE sys_ai_memory SET importance = ?, updated_at = now() WHERE id = ? AND status = 'active'")
+      .run(nextImportance, memory.id);
+    decayed += 1;
+  }
+  return { decayed, expiredCandidates: expired.length };
+}
+
+export async function resolveAgentGovernedContext(input: {
+  agentId: number;
+  userId: number;
+  query?: string;
+}) {
   const [memories, skills] = await Promise.all([
     sqlite
       .prepare(
-        `SELECT content FROM sys_ai_memory
+        `SELECT id, content, importance, embedding_json AS "embeddingJson",
+           access_count AS "accessCount", last_accessed_at AS "lastAccessedAt"
+         FROM sys_ai_memory
          WHERE user_id = ? AND deleted_at IS NULL AND status = 'active'
            AND (expires_at IS NULL OR expires_at > now())
            AND (scope_type = 'user' OR agent_id = ?)
@@ -305,12 +610,16 @@ export async function resolveAgentGovernedContext(input: { agentId: number; user
       .all(input.userId, input.agentId, maxRuntimeMemories),
     sqlite
       .prepare(
-        `SELECT skill.id, skill.name, skill.instructions,
-          COALESCE((SELECT json_agg(link.tool_id ORDER BY link.tool_id)
-            FROM sys_ai_runtime_skill_tool link WHERE link.skill_id = skill.id), '[]') AS "toolIds"
+        `SELECT skill.id, skill.name,
+          COALESCE(published.instructions, skill.instructions) AS instructions,
+          COALESCE(published.tool_ids_json::json,
+            (SELECT json_agg(link.tool_id ORDER BY link.tool_id)
+             FROM sys_ai_runtime_skill_tool link WHERE link.skill_id = skill.id), '[]'::json)::text AS "toolIds"
          FROM sys_ai_runtime_skill skill
          INNER JOIN sys_ai_agent_skill agent_skill
            ON agent_skill.skill_id = skill.id AND agent_skill.agent_id = ?
+         LEFT JOIN sys_ai_runtime_skill_version published
+           ON published.skill_id = skill.id AND published.status = 'published'
          WHERE skill.deleted_at IS NULL AND skill.status = 1
          ORDER BY skill.sort ASC, skill.id ASC`,
       )
@@ -318,17 +627,62 @@ export async function resolveAgentGovernedContext(input: { agentId: number; user
   ]);
   const allowedToolIds = new Set<number>();
   for (const row of skills) {
+    const rawToolIds = (row as Record<string, unknown>).toolIds;
     for (const id of parseJson<number[]>(
-      JSON.stringify((row as Record<string, unknown>).toolIds),
+      Array.isArray(rawToolIds) ? JSON.stringify(rawToolIds) : String(rawToolIds ?? "[]"),
       [],
     )) {
       allowedToolIds.add(Number(id));
     }
   }
-  const memoryText = memories
+  let selectedMemories = memories as Array<Record<string, unknown>>;
+  if (input.query?.trim()) {
+    try {
+      const queryEmbedding = await embedAiText({
+        value: input.query,
+        trace: { sourceType: "memory_recall", userId: input.userId },
+      });
+      const vector = queryEmbedding.embedding;
+      const cosine = (left: number[], right: number[]) => {
+        if (!left.length || left.length !== right.length) return 0;
+        let dot = 0;
+        let leftNorm = 0;
+        let rightNorm = 0;
+        left.forEach((value, index) => {
+          const other = right[index] ?? 0;
+          dot += value * other;
+          leftNorm += value * value;
+          rightNorm += other * other;
+        });
+        return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : 0;
+      };
+      selectedMemories = selectedMemories
+        .map((row) => {
+          const parsed = parseJson<number[]>(String(row.embeddingJson ?? ""), []);
+          const recency = row.lastAccessedAt ? 1 : 0.5;
+          return {
+            ...row,
+            recallScore: cosine(parsed, vector) * 0.8 + (Number(row.importance ?? 50) / 100) * 0.15 + recency * 0.05,
+          };
+        })
+        .sort((left, right) => Number(right.recallScore) - Number(left.recallScore))
+        .slice(0, maxRuntimeMemories);
+    } catch {
+      // No embedding Provider: the recency/importance query remains the safe fallback.
+    }
+  }
+  if (selectedMemories.length) {
+    await sqlite
+      .prepare(
+        `UPDATE sys_ai_memory SET access_count = access_count + 1, last_accessed_at = now()
+         WHERE id IN (${placeholders(selectedMemories.map((row) => Number(row.id)))})`,
+      )
+      .run(...selectedMemories.map((row) => Number(row.id)));
+  }
+  const memoryText = selectedMemories
     .map(
       (row, index) =>
-        `${index + 1}. ${String((row as { content: string }).content).slice(0, 2000)}`,
+        `${index + 1}. ${String(row.content).slice(0, 2000)}`,
     )
     .join("\n");
   const skillText = skills
@@ -347,7 +701,7 @@ export async function resolveAgentGovernedContext(input: { agentId: number; user
       .filter(Boolean)
       .join("\n\n"),
     allowedToolIds: skills.length ? allowedToolIds : null,
-    memoryCount: memories.length,
+    memoryCount: selectedMemories.length,
     skillCount: skills.length,
   };
 }
@@ -362,6 +716,7 @@ export type AiMcpServerInput = {
   clientSecret?: string | null;
   authorizationUrl?: string | null;
   tokenUrl?: string | null;
+  revokeUrl?: string | null;
   scopes?: string | null;
   status?: "draft" | "active" | "disabled";
 };
@@ -373,7 +728,8 @@ export async function listAiMcpServers() {
         server.transport, server.oauth_mode AS "oauthMode", server.client_id AS "clientId",
         CASE WHEN server.client_secret_encrypted IS NULL THEN false ELSE true END AS "hasClientSecret",
         server.authorization_url AS "authorizationUrl", server.token_url AS "tokenUrl",
-        server.scopes, server.status, server.last_error AS "lastError",
+        server.scopes, server.status, server.code = '${INTERNAL_SYSTEM_MCP_CODE}' AS "isInternal",
+        server.last_error AS "lastError",
         server.last_synced_at AS "lastSyncedAt", server.created_at AS "createdAt",
         COUNT(tool.id)::int AS "toolCount",
         COUNT(tool.id) FILTER (WHERE tool.allowlisted = true AND tool.status = 1)::int AS "allowedToolCount"
@@ -389,13 +745,21 @@ export async function saveAiMcpServer(input: {
   id?: number;
   userId: number;
   payload: AiMcpServerInput;
+  trustedInternal?: boolean;
 }) {
-  const endpointUrl = validateRemoteUrl(input.payload.endpointUrl, "MCP Endpoint");
+  const endpointUrl = validateRemoteUrl(
+    input.payload.endpointUrl,
+    "MCP Endpoint",
+    input.trustedInternal,
+  );
   const authorizationUrl = input.payload.authorizationUrl
     ? validateRemoteUrl(input.payload.authorizationUrl, "OAuth Authorization URL")
     : null;
   const tokenUrl = input.payload.tokenUrl
-    ? validateRemoteUrl(input.payload.tokenUrl, "OAuth Token URL")
+    ? validateRemoteUrl(input.payload.tokenUrl, "OAuth Token URL", input.trustedInternal)
+    : null;
+  const revokeUrl = input.payload.revokeUrl
+    ? validateRemoteUrl(input.payload.revokeUrl, "OAuth Revoke URL", input.trustedInternal)
     : null;
   const oauthMode = input.payload.oauthMode ?? "none";
   if (oauthMode !== "none" && !tokenUrl)
@@ -423,7 +787,7 @@ export async function saveAiMcpServer(input: {
       .prepare(
         `UPDATE sys_ai_mcp_server SET name = ?, code = ?, endpoint_url = ?, transport = ?,
          oauth_mode = ?, client_id = ?, client_secret_encrypted = ?, authorization_url = ?,
-         token_url = ?, scopes = ?, status = ?, last_error = NULL, updated_by = ?, updated_at = now()
+         token_url = ?, revoke_url = ?, scopes = ?, status = ?, last_error = NULL, updated_by = ?, updated_at = now()
          WHERE id = ?`,
       )
       .run(
@@ -438,6 +802,7 @@ export async function saveAiMcpServer(input: {
           : encryptSecret(input.payload.clientSecret || null),
         authorizationUrl,
         tokenUrl,
+        revokeUrl,
         input.payload.scopes?.trim() || null,
         input.payload.status ?? "draft",
         input.userId,
@@ -452,8 +817,8 @@ export async function saveAiMcpServer(input: {
     .prepare(
       `INSERT INTO sys_ai_mcp_server
        (name, code, endpoint_url, transport, oauth_mode, client_id, client_secret_encrypted,
-        authorization_url, token_url, scopes, status, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        authorization_url, token_url, revoke_url, scopes, status, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .run(
       input.payload.name.trim(),
@@ -465,6 +830,7 @@ export async function saveAiMcpServer(input: {
       encryptSecret(input.payload.clientSecret || null),
       authorizationUrl,
       tokenUrl,
+      revokeUrl,
       input.payload.scopes?.trim() || null,
       input.payload.status ?? "draft",
       input.userId,
@@ -547,7 +913,7 @@ async function saveMcpConnectionToken(input: {
   await db
     .prepare(
       `UPDATE sys_ai_mcp_connection SET status = 'connected', access_token_encrypted = ?,
-       refresh_token_encrypted = CASE WHEN ? IS NOT NULL THEN ?
+       refresh_token_encrypted = CASE WHEN CAST(? AS TEXT) IS NOT NULL THEN ?
          WHEN ? THEN refresh_token_encrypted ELSE NULL END,
        token_type = ?, scopes = COALESCE(?, scopes), expires_at = ?, last_error = NULL,
        state_hash = NULL, code_verifier_encrypted = NULL, updated_at = now() WHERE id = ?`,
@@ -598,6 +964,32 @@ export async function listAiMcpConnections(serverId?: number) {
 }
 
 export async function disconnectAiMcpConnection(id: number) {
+  const connection = (await sqlite
+    .prepare(
+      `SELECT connection.server_id AS "serverId", connection.user_id AS "userId",
+         connection.access_token_encrypted AS "accessTokenEncrypted", server.revoke_url AS "revokeUrl",
+         server.client_id AS "clientId" FROM sys_ai_mcp_connection connection
+       INNER JOIN sys_ai_mcp_server server ON server.id = connection.server_id
+       WHERE connection.id = ?`,
+    )
+    .get(id)) as {
+    serverId: number;
+    userId: number | null;
+    accessTokenEncrypted: string | null;
+    revokeUrl: string | null;
+    clientId: string | null;
+  } | undefined;
+  if (connection?.revokeUrl) {
+    const token = decryptSecret(connection.accessTokenEncrypted);
+    if (token) {
+      await fetch(connection.revokeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token, token_type_hint: "access_token", ...(connection.clientId ? { client_id: connection.clientId } : {}) }),
+        signal: AbortSignal.timeout(mcpTimeoutMs),
+      }).catch(() => undefined);
+    }
+  }
   const row = await sqlite
     .prepare(
       `UPDATE sys_ai_mcp_connection SET status = 'revoked', revoked_at = now(),
@@ -607,6 +999,16 @@ export async function disconnectAiMcpConnection(id: number) {
     )
     .get(id);
   if (!row) throw new HTTPException(409, { message: "MCP 连接不存在或已断开" });
+  // A revoked OAuth connection must not leave a reusable protocol session in
+  // the pool. The next connect/sync must negotiate a fresh session.
+  if (connection) {
+    await sqlite
+      .prepare(
+        `UPDATE sys_ai_mcp_session SET status = 'closed', updated_at = now()
+         WHERE connection_id = ? OR (server_id = ? AND (user_id = ? OR (user_id IS NULL AND CAST(? AS INTEGER) IS NULL)))`,
+      )
+      .run(id, connection.serverId, connection.userId, connection.userId);
+  }
 }
 
 export async function connectAiMcpServer(input: {
@@ -805,6 +1207,15 @@ async function activeMcpAccessToken(server: McpServerRuntime, userId?: number) {
 
 type McpRpcPayload = { result?: unknown; error?: { code?: number; message?: string } };
 
+function assertMcpCapability(method: string, capabilities: Record<string, unknown>) {
+  if (method.startsWith("resources/") || method.startsWith("prompts/")) {
+    throw new Error(`MCP 能力 ${method.split("/")[0]} 当前被 Admin Base 明确关闭`);
+  }
+  if (method.startsWith("tools/") && "tools" in capabilities && !capabilities.tools) {
+    throw new Error("MCP Server 未协商 tools 能力，拒绝执行 Tool");
+  }
+}
+
 async function parseMcpResponse(response: Response) {
   if (!response.ok) throw new Error(`MCP 请求失败：HTTP ${response.status}`);
   const text = await response.text();
@@ -829,6 +1240,7 @@ async function postMcpRpc(input: {
   token: string | null;
   payload: Record<string, unknown>;
   sessionId?: string | null;
+  userId?: number;
 }) {
   const response = await fetch(input.server.endpointUrl, {
     method: "POST",
@@ -838,6 +1250,9 @@ async function postMcpRpc(input: {
       "mcp-protocol-version": "2025-06-18",
       ...(input.sessionId ? { "mcp-session-id": input.sessionId } : {}),
       ...(input.token ? { authorization: `Bearer ${input.token}` } : {}),
+      ...(input.server.code === INTERNAL_SYSTEM_MCP_CODE && input.userId
+        ? { "x-admin-base-user-id": String(input.userId) }
+        : {}),
     },
     body: JSON.stringify(input.payload),
     signal: AbortSignal.timeout(mcpTimeoutMs),
@@ -853,6 +1268,7 @@ async function mcpRpc(input: {
   method: string;
   params?: Record<string, unknown>;
   userId?: number;
+  skipSessionRetry?: boolean;
 }) {
   if (input.server.transport !== "streamable_http") {
     throw new Error("MCP SSE 传输尚未开放执行，请改用 Streamable HTTP");
@@ -860,7 +1276,20 @@ async function mcpRpc(input: {
   const token = await activeMcpAccessToken(input.server, input.userId);
   if (input.server.oauthMode !== "none" && !token)
     throw new Error("MCP Server 尚未建立有效 OAuth 连接");
-  const initialized = await postMcpRpc({
+  const existingSession = (await sqlite
+    .prepare(
+      `SELECT remote_session_id AS "remoteSessionId", connection_id AS "connectionId",
+         capabilities_json AS "capabilitiesJson"
+       FROM sys_ai_mcp_session WHERE server_id = ? AND (user_id = ? OR user_id IS NULL)
+         AND status = 'active' AND (expires_at IS NULL OR expires_at > now())
+       ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, id DESC LIMIT 1`,
+    )
+    .get(input.server.id, input.userId ?? null, input.userId ?? null)) as
+    | { remoteSessionId: string; connectionId: number | null; capabilitiesJson: string }
+    | undefined;
+  const initialized = existingSession
+    ? { sessionId: existingSession.remoteSessionId, result: { capabilities: parseJson(existingSession.capabilitiesJson, {}) } }
+    : await postMcpRpc({
     server: input.server,
     token,
     payload: {
@@ -873,25 +1302,74 @@ async function mcpRpc(input: {
         clientInfo: { name: "admin-base", version: "0.1.0" },
       },
     },
-  });
-  await postMcpRpc({
-    server: input.server,
-    token,
-    sessionId: initialized.sessionId,
-    payload: { jsonrpc: "2.0", method: "notifications/initialized" },
-  });
-  const response = await postMcpRpc({
-    server: input.server,
-    token,
-    sessionId: initialized.sessionId,
-    payload: {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: input.method,
-      params: input.params ?? {},
-    },
-  });
-  return response.result;
+    userId: input.userId,
+    });
+  const rawCapabilities = (initialized.result as Record<string, unknown> | null)?.capabilities;
+  const capabilities =
+    rawCapabilities && typeof rawCapabilities === "object" && !Array.isArray(rawCapabilities)
+      ? (rawCapabilities as Record<string, unknown>)
+      : {};
+  assertMcpCapability(input.method, capabilities);
+  // Some compliant local MCP gateways do not return a transport session header. Keep a
+  // client-owned pool key so the connection can still be reused without violating NOT NULL.
+  const negotiatedSessionId = initialized.sessionId || crypto.randomUUID();
+  if (!existingSession) {
+    await postMcpRpc({
+      server: input.server,
+      token,
+      sessionId: negotiatedSessionId,
+      payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+      userId: input.userId,
+    });
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_mcp_session
+         (server_id, connection_id, user_id, remote_session_id, capabilities_json, last_used_at)
+         VALUES (?, ?, ?, ?, ?, now())
+         ON CONFLICT (server_id, user_id) DO UPDATE SET remote_session_id = EXCLUDED.remote_session_id,
+           connection_id = EXCLUDED.connection_id, capabilities_json = EXCLUDED.capabilities_json,
+           status = 'active', last_used_at = now(), updated_at = now()`,
+      )
+      .run(
+        input.server.id,
+        null,
+        input.userId ?? null,
+        negotiatedSessionId,
+        JSON.stringify(capabilities),
+      );
+  } else {
+    await sqlite
+      .prepare("UPDATE sys_ai_mcp_session SET last_used_at = now(), updated_at = now() WHERE server_id = ? AND (user_id = ? OR user_id IS NULL) AND status = 'active'")
+      .run(input.server.id, input.userId ?? null);
+  }
+  try {
+    const response = await postMcpRpc({
+      server: input.server,
+      token,
+      sessionId: negotiatedSessionId,
+      payload: {
+        jsonrpc: "2.0",
+        id: crypto.randomUUID(),
+        method: input.method,
+        params: input.params ?? {},
+      },
+      userId: input.userId,
+    });
+    return response.result;
+  } catch (error) {
+    // Remote MCP servers may evict an idle session. Invalidate only this user's pool entry,
+    // then perform one clean initialize handshake. Never retry recursively more than once.
+    if (existingSession && !input.skipSessionRetry) {
+      await sqlite
+        .prepare(
+          `UPDATE sys_ai_mcp_session SET status = 'stale', updated_at = now()
+           WHERE server_id = ? AND (user_id = ? OR user_id IS NULL) AND remote_session_id = ?`,
+        )
+        .run(input.server.id, input.userId ?? null, initialized.sessionId);
+      return mcpRpc({ ...input, skipSessionRetry: true });
+    }
+    throw error;
+  }
 }
 
 function safeMcpToolCode(serverCode: string, remoteName: string) {
@@ -911,14 +1389,16 @@ export async function syncAiMcpTools(input: { serverId: number; userId: number }
   await sqlite.transaction(async (tx) => {
     for (const remote of tools) {
       const inputSchemaJson = remote.inputSchema ? JSON.stringify(remote.inputSchema) : null;
+      const schemaHash = crypto.createHash("sha256").update(`${inputSchemaJson ?? ""}\n${remote.description ?? ""}`).digest("hex");
       const mcpTool = (await tx
         .prepare(
           `INSERT INTO sys_ai_mcp_tool
-           (server_id, remote_name, display_name, description, input_schema_json, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, now())
+           (server_id, remote_name, display_name, description, input_schema_json, schema_hash, lifecycle, first_seen_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'discovered', now(), now())
            ON CONFLICT (server_id, remote_name) DO UPDATE SET display_name = EXCLUDED.display_name,
              description = EXCLUDED.description, input_schema_json = EXCLUDED.input_schema_json,
-             last_seen_at = now(), updated_at = now()
+             lifecycle = CASE WHEN sys_ai_mcp_tool.schema_hash IS NOT NULL AND sys_ai_mcp_tool.schema_hash <> EXCLUDED.schema_hash THEN 'stale' ELSE sys_ai_mcp_tool.lifecycle END,
+             schema_hash = EXCLUDED.schema_hash, last_seen_at = now(), updated_at = now()
            RETURNING id, allowlisted, status, risk_level AS "riskLevel",
              approval_required AS "approvalRequired"`,
         )
@@ -928,6 +1408,7 @@ export async function syncAiMcpTools(input: { serverId: number; userId: number }
           remote.title || remote.name,
           remote.description || null,
           inputSchemaJson,
+          schemaHash,
         )) as {
         id: number;
         allowlisted: boolean;
@@ -935,6 +1416,12 @@ export async function syncAiMcpTools(input: { serverId: number; userId: number }
         riskLevel: string;
         approvalRequired: boolean;
       };
+      await tx
+        .prepare(
+          `INSERT INTO sys_ai_mcp_tool_version (tool_id, schema_hash, input_schema_json, description)
+           VALUES (?, ?, ?, ?) ON CONFLICT (tool_id, schema_hash) DO NOTHING`,
+        )
+        .run(mcpTool.id, schemaHash, inputSchemaJson, remote.description || null);
       const code = safeMcpToolCode(server.code, remote.name);
       await tx
         .prepare(
@@ -1023,13 +1510,25 @@ export async function setAiMcpToolPolicy(input: {
 }) {
   const tool = (await sqlite
     .prepare(
-      `UPDATE sys_ai_mcp_tool SET allowlisted = ?, risk_level = ?, approval_required = ?,
-       status = ?, updated_at = now() WHERE id = ? RETURNING server_id AS "serverId", remote_name AS "remoteName"`,
+      `SELECT server_id AS "serverId", remote_name AS "remoteName", lifecycle
+       FROM sys_ai_mcp_tool WHERE id = ?`,
     )
-    .get(input.allowlisted, input.riskLevel, input.approvalRequired, input.status, input.id)) as
-    | { serverId: number; remoteName: string }
+    .get(input.id)) as
+    | { serverId: number; remoteName: string; lifecycle: string }
     | undefined;
   if (!tool) throw new HTTPException(404, { message: "MCP Tool 不存在" });
+  const lifecycle = !input.allowlisted || input.status !== 1
+    ? "revoked"
+    : tool.lifecycle === "stale"
+      ? "approved"
+      : "active";
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_mcp_tool SET allowlisted = ?, risk_level = ?, approval_required = ?,
+       status = ?, lifecycle = ?, disabled_at = CASE WHEN ? = 'revoked' THEN now() ELSE NULL END,
+       updated_at = now() WHERE id = ?`,
+    )
+    .run(input.allowlisted, input.riskLevel, input.approvalRequired, input.status, lifecycle, lifecycle, input.id);
   await sqlite
     .prepare(
       `UPDATE sys_ai_tool SET risk_level = ?, approval_required = ?, status = ?, updated_by = ?,
@@ -1039,7 +1538,7 @@ export async function setAiMcpToolPolicy(input: {
     .run(
       input.riskLevel,
       input.approvalRequired,
-      input.allowlisted && input.status === 1 ? 1 : 0,
+      lifecycle === "active" ? 1 : 0,
       input.userId,
       String(input.id),
     );
@@ -1073,6 +1572,101 @@ export async function executeMcpGatewayTool(input: {
     params: { name: policy.remoteName, arguments: input.arguments },
     userId: input.userId,
   });
+}
+
+export async function provisionInternalSystemMcp(input: { origin: string; userId: number }) {
+  const origin = new URL(input.origin).origin;
+  const endpointUrl = `${origin}/api/system/ai/governance/mcp/internal`;
+  const tokenUrl = `${origin}/api/system/ai/governance/mcp/internal/oauth/token`;
+  const clientId = "admin-base-system-client";
+  const clientSecret = crypto.randomBytes(32).toString("base64url");
+  const existing = (await sqlite
+    .prepare("SELECT id FROM sys_ai_mcp_server WHERE code = ? AND deleted_at IS NULL LIMIT 1")
+    .get(INTERNAL_SYSTEM_MCP_CODE)) as { id: number } | undefined;
+  const serverId = await saveAiMcpServer({
+    id: existing?.id,
+    userId: input.userId,
+    trustedInternal: true,
+    payload: {
+      name: "Admin Base 系统数据",
+      code: INTERNAL_SYSTEM_MCP_CODE,
+      endpointUrl,
+      transport: "streamable_http",
+      oauthMode: "client_credentials",
+      clientId,
+      clientSecret,
+      tokenUrl,
+      scopes: "system.read",
+      status: "active",
+    },
+  });
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_mcp_connection SET status = 'revoked', revoked_at = now(),
+       access_token_encrypted = NULL, refresh_token_encrypted = NULL, updated_at = now()
+       WHERE server_id = ? AND status <> 'revoked'`,
+    )
+    .run(serverId);
+  const connection = await connectAiMcpServer({ serverId, userId: input.userId });
+  const sync = await syncAiMcpTools({ serverId, userId: input.userId });
+  const mcpTools = (await sqlite
+    .prepare("SELECT id FROM sys_ai_mcp_tool WHERE server_id = ? ORDER BY id")
+    .all(serverId)) as Array<{ id: number }>;
+  for (const tool of mcpTools) {
+    await setAiMcpToolPolicy({
+      id: tool.id,
+      userId: input.userId,
+      allowlisted: true,
+      riskLevel: "low",
+      approvalRequired: false,
+      status: 1,
+    });
+  }
+  const mirroredTools = (await sqlite
+    .prepare(
+      `SELECT id FROM sys_ai_tool WHERE handler_key = 'mcp_gateway' AND status = 1
+       AND config_json::jsonb->>'serverId' = ? AND deleted_at IS NULL ORDER BY id`,
+    )
+    .all(String(serverId))) as Array<{ id: number }>;
+  const existingAgent = (await sqlite
+    .prepare(
+      `SELECT id, model_id AS "modelId" FROM sys_ai_agent
+       WHERE code = ? AND deleted_at IS NULL LIMIT 1`,
+    )
+    .get(INTERNAL_SYSTEM_MCP_AGENT_CODE)) as { id: number; modelId: number | null } | undefined;
+  const agentId = await saveAiAgent({
+    id: existingAgent?.id,
+    name: "系统数据盘点助手",
+    code: INTERNAL_SYSTEM_MCP_AGENT_CODE,
+    description: "通过内置只读 MCP 查询后台页面、菜单、角色权限和人员组织。",
+    instructions: [
+      "你是 Admin Base 系统数据盘点助手。",
+      "回答系统现状问题时，必须先调用相应 MCP Tool 获取实时数据，不得凭空猜测。",
+      "页面和菜单以 sys_rule 查询结果为准；人员查询不得推断或输出未由 Tool 返回的联系方式。",
+      "盘点完整页面或菜单时，调用 list_pages/list_menu_tree 必须传 includeHidden=true；这些 hidden 节点用于路由组织，不代表页面无效。",
+      "这些 Tool 全部只读。需要修改用户、角色、菜单或权限时，只说明应由管理员在哪个页面操作，不得声称已经修改。",
+      "每次最多调用一个 Tool，不要并行请求多个 Tool；需要多项信息时，等待前一个 Tool 返回后再继续下一个。",
+      "总结时先给数量和结论，再列关键页面、角色或人员；数据较多时说明分页条件。",
+    ].join("\n"),
+    modelId: existingAgent?.modelId ?? null,
+    temperatureMilli: 200,
+    maxOutputTokens: null,
+    maxSteps: 10,
+    status: 1,
+    sort: 30,
+    toolIds: mirroredTools.map((tool) => tool.id),
+    userId: input.userId,
+  });
+  await sqlite
+    .prepare("UPDATE sys_ai_agent SET is_system = true, updated_at = now() WHERE id = ?")
+    .run(agentId);
+  return {
+    serverId,
+    connectionId: connection.connectionId,
+    agentId,
+    discoveredTools: sync.discovered,
+    allowedTools: mirroredTools.length,
+  };
 }
 
 export async function listAiCircuits() {
@@ -1460,7 +2054,13 @@ export async function listAiJobs(input: { page?: number; pageSize?: number; user
        FROM sys_ai_job job ${filter} ORDER BY job.created_at DESC, job.id DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, pageSize, (page - 1) * pageSize);
-  return { data, page, pageSize, total: Number(count.total) };
+  return {
+    data,
+    page,
+    pageSize,
+    total: Number(count.total),
+    workerHealth: await getAiWorkerQueueHealth(),
+  };
 }
 
 export async function retryAiJob(id: number) {

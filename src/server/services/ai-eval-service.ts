@@ -523,6 +523,9 @@ async function executeAgentCase(input: {
   let usage: Record<string, unknown> = {};
   let approvalDenied = false;
   let finishReason = "stop";
+  const evalAbortController = new AbortController();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let heartbeatError: unknown = null;
   try {
     runtime = await createAiAgentStream({
       agentId: agent.id,
@@ -536,10 +539,21 @@ async function executeAgentCase(input: {
       modelId: agent.modelId,
       maxOutputTokens: agent.maxOutputTokens ?? undefined,
       temperature: agent.temperatureMilli / 1000,
-      abortSignal: AbortSignal.timeout(10 * 60 * 1000),
+      abortSignal: AbortSignal.any([
+        evalAbortController.signal,
+        AbortSignal.timeout(10 * 60 * 1000),
+      ]),
       abilities: input.abilities,
       requestId: input.requestId,
     });
+    if (runtime.heartbeat) {
+      heartbeatTimer = setInterval(() => {
+        void runtime?.heartbeat().catch((error: unknown) => {
+          heartbeatError = error;
+          evalAbortController.abort(error);
+        });
+      }, 30_000);
+    }
     for await (const part of runtime.stream.fullStream) {
       if (part.type === "text-delta") {
         output += part.text;
@@ -555,6 +569,7 @@ async function executeAgentCase(input: {
           toolName: part.toolCall.toolName,
           toolCallId: part.toolCall.toolCallId,
           input: part.toolCall.input,
+          leaseOwner: runtime.leaseOwner,
         });
         const approvalId = await createToolApproval({
           runId: runtime.runId,
@@ -565,6 +580,7 @@ async function executeAgentCase(input: {
           toolName: part.toolCall.toolName,
           toolCallId: part.toolCall.toolCallId,
           toolInput: part.toolCall.input,
+          leaseOwner: runtime.leaseOwner,
         });
         await decideToolApproval({
           id: approvalId,
@@ -573,6 +589,7 @@ async function executeAgentCase(input: {
           reason: "Eval v1 不在无人值守运行中批准工具",
         });
       } else if (part.type === "finish-step") {
+        if (approvalDenied) continue;
         await appendAgentRunStep({
           runId: runtime.runId,
           stepNo: runtime.nextStepNo(),
@@ -580,6 +597,7 @@ async function executeAgentCase(input: {
           status: "completed",
           usage: part.usage,
           durationMs: Math.round(part.performance.stepTimeMs),
+          leaseOwner: runtime.leaseOwner,
         });
       } else if (part.type === "finish") {
         finishReason = part.finishReason;
@@ -609,6 +627,7 @@ async function executeAgentCase(input: {
       usage,
       durationMs,
       errorMessage: approvalDenied ? "Eval v1 不执行需要人工审批的工具" : null,
+      leaseOwner: runtime.leaseOwner,
     });
     return { agentRunId: runtime.runId, output, approvalDenied };
   } catch (error) {
@@ -632,13 +651,15 @@ async function executeAgentCase(input: {
         id: runId,
         status: "failed",
         outputMessageId: assistantMessageId,
-        errorMessage: message,
+        errorMessage: heartbeatError ? String(heartbeatError) : message,
+        leaseOwner: runtime?.leaseOwner,
       });
     }
     throw Object.assign(error instanceof Error ? error : new Error(message), {
       agentRunId: runId || null,
     });
   } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     await softDeleteAiChatSession({ id: sessionId, userId: input.userId });
   }
 }

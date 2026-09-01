@@ -69,8 +69,11 @@ const operationsByMethod = {
     "/api/system/ai/eval/runs/{id}",
     "/api/system/ai/eval/runs/{id}/results",
     "/api/system/ai/workflow/definitions",
+    "/api/system/ai/workflow/visual/definitions",
+    "/api/system/ai/workflow/visual/definitions/{id}",
     "/api/system/ai/workflow/runs",
     "/api/system/ai/workflow/runs/{id}",
+    "/api/system/ai/workflow/runs/{id}/events",
     "/api/system/ai/chat/options",
     "/api/system/ai/chat/runtime-config",
     "/api/system/ai/chat/sessions",
@@ -78,6 +81,7 @@ const operationsByMethod = {
     "/api/system/ai/chat/sessions/{id}/export",
     "/api/system/ai/chat/sessions/{id}/messages",
     "/api/system/ai/chat/sessions/{id}/run/latest",
+    "/api/system/ai/chat/sessions/{id}/runs/{runId}/events",
     "/api/system/ai/knowledge",
     "/api/system/ai/knowledge/{id}/documents",
     "/api/system/ai/knowledge/{id}/source-files",
@@ -87,13 +91,16 @@ const operationsByMethod = {
     "/api/system/ai/notebook/source-options",
     "/api/system/ai/notebook/{id}",
     "/api/system/ai/notebook/{id}/sources",
+    "/api/system/ai/notebook/{id}/sources/search/candidates",
     "/api/system/ai/notebook/{id}/artifacts",
     "/api/system/ai/notebook/{id}/members",
     "/api/system/ai/notebook/{id}/research",
     "/api/system/ai/notebook/{id}/research/{runId}",
     "/api/system/ai/governance/options",
     "/api/system/ai/governance/memories",
+    "/api/system/ai/governance/memory-candidates",
     "/api/system/ai/governance/skills",
+    "/api/system/ai/governance/skills/{id}/versions",
     "/api/system/ai/governance/mcp/servers",
     "/api/system/ai/governance/mcp/connections",
     "/api/system/ai/governance/mcp/tools",
@@ -192,6 +199,7 @@ const operationsByMethod = {
     "/api/system/ai/notebook/{id}/sources/website",
     "/api/system/ai/notebook/{id}/sources/search",
     "/api/system/ai/notebook/{id}/sources/search/import",
+    "/api/system/ai/notebook/{id}/sources/search/candidates/{candidateId}/reject",
     "/api/system/ai/notebook/{id}/research",
     "/api/system/ai/notebook/{id}/ask",
     "/api/system/ai/notebook/{id}/artifacts",
@@ -199,9 +207,23 @@ const operationsByMethod = {
     "/api/system/ai/notebook/artifacts/{id}/regenerate",
     "/api/system/ai/governance/memories",
     "/api/system/ai/governance/skills",
+    "/api/system/ai/governance/skills/{id}/versions",
+    "/api/system/ai/governance/skills/{id}/versions/{version}/publish",
+    "/api/system/ai/governance/skills/{id}/versions/{version}/rollback",
     "/api/system/ai/governance/mcp/servers",
     "/api/system/ai/governance/mcp/servers/{id}/connect",
     "/api/system/ai/governance/mcp/servers/{id}/sync",
+    "/api/system/ai/governance/mcp/internal/oauth/token",
+    "/api/system/ai/governance/mcp/internal",
+    "/api/system/ai/governance/mcp/internal/provision",
+    "/api/system/ai/governance/memory-candidates/{id}/decision",
+    "/api/system/ai/workflow/visual/versions",
+    "/api/system/ai/workflow/assets",
+    "/api/system/ai/workflow/visual/definitions/{id}/versions/{version}/publish",
+    "/api/system/ai/workflow/visual/definitions/{id}/runs",
+    "/api/system/ai/workflow/runs/{id}/waits/{waitId}/decision",
+    "/api/system/ai/workflow/runs/{id}/events",
+    "/api/system/ai/workflow/runs/{id}/resume",
     "/api/system/ai/governance/circuits/reset",
     "/api/system/ai/governance/quotas",
     "/api/system/ai/governance/billing/adjustments",
@@ -395,6 +417,83 @@ function coverageFor(path: string): CoverageMode {
 
 function createCase(method: string, path: string): ApiTestCase {
   const operation = `${method} ${path}`;
+  if (operation === "POST /api/system/ai/governance/mcp/internal/oauth/token") {
+    return {
+      operation,
+      area: "ai / governance",
+      success: [
+        "启用的内置 Server 使用正确 Client Credentials 换取短期 Access Token 和可轮换 Refresh Token",
+        "Refresh Token grant 校验签名、类型和有效期后签发新 Token，响应符合 OAuth token 结构",
+      ],
+      failures: [
+        "Client ID、Client Secret、grant_type 或 Refresh Token 无效时返回 4xx，不签发任何 Token",
+        "Server 被停用、删除或轮换 Secret 后，旧凭据和旧 Token 立即失效",
+      ],
+      dataAssertions: [
+        "Token 只绑定当前内置 MCP Server、Token 类型和过期时间，scope 固定为 system.read",
+        "响应不包含保存的加密 Secret、Server 数据库字段或认证用户资料",
+      ],
+      security: [
+        "接口不使用后台登录 Token，而使用独立 Client Credentials；Secret 比较采用固定时间摘要比较",
+        "Client Secret、Access Token 和 Refresh Token 不写入 operation log 或普通请求日志",
+      ],
+      sideEffects: [
+        "换证不修改业务数据，重新部署内置 MCP 时由治理动作负责轮换 Secret 和撤销旧连接",
+      ],
+      coverage: "automated",
+    };
+  }
+  if (operation === "POST /api/system/ai/governance/mcp/internal") {
+    return {
+      operation,
+      area: "ai / governance",
+      success: [
+        "有效 MCP Access Token 和调用用户可完成 initialize、initialized、ping、tools/list 与 tools/call",
+        "五个 Tool 可读取系统概览、页面、菜单树、角色权限和脱敏人员组织数据",
+      ],
+      failures: [
+        "Token 缺失、签名错误、过期或 Server 停用时返回 401；调用用户无效或缺少查询权限时返回 403",
+        "未知 Tool、非法参数和未知 JSON-RPC method 返回受控错误，不能转化为任意 SQL 或写操作",
+      ],
+      dataAssertions: [
+        "页面、菜单和权限来自 sys_rule；人员结果支持分页并只包含用户名、昵称、部门、角色和状态",
+        "响应不含 passwordHash、Token、手机号、邮箱或其他认证凭据",
+      ],
+      security: [
+        "MCP Client 与当前调用用户同时校验，用户必须启用并拥有 system.aiGovernance.query",
+        "只暴露固定只读 Tool 注册表，不接受 SQL、表名、URL、脚本或任意 handler",
+      ],
+      sideEffects: ["所有 tools/call 都是数据库只读查询，不修改菜单、权限、角色、用户或部门数据"],
+      coverage: "automated",
+    };
+  }
+  if (operation === "POST /api/system/ai/governance/mcp/internal/provision") {
+    return {
+      operation,
+      area: "ai / governance",
+      success: [
+        "一键创建或更新 admin-base-system Server，完成连接、Tool 同步、allowlist 和系统 Agent 绑定",
+        "重复部署轮换 Client Secret、撤销旧连接并修复五个 Tool 策略，不创建重复 Server 或 Agent",
+      ],
+      failures: [
+        "未登录返回 401，缺少 update、execute 或 approve 任一权限返回 403且不改变现有配置",
+        "连接、同步或 Agent 保存失败时返回明确错误，不回显 Client Secret 或 OAuth Token",
+      ],
+      dataAssertions: [
+        "五个 MCP Tool 均为 enabled、allowlisted、low risk、无需审批，并映射到同一系统 Agent",
+        "Server、活动 Connection、镜像 Tool、Agent 及 Agent-Tool 关联与响应 ID 一致",
+      ],
+      security: [
+        "部署要求 system.aiGovernance.update、execute 和 approve 三项权限",
+        "生成的 Client Secret 只加密保存，响应、操作日志和 UI 都不得回显",
+      ],
+      sideEffects: [
+        "写入 critical 级 operation log，details 只记录固定 code 和 read_only 模式",
+        "旧活动连接被撤销，旧 Access/Refresh Token 被清空；系统 Agent 作为内置资源禁止误删",
+      ],
+      coverage: "automated",
+    };
+  }
   if (operation === "POST /api/system/ai/chat/sessions/{sessionId}/client-actions/{id}/result") {
     return {
       operation,

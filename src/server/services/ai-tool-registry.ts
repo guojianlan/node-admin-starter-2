@@ -4,6 +4,8 @@ import { executeWebSearch, hasActiveWebSearchProvider } from "./ai-web-search-se
 import { executeMcpGatewayTool } from "./ai-governance-service";
 import { searchKnowledge } from "./ai-knowledge-service";
 import { recordBackgroundOperationLog } from "./operation-log-service";
+import { executeImageTransform } from "./ai-image-service";
+import { hasActiveAiImageModel } from "./ai-provider-service";
 import {
   executeModuleAgentTool,
   getModuleAgentInputSchema,
@@ -20,6 +22,7 @@ export const coreAiToolHandlerKeys = [
   "operation_log_summary",
   "web_search",
   "knowledge_search",
+  "image_transform",
   "mcp_gateway",
   "browser_location",
 ] as const;
@@ -65,6 +68,13 @@ const knowledgeSearchInputSchema = z.object({
   query: z.string().trim().min(1).max(2000).describe("要从当前用户可访问知识库检索的问题"),
   knowledgeBaseIds: z.array(z.number().int().positive()).max(20).optional(),
   limit: z.number().int().min(1).max(12).default(6),
+});
+const imageTransformInputSchema = z.object({
+  fileId: z.number().int().positive().describe("输入图片的文件 ID"),
+  instruction: z.string().trim().min(1).max(2000).describe("图片改造要求，例如变成夸张搞怪漫画风格"),
+  modelId: z.number().int().positive().optional().describe("可选的 Image 模型 ID；不填使用第一个启用的 Image 模型"),
+  size: z.string().regex(/^\d+x\d+$/).optional().describe("可选输出尺寸，例如 1024x1024"),
+  style: z.string().trim().max(80).optional().describe("可选风格提示"),
 });
 const mcpGatewayInputSchema = z.record(z.string(), z.unknown());
 
@@ -303,6 +313,21 @@ const coreRegistry: Record<(typeof coreAiToolHandlerKeys)[number], AiToolRegistr
       };
     },
   },
+  image_transform: {
+    label: "图片创意改造",
+    description: "读取当前用户有权访问的图片，调用已配置的 Image Provider 生成改造结果并保存为新文件",
+    inputSchema: imageTransformInputSchema,
+    riskLevel: "medium",
+    approvalRequired: false,
+    systemOnly: true,
+    execute: async (input, context) =>
+      executeImageTransform(
+        {
+          ...(input as z.infer<typeof imageTransformInputSchema>),
+        },
+        context,
+      ),
+  },
   mcp_gateway: {
     label: "MCP Gateway",
     description: "执行已同步并进入 allowlist 的远程 MCP Tool",
@@ -345,6 +370,7 @@ export function listAiToolRegistryOptions() {
 
 export async function isAiToolRuntimeAvailable(handlerKey: string, dbClient: DbClient) {
   if (handlerKey === "web_search") return hasActiveWebSearchProvider(dbClient);
+  if (handlerKey === "image_transform") return hasActiveAiImageModel();
   return true;
 }
 

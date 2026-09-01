@@ -19,6 +19,19 @@ const envSchema = z
     ADMIN_BASE_SECRET_KEY: z.string().trim().optional(),
     ADMIN_BASE_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(7),
     ADMIN_BASE_ADMIN_PASSWORD: z.string().optional(),
+    ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(86_400)
+      .default(60),
+    ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(3_600)
+      .default(30),
+    ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL: z.union([z.url(), z.literal("")]).optional(),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
@@ -73,6 +86,9 @@ export type AdminBaseEnv = {
   adminBaseSecretKey: string;
   adminBaseTokenTtlDays: number;
   adminBaseAdminPassword: string;
+  aiWorkerStalledAfterSeconds: number;
+  aiWorkerMonitorIntervalSeconds: number;
+  aiWorkerAlertWebhookUrl: string | null;
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
 };
 
@@ -89,6 +105,9 @@ function normalizeEnv(value: z.infer<typeof envSchema>): AdminBaseEnv {
     adminBaseSecretKey: value.ADMIN_BASE_SECRET_KEY || DEFAULT_ADMIN_BASE_SECRET_KEY,
     adminBaseTokenTtlDays: value.ADMIN_BASE_TOKEN_TTL_DAYS,
     adminBaseAdminPassword: value.ADMIN_BASE_ADMIN_PASSWORD || DEFAULT_ADMIN_BASE_ADMIN_PASSWORD,
+    aiWorkerStalledAfterSeconds: value.ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS,
+    aiWorkerMonitorIntervalSeconds: value.ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS,
+    aiWorkerAlertWebhookUrl: value.ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL?.trim() || null,
     logLevel: value.LOG_LEVEL,
   };
 }

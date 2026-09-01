@@ -7,6 +7,7 @@ import { sqlite } from "@/server/db";
 import {
   chunkKnowledgeText,
   getVisibleKnowledgeBase,
+  indexKnowledgeDocument,
   knowledgeRetrievalPolicy,
   listAvailableKnowledgeSourceFiles,
   searchKnowledge,
@@ -244,6 +245,58 @@ describe("AI Knowledge and RAG", () => {
       { headers: authHeaders(token) },
     );
     expect(invalidPage.status).toBe(400);
+  });
+
+  it("queues versioned parser work and fences a stale document attempt", async () => {
+    await configureRagModels();
+    const token = await login();
+    const created = await readJson<{ id: number }>(
+      await app.request("/api/system/ai/knowledge", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          name: "异步解析版本测试",
+          code: "async-parser-versioning",
+          scopeType: "global",
+        }),
+      }),
+    );
+    const knowledgeBaseId = Number(created.data?.id);
+    const fileId = await createTextFile("Parser version one", "async-parser.md");
+    const attached = await readJson<{ id: number }>(
+      await app.request(`/api/system/ai/knowledge/${knowledgeBaseId}/documents`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ fileId }),
+      }),
+    );
+    const documentId = Number(attached.data?.id);
+    const queued = await readJson<{ queued: boolean; jobId: number; documentId: number; version: number }>(
+      await app.request(`/api/system/ai/knowledge/documents/${documentId}/index?async=1`, {
+        method: "POST",
+        headers: authHeaders(token, "knowledge-parser-queue"),
+      }),
+    );
+    expect(queued.data).toMatchObject({ queued: true, documentId, version: 1, jobId: expect.any(Number) });
+    const jobId = Number(queued.data?.jobId);
+    const job = (await sqlite
+      .prepare("SELECT job_type AS \"jobType\", payload_json AS \"payloadJson\" FROM sys_ai_job WHERE id = ?")
+      .get(jobId)) as { jobType: string; payloadJson: string };
+    expect(job.jobType).toBe("knowledge_parser");
+    expect(JSON.parse(job.payloadJson)).toMatchObject({ documentId, expectedDocumentVersion: 1 });
+
+    await sqlite
+      .prepare("UPDATE sys_ai_document SET version = 2, status = 'pending' WHERE id = ?")
+      .run(documentId);
+    await expect(
+      indexKnowledgeDocument({ documentId, userId: 1, expectedDocumentVersion: 1 }),
+    ).rejects.toThrow("文档版本已变化");
+    expect(
+      (await sqlite.prepare("SELECT version, status FROM sys_ai_document WHERE id = ?").get(documentId)) as {
+        version: number;
+        status: string;
+      },
+    ).toEqual({ version: 2, status: "pending" });
   });
 
   it("imports an independent Knowledge copy from the ordinary file library", async () => {
@@ -524,7 +577,6 @@ describe("AI Knowledge and RAG", () => {
       body: JSON.stringify({ fileId }),
     });
     expect(duplicate.status).not.toBe(200);
-
     const indexed = await app.request(`/api/system/ai/knowledge/documents/${documentId}/index`, {
       method: "POST",
       headers: authHeaders(token, "knowledge-index"),

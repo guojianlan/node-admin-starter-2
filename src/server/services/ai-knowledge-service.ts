@@ -297,6 +297,40 @@ export async function updateKnowledgeBase(input: {
       input.user.id,
       input.id,
     );
+  await invalidateNotebookSourcesForKnowledgeBase(input.id);
+}
+
+async function invalidateNotebookSourcesForKnowledgeBase(knowledgeBaseId: number) {
+  // A visibility change changes the effective source set for every Notebook that references
+  // this Knowledge Base, even when no source row was added or removed.
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook notebook
+       SET source_scope_version = notebook.source_scope_version + 1,
+           updated_at = now()
+       WHERE notebook.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM sys_ai_notebook_source source
+           WHERE source.notebook_id = notebook.id
+             AND source.knowledge_base_id = ? AND source.deleted_at IS NULL
+         )`,
+    )
+    .run(knowledgeBaseId);
+}
+
+async function invalidateNotebookSourcesForDocument(documentId: number) {
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook notebook
+       SET source_scope_version = notebook.source_scope_version + 1, updated_at = now()
+       WHERE notebook.deleted_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM sys_ai_notebook_source source
+           WHERE source.notebook_id = notebook.id
+             AND source.document_id = ? AND source.deleted_at IS NULL
+         )`,
+    )
+    .run(documentId);
 }
 
 export async function deleteKnowledgeBase(input: { id: number; userId: number }) {
@@ -308,6 +342,7 @@ export async function deleteKnowledgeBase(input: { id: number; userId: number })
        WHERE id = ? AND deleted_at IS NULL`,
     )
     .run(input.userId, input.id);
+  await invalidateNotebookSourcesForKnowledgeBase(input.id);
 }
 
 async function getKnowledgeFile(fileId: number) {
@@ -540,7 +575,7 @@ async function getVisibleDocument(documentId: number, userId: number) {
   return (await sqlite
     .prepare(
       `SELECT doc.id, doc.knowledge_base_id AS "knowledgeBaseId", doc.file_id AS "fileId",
-        doc.name, doc.status, kb.status AS "knowledgeBaseStatus",
+        doc.name, doc.version, doc.status, kb.status AS "knowledgeBaseStatus",
         kb.chunk_preset AS "chunkPreset", kb.chunk_size AS "chunkSize",
         kb.chunk_overlap AS "chunkOverlap", kb.chunk_config_json AS "chunkConfigJson"
        FROM sys_ai_document doc
@@ -553,6 +588,7 @@ async function getVisibleDocument(documentId: number, userId: number) {
         knowledgeBaseId: number;
         fileId: number;
         name: string;
+        version: number;
         status: KnowledgeDocumentStatus;
         chunkPreset: KnowledgeChunkPreset;
         chunkSize: number;
@@ -595,10 +631,17 @@ export async function indexKnowledgeDocument(input: {
   documentId: number;
   userId: number;
   requestId?: string | null;
+  expectedDocumentVersion?: number;
 }) {
   const document = await getVisibleDocument(input.documentId, input.userId);
   if (!document) throw new Error("知识文档不存在或无权访问");
   if (document.status === "disabled") throw new Error("已停用文档不能建立索引");
+  if (
+    input.expectedDocumentVersion != null &&
+    document.version !== input.expectedDocumentVersion
+  ) {
+    throw new Error("文档版本已变化，旧索引任务已失效");
+  }
   const file = await getKnowledgeFile(document.fileId);
   if (!file) throw new Error("源文件不存在或已进入回收站");
   await sqlite
@@ -672,13 +715,13 @@ export async function indexKnowledgeDocument(input: {
             JSON.stringify(embeddings[index] ?? []),
           );
       }
-      await tx
+      const versioned = await tx
         .prepare(
           `UPDATE sys_ai_document
            SET status = 'ready', character_count = ?, chunk_count = ?, error_message = NULL,
                chunker_version = ?, chunk_config_json = ?, indexed_at = now(),
                updated_by = ?, updated_at = now()
-           WHERE id = ?`,
+           WHERE id = ? AND version = ? RETURNING id`,
         )
         .run(
           text.length,
@@ -687,17 +730,21 @@ export async function indexKnowledgeDocument(input: {
           JSON.stringify(chunkConfig),
           input.userId,
           input.documentId,
+          document.version,
         );
+      if (!versioned.changes) throw new Error("文档版本已变化，拒绝写入旧索引");
     });
     return { characterCount: text.length, chunkCount: chunks.length };
   } catch (error) {
     const classified = classifyAiError(error);
+    // A newer document version owns the row now. Never mark that newer version
+    // failed because an older Worker attempt completed late.
     await sqlite
       .prepare(
         `UPDATE sys_ai_document SET status = 'failed', error_message = ?,
-         updated_by = ?, updated_at = now() WHERE id = ?`,
+         updated_by = ?, updated_at = now() WHERE id = ? AND version = ?`,
       )
-      .run(classified.message, input.userId, input.documentId);
+      .run(classified.message, input.userId, input.documentId, document.version);
     throw error;
   }
 }
@@ -721,6 +768,7 @@ export async function setKnowledgeDocumentStatus(input: {
       "UPDATE sys_ai_document SET status = ?, updated_by = ?, updated_at = now() WHERE id = ?",
     )
     .run(input.status, input.userId, input.documentId);
+  await invalidateNotebookSourcesForDocument(input.documentId);
 }
 
 export async function deleteKnowledgeDocument(input: { documentId: number; userId: number }) {
@@ -732,6 +780,7 @@ export async function deleteKnowledgeDocument(input: { documentId: number; userI
        updated_at = now() WHERE id = ? AND deleted_at IS NULL`,
     )
     .run(input.userId, input.documentId);
+  await invalidateNotebookSourcesForDocument(input.documentId);
 }
 
 function parseEmbedding(value: string | null) {

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   date,
+  foreignKey,
   index,
   integer,
   pgTable,
@@ -1198,6 +1199,7 @@ export const sysAiNotebook = pgTable(
       onDelete: "set null",
     }),
     systemPrompt: text("system_prompt"),
+    sourceScopeVersion: integer("source_scope_version").notNull().default(1),
     status: integer("status").notNull().default(1),
     sort: integer("sort").notNull().default(0),
     ...timestamps,
@@ -1258,6 +1260,7 @@ export const sysAiNotebookArtifact = pgTable(
       onDelete: "set null",
     }),
     modelId: integer("model_id").references(() => sysAiModel.id, { onDelete: "set null" }),
+    sourceScopeVersion: integer("source_scope_version").notNull().default(1),
     sourceSnapshotJson: text("source_snapshot_json").notNull(),
     citationsJson: text("citations_json").notNull().default("[]"),
     errorMessage: text("error_message"),
@@ -1572,6 +1575,10 @@ export const sysAiAgentRun = pgTable(
     })
       .notNull()
       .default("queued"),
+    attempt: integer("attempt").notNull().default(1),
+    leaseOwner: text("lease_owner"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     inputMessageId: integer("input_message_id"),
     outputMessageId: integer("output_message_id"),
     parentRunId: integer("parent_run_id"),
@@ -1588,6 +1595,7 @@ export const sysAiAgentRun = pgTable(
   (table) => [
     index("sys_ai_agent_run_session_id_idx").on(table.sessionId, table.id),
     index("sys_ai_agent_run_user_status_idx").on(table.userId, table.status),
+    index("sys_ai_agent_run_lease_idx").on(table.status, table.leaseUntil),
     uniqueIndex("sys_ai_agent_run_source_approval_unique").on(table.sourceApprovalId),
   ],
 );
@@ -1621,6 +1629,60 @@ export const sysAiAgentRunStep = pgTable(
   (table) => [
     index("sys_ai_agent_run_step_run_no_idx").on(table.runId, table.stepNo),
     index("sys_ai_agent_run_step_tool_call_idx").on(table.toolCallId),
+  ],
+);
+
+export const sysAiAgentRunEvent = pgTable(
+  "sys_ai_agent_run_event",
+  {
+    id: serial("id").primaryKey(),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => sysAiAgentRun.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    sequence: integer("sequence").notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_agent_run_event_sequence_unique").on(
+      table.runId,
+      table.attempt,
+      table.sequence,
+    ),
+    index("sys_ai_agent_run_event_run_id_idx").on(table.runId, table.id),
+  ],
+);
+
+export const sysAiToolExecution = pgTable(
+  "sys_ai_tool_execution",
+  {
+    id: serial("id").primaryKey(),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => sysAiAgentRun.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    toolId: integer("tool_id").references(() => sysAiTool.id, { onDelete: "set null" }),
+    toolName: text("tool_name").notNull(),
+    toolCallId: text("tool_call_id").notNull(),
+    inputJson: text("input_json"),
+    outputJson: text("output_json"),
+    errorMessage: text("error_message"),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_tool_execution_run_attempt_call_unique").on(
+      table.runId,
+      table.attempt,
+      table.toolCallId,
+    ),
+    index("sys_ai_tool_execution_run_status_idx").on(table.runId, table.status),
   ],
 );
 
@@ -1681,10 +1743,17 @@ export const sysAiWorkflowRun = pgTable(
       .notNull()
       .default("queued"),
     requestId: text("request_id"),
+    definitionId: integer("definition_id").references(() => sysAiWorkflowDefinition.id, {
+      onDelete: "set null",
+    }),
+    parentRunId: integer("parent_run_id"),
+    parentNodeId: text("parent_node_id"),
+    callDepth: integer("call_depth").notNull().default(0),
     resourceType: text("resource_type"),
     resourceId: text("resource_id"),
     inputJson: text("input_json"),
     outputJson: text("output_json"),
+    continuationJson: text("continuation_json"),
     errorMessage: text("error_message"),
     durationMs: integer("duration_ms"),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -1692,10 +1761,58 @@ export const sysAiWorkflowRun = pgTable(
     ...timestamps,
   },
   (table) => [
+    foreignKey({
+      columns: [table.parentRunId],
+      foreignColumns: [table.id],
+      name: "sys_ai_workflow_run_parent_fk",
+    }).onDelete("set null"),
     uniqueIndex("sys_ai_workflow_run_orchestrator_unique").on(table.orchestratorRunId),
     index("sys_ai_workflow_run_user_status_idx").on(table.userId, table.status),
     index("sys_ai_workflow_run_code_created_idx").on(table.workflowCode, table.createdAt),
     index("sys_ai_workflow_run_request_id_idx").on(table.requestId),
+  ],
+);
+
+export const sysAiWorkflowDefinition = pgTable(
+  "sys_ai_workflow_definition",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status", { enum: ["draft", "published", "disabled"] }).notNull().default("draft"),
+    currentVersion: integer("current_version"),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    updatedBy: integer("updated_by").references(() => sysUser.id, { onDelete: "set null" }),
+    ...timestamps,
+    ...softDelete,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_workflow_definition_code_unique").on(table.code),
+    index("sys_ai_workflow_definition_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const sysAiWorkflowDefinitionVersion = pgTable(
+  "sys_ai_workflow_definition_version",
+  {
+    id: serial("id").primaryKey(),
+    definitionId: integer("definition_id")
+      .notNull()
+      .references(() => sysAiWorkflowDefinition.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    graphJson: text("graph_json").notNull(),
+    inputSchemaJson: text("input_schema_json").notNull().default("{}"),
+    outputSchemaJson: text("output_schema_json").notNull().default("{}"),
+    compatibilityJson: text("compatibility_json").notNull().default("{}"),
+    status: text("status", { enum: ["draft", "published", "retired"] }).notNull().default("draft"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_workflow_definition_version_unique").on(table.definitionId, table.version),
+    index("sys_ai_workflow_definition_version_status_idx").on(table.definitionId, table.status),
   ],
 );
 
@@ -1727,6 +1844,97 @@ export const sysAiWorkflowRunStep = pgTable(
   ],
 );
 
+export const sysAiWorkflowWait = pgTable(
+  "sys_ai_workflow_wait",
+  {
+    id: serial("id").primaryKey(),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => sysAiWorkflowRun.id, { onDelete: "cascade" }),
+    stepId: integer("step_id").references(() => sysAiWorkflowRunStep.id, {
+      onDelete: "set null",
+    }),
+    nodeId: text("node_id").notNull(),
+    waitType: text("wait_type", {
+      enum: ["approval", "event", "timer", "child_workflow"],
+    }).notNull(),
+    childRunId: integer("child_run_id").references(() => sysAiWorkflowRun.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["pending", "approved", "rejected", "resolved", "expired", "cancelled"],
+    })
+      .notNull()
+      .default("pending"),
+    correlationKey: text("correlation_key"),
+    inputJson: text("input_json"),
+    resolutionJson: text("resolution_json"),
+    resumeAt: timestamp("resume_at", { withTimezone: true }),
+    timeoutAt: timestamp("timeout_at", { withTimezone: true }),
+    decidedBy: integer("decided_by").references(() => sysUser.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_workflow_wait_run_node_pending_unique")
+      .on(table.runId, table.nodeId)
+      .where(sql`status = 'pending'`),
+    index("sys_ai_workflow_wait_status_resume_idx").on(table.status, table.resumeAt),
+    index("sys_ai_workflow_wait_correlation_idx").on(table.correlationKey, table.status),
+    uniqueIndex("sys_ai_workflow_wait_child_pending_unique")
+      .on(table.childRunId)
+      .where(sql`child_run_id IS NOT NULL AND status = 'pending'`),
+  ],
+);
+
+export const sysAiNotebookResearchCandidate = pgTable(
+  "sys_ai_notebook_research_candidate",
+  {
+    id: serial("id").primaryKey(),
+    notebookId: integer("notebook_id")
+      .notNull()
+      .references(() => sysAiNotebook.id, { onDelete: "cascade" }),
+    workflowRunId: integer("workflow_run_id").references(() => sysAiWorkflowRun.id, {
+      onDelete: "set null",
+    }),
+    queryText: text("query_text").notNull(),
+    url: text("url").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    title: text("title").notNull(),
+    snippet: text("snippet"),
+    source: text("source"),
+    publishedAt: text("published_at"),
+    status: text("status", {
+      enum: ["candidate", "accepted", "pending", "parsing", "ready", "failed", "rejected"],
+    })
+      .notNull()
+      .default("candidate"),
+    documentId: integer("document_id").references(() => sysAiDocument.id, {
+      onDelete: "set null",
+    }),
+    notebookSourceId: integer("notebook_source_id").references(() => sysAiNotebookSource.id, {
+      onDelete: "set null",
+    }),
+    errorMessage: text("error_message"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    parsedAt: timestamp("parsed_at", { withTimezone: true }),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("sys_ai_notebook_research_candidate_url_unique")
+      .on(table.notebookId, table.canonicalUrl)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("sys_ai_notebook_research_candidate_notebook_status_idx").on(
+      table.notebookId,
+      table.status,
+      table.createdAt,
+    ),
+    index("sys_ai_notebook_research_candidate_workflow_idx").on(table.workflowRunId),
+  ],
+);
+
 export const sysAiMemory = pgTable(
   "sys_ai_memory",
   {
@@ -1750,6 +1958,11 @@ export const sysAiMemory = pgTable(
       .notNull()
       .default("active"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    importance: integer("importance").notNull().default(50),
+    normalizedKey: text("normalized_key"),
+    embeddingJson: text("embedding_json"),
+    lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
+    accessCount: integer("access_count").notNull().default(0),
     ...timestamps,
     ...softDelete,
     ...auditUsers,
@@ -1762,6 +1975,67 @@ export const sysAiMemory = pgTable(
       table.updatedAt,
     ),
     index("sys_ai_memory_expires_idx").on(table.expiresAt),
+  ],
+);
+
+export const sysAiMemoryCandidate = pgTable(
+  "sys_ai_memory_candidate",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    agentId: integer("agent_id").references(() => sysAiAgent.id, { onDelete: "cascade" }),
+    sourceSessionId: integer("source_session_id").references(() => sysAiChatSession.id, {
+      onDelete: "set null",
+    }),
+    sourceMessageId: integer("source_message_id").references(() => sysAiChatMessage.id, {
+      onDelete: "set null",
+    }),
+    content: text("content").notNull(),
+    normalizedKey: text("normalized_key").notNull(),
+    confidence: integer("confidence").notNull().default(80),
+    status: text("status", { enum: ["proposed", "accepted", "rejected", "merged", "expired"] })
+      .notNull()
+      .default("proposed"),
+    conflictGroup: text("conflict_group"),
+    embeddingJson: text("embedding_json"),
+    mergedMemoryId: integer("merged_memory_id").references(() => sysAiMemory.id, {
+      onDelete: "set null",
+    }),
+    rejectionReason: text("rejection_reason"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("sys_ai_memory_candidate_user_status_idx").on(table.userId, table.status, table.updatedAt),
+    index("sys_ai_memory_candidate_key_idx").on(table.userId, table.normalizedKey),
+  ],
+);
+
+export const sysAiRuntimeSkillVersion = pgTable(
+  "sys_ai_runtime_skill_version",
+  {
+    id: serial("id").primaryKey(),
+    skillId: integer("skill_id")
+      .notNull()
+      .references(() => sysAiRuntimeSkill.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    instructions: text("instructions").notNull(),
+    toolIdsJson: text("tool_ids_json").notNull().default("[]"),
+    agentIdsJson: text("agent_ids_json").notNull().default("[]"),
+    compatibilityJson: text("compatibility_json").notNull().default("{}"),
+    contentHash: text("content_hash").notNull(),
+    status: text("status", { enum: ["draft", "published", "retired"] })
+      .notNull()
+      .default("draft"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_runtime_skill_version_unique").on(table.skillId, table.version),
+    index("sys_ai_runtime_skill_version_status_idx").on(table.skillId, table.status),
   ],
 );
 
@@ -1875,6 +2149,10 @@ export const sysAiMcpConnection = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokeUrl: text("revoke_url"),
+    remoteSessionId: text("remote_session_id"),
+    capabilitiesJson: text("capabilities_json"),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   },
   (table) => [
     index("sys_ai_mcp_connection_server_user_idx").on(table.serverId, table.userId, table.status),
@@ -1899,11 +2177,77 @@ export const sysAiMcpTool = pgTable(
     allowlisted: boolean("allowlisted").notNull().default(false),
     status: integer("status").notNull().default(1),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    schemaHash: text("schema_hash"),
+    lifecycle: text("lifecycle", { enum: ["discovered", "approved", "active", "stale", "revoked"] })
+      .notNull()
+      .default("discovered"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("sys_ai_mcp_tool_server_remote_unique").on(table.serverId, table.remoteName),
     index("sys_ai_mcp_tool_server_status_idx").on(table.serverId, table.status, table.allowlisted),
+  ],
+);
+
+export const sysAiMcpToolVersion = pgTable(
+  "sys_ai_mcp_tool_version",
+  {
+    id: serial("id").primaryKey(),
+    toolId: integer("tool_id")
+      .notNull()
+      .references(() => sysAiMcpTool.id, { onDelete: "cascade" }),
+    schemaHash: text("schema_hash").notNull(),
+    inputSchemaJson: text("input_schema_json"),
+    description: text("description"),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_mcp_tool_version_hash_unique").on(table.toolId, table.schemaHash),
+    index("sys_ai_mcp_tool_version_tool_idx").on(table.toolId, table.discoveredAt),
+  ],
+);
+
+export const sysAiMcpSession = pgTable(
+  "sys_ai_mcp_session",
+  {
+    id: serial("id").primaryKey(),
+    serverId: integer("server_id")
+      .notNull()
+      .references(() => sysAiMcpServer.id, { onDelete: "cascade" }),
+    connectionId: integer("connection_id").references(() => sysAiMcpConnection.id, {
+      onDelete: "cascade",
+    }),
+    userId: integer("user_id").references(() => sysUser.id, { onDelete: "cascade" }),
+    remoteSessionId: text("remote_session_id").notNull(),
+    capabilitiesJson: text("capabilities_json").notNull().default("{}"),
+    status: text("status", { enum: ["active", "stale", "closed"] }).notNull().default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("sys_ai_mcp_session_scope_unique").on(table.serverId, table.userId),
+    index("sys_ai_mcp_session_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const sysAiProgressEvent = pgTable(
+  "sys_ai_progress_event",
+  {
+    id: serial("id").primaryKey(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    runId: integer("run_id"),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sys_ai_progress_event_resource_idx").on(table.resourceType, table.resourceId, table.id),
+    index("sys_ai_progress_event_run_idx").on(table.runId, table.id),
   ],
 );
 

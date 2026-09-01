@@ -68,7 +68,7 @@ pnpm install
 cp .env.example .env.local
 pnpm db:migrate
 pnpm db:seed
-pnpm dev
+pnpm dev:all
 ```
 
 访问：
@@ -86,7 +86,9 @@ admin / 123456
 ## 常用命令
 
 ```bash
-pnpm dev                 # 启动 Next + Hono
+pnpm dev                 # 只启动 Next + Hono，适合不执行后台任务的开发
+pnpm dev:all             # 启动 Next + Hono + AI Worker，Notebook 研究等后台任务推荐使用
+pnpm ai:worker:health    # 单次检查队列等待与 Worker 租约，异常时返回非零退出码
 pnpm db:migrate          # 执行 PostgreSQL 迁移
 pnpm db:seed             # 写入默认管理员、角色、菜单、权限、字典、配置、存储、邮件
 ADMIN_BASE_ALLOW_DB_RESET=true ADMIN_BASE_RESET_DATABASE_NAME=admin_base pnpm db:reset

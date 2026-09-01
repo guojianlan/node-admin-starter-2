@@ -21,8 +21,11 @@ import {
   listAiMcpConnections,
   listAiMcpTools,
   listAiMemories,
+  listAiMemoryCandidates,
   listAiQuotaPolicies,
   listAiRuntimeSkills,
+  listAiRuntimeSkillVersions,
+  provisionInternalSystemMcp,
   resetAiCircuit,
   retryAiJob,
   saveAiCircuitPolicy,
@@ -30,11 +33,19 @@ import {
   saveAiMemory,
   saveAiQuotaPolicy,
   saveAiRuntimeSkill,
+  createAiRuntimeSkillVersion,
+  publishAiRuntimeSkillVersion,
+  rollbackAiRuntimeSkillVersion,
+  decideAiMemoryCandidate,
   settleAiBillingEntry,
   setAiMcpToolPolicy,
   syncAiMcpTools,
 } from "@/server/services/ai-governance-service";
 import { enqueueAiJob } from "@/server/services/ai-job-service";
+import {
+  handleInternalSystemMcpRpc,
+  issueInternalSystemMcpToken,
+} from "@/server/services/ai-system-mcp-service";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 
 const id = z.coerce.number().int().positive();
@@ -47,6 +58,7 @@ const memorySchema = z.object({
   sourceMessageId: id.nullable().optional(),
   status: z.enum(["active", "archived"]).default("active"),
   expiresAt: z.string().datetime().nullable().optional(),
+  importance: z.coerce.number().int().min(0).max(100).default(50),
 });
 const skillSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -76,6 +88,7 @@ const mcpServerSchema = z.object({
   clientSecret: z.string().max(4000).nullable().optional(),
   authorizationUrl: z.string().trim().url().max(2000).nullable().optional(),
   tokenUrl: z.string().trim().url().max(2000).nullable().optional(),
+  revokeUrl: z.string().trim().url().max(2000).nullable().optional(),
   scopes: z.string().trim().max(2000).nullable().optional(),
   status: z.enum(["draft", "active", "disabled"]).default("draft"),
 });
@@ -261,6 +274,127 @@ aiGovernanceRoutes.delete(
 );
 
 aiGovernanceRoutes.get(
+  "/ai/governance/skills/:id/versions",
+  authRequired(),
+  ability("system.aiGovernance.query"),
+  async (c) => c.json(success(await listAiRuntimeSkillVersions(id.parse(c.req.param("id"))))),
+);
+
+aiGovernanceRoutes.post(
+  "/ai/governance/skills/:id/versions",
+  authRequired(),
+  ability("system.aiGovernance.update"),
+  async (c) => {
+    const skillId = id.parse(c.req.param("id"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiSkill",
+        action: "createVersion",
+        resource: "/ai/governance/skills/versions",
+        resourceId: skillId,
+        riskLevel: "high",
+        details: { skillId },
+      },
+      () => createAiRuntimeSkillVersion({ skillId, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Skill 草稿版本已创建"));
+  },
+);
+
+aiGovernanceRoutes.post(
+  "/ai/governance/skills/:id/versions/:version/publish",
+  authRequired(),
+  ability("system.aiGovernance.update"),
+  async (c) => {
+    const skillId = id.parse(c.req.param("id"));
+    const version = id.parse(c.req.param("version"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiSkill",
+        action: "publishVersion",
+        resource: "/ai/governance/skills/versions/publish",
+        resourceId: skillId,
+        riskLevel: "high",
+        details: { skillId, version },
+      },
+      () => publishAiRuntimeSkillVersion({ skillId, version, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Skill 版本已发布"));
+  },
+);
+
+aiGovernanceRoutes.post(
+  "/ai/governance/skills/:id/versions/:version/rollback",
+  authRequired(),
+  ability("system.aiGovernance.update"),
+  async (c) => {
+    const skillId = id.parse(c.req.param("id"));
+    const version = id.parse(c.req.param("version"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiSkill",
+        action: "rollbackVersion",
+        resource: "/ai/governance/skills/versions/rollback",
+        resourceId: skillId,
+        riskLevel: "critical",
+        details: { skillId, version },
+      },
+      () => rollbackAiRuntimeSkillVersion({ skillId, version, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Skill 版本已回滚并发布"));
+  },
+);
+
+aiGovernanceRoutes.get(
+  "/ai/governance/memory-candidates",
+  authRequired(),
+  ability("system.aiChat.query"),
+  async (c) =>
+    c.json(
+      success(
+        await listAiMemoryCandidates({
+          userId: c.get("user").id,
+          status: new URL(c.req.url).searchParams.get("status") ?? undefined,
+        }),
+      ),
+    ),
+);
+
+aiGovernanceRoutes.post(
+  "/ai/governance/memory-candidates/:id/decision",
+  authRequired(),
+  ability("system.aiChat.update"),
+  async (c) => {
+    const payload = z
+      .object({ decision: z.enum(["accept", "reject"]), reason: z.string().trim().max(500).optional() })
+      .parse(await c.req.json());
+    const candidateId = id.parse(c.req.param("id"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiMemory",
+        action: `candidate-${payload.decision}`,
+        resource: "/ai/governance/memory-candidates",
+        resourceId: candidateId,
+        riskLevel: "medium",
+        details: { decision: payload.decision },
+      },
+      () =>
+        decideAiMemoryCandidate({
+          id: candidateId,
+          userId: c.get("user").id,
+          decision: payload.decision,
+          reason: payload.reason,
+        }),
+    );
+    return c.json(success(result, payload.decision === "accept" ? "Memory 候选已保存" : "Memory 候选已拒绝"));
+  },
+);
+
+aiGovernanceRoutes.get(
   "/ai/governance/skills",
   authRequired(),
   ability("system.aiGovernance.query"),
@@ -337,6 +471,57 @@ aiGovernanceRoutes.get(
   authRequired(),
   ability("system.aiGovernance.query"),
   async (c) => c.json(success(await listAiMcpServers())),
+);
+
+aiGovernanceRoutes.post("/ai/governance/mcp/internal/oauth/token", async (c) => {
+  const body = new URLSearchParams(await c.req.text());
+  const result = await issueInternalSystemMcpToken({
+    grantType: body.get("grant_type") ?? "",
+    clientId: body.get("client_id") ?? "",
+    clientSecret: body.get("client_secret") ?? "",
+    refreshToken: body.get("refresh_token"),
+  });
+  return c.json(result);
+});
+
+aiGovernanceRoutes.post("/ai/governance/mcp/internal", async (c) => {
+  const result = await handleInternalSystemMcpRpc({
+    authorization: c.req.header("authorization"),
+    userId: Number(c.req.header("x-admin-base-user-id")),
+    payload: (await c.req.json()) as {
+      jsonrpc?: string;
+      id?: string | number | null;
+      method?: string;
+      params?: Record<string, unknown>;
+    },
+  });
+  return result === null ? c.body(null, 202) : c.json(result);
+});
+
+aiGovernanceRoutes.post(
+  "/ai/governance/mcp/internal/provision",
+  authRequired(),
+  ability("system.aiGovernance.update"),
+  ability("system.aiGovernance.execute"),
+  ability("system.aiGovernance.approve"),
+  async (c) => {
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiMcp",
+        action: "provisionInternalServer",
+        resource: "/ai/governance/mcp/internal",
+        riskLevel: "critical",
+        details: { code: "admin-base-system", mode: "read_only" },
+      },
+      () =>
+        provisionInternalSystemMcp({
+          origin: new URL(c.req.url).origin,
+          userId: c.get("user").id,
+        }),
+    );
+    return c.json(success(result, "系统数据 MCP 与测试 Agent 已部署"));
+  },
 );
 
 aiGovernanceRoutes.post(

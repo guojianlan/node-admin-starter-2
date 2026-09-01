@@ -72,11 +72,14 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-启动开发服务：
+启动完整开发服务（包含 Notebook Deep Research 等后台任务所需的 AI Worker）：
 
 ```bash
-pnpm dev
+pnpm dev:all
 ```
+
+只开发不涉及后台任务的 Web/API 页面时可以使用 `pnpm dev`。该命令不会隐式启动 Worker；如果页面
+出现“任务等待执行”，应切换到 `pnpm dev:all` 或在另一个终端运行 `pnpm ai:worker`。
 
 访问：
 
@@ -95,7 +98,9 @@ admin / 123456
 ## 5. 常用命令
 
 ```bash
-pnpm dev                 # 启动 Next + Hono
+pnpm dev                 # 只启动 Next + Hono
+pnpm dev:all             # 启动 Next + Hono + AI Worker
+pnpm ai:worker:health    # 检查超时排队任务和过期 Worker 租约
 pnpm db:migrate          # 执行 PostgreSQL 迁移，不清空数据
 pnpm db:seed             # 写入或补齐默认数据，保留已有业务配置
 pnpm run doctor          # 环境和基础数据自检；pnpm doctor 是 pnpm 内置命令，不会执行项目脚本

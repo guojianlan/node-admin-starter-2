@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -9,6 +10,7 @@ import {
   decideToolApproval,
   getLatestSessionAgentRun,
   getAiAgentRunTrace,
+  listAiAgentRunEvents,
   listAiAgents,
   listAiTools,
   listSessionApprovals,
@@ -20,13 +22,29 @@ import {
 import { aiToolHandlerKeys, listAiToolRegistryOptions } from "@/server/services/ai-tool-registry";
 import { getAiRuntimeConfig } from "@/server/services/ai-provider-service";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
+import { uploadFileToDefaultStorage } from "@/server/services/storage-service";
 import {
   executeRegisteredAiWorkflow,
   AiWorkflowNotFoundError,
   getAiWorkflowDefinition,
   listAiWorkflowDefinitions,
 } from "@/server/mastra/workflow-registry";
-import { getAiWorkflowRun, listAiWorkflowRuns } from "@/server/services/ai-workflow-service";
+import {
+  getAiWorkflowRun,
+  listAiProgressEvents,
+  listAiWorkflowRuns,
+  listAiWorkflowWaits,
+  resolveAiWorkflowWait,
+  subscribeAiProgressNotifications,
+} from "@/server/services/ai-workflow-service";
+import {
+  createVisualWorkflowVersion,
+  executeVisualWorkflow,
+  getVisualWorkflowDefinition,
+  listVisualWorkflowDefinitions,
+  publishVisualWorkflowVersion,
+  resumeVisualWorkflow,
+} from "@/server/services/ai-visual-workflow-service";
 
 const jsonTextSchema = z
   .string()
@@ -40,6 +58,47 @@ const jsonTextSchema = z
       return false;
     }
   }, "请输入有效 JSON");
+
+function validateHumanWorkflowInput(waitInput: unknown, value: unknown) {
+  const input = waitInput && typeof waitInput === "object" && !Array.isArray(waitInput)
+    ? waitInput as { schema?: unknown }
+    : {};
+  const schema = input.schema && typeof input.schema === "object" && !Array.isArray(input.schema)
+    ? input.schema as {
+        type?: string;
+        required?: string[];
+        properties?: Record<string, { type?: string; enum?: unknown[]; minimum?: number; maximum?: number }>;
+      }
+    : null;
+  if (!schema || schema.type !== "object" || !schema.properties) {
+    throw new HTTPException(409, { message: "人工输入节点缺少有效对象 Schema" });
+  }
+  const shape: Record<string, z.ZodType> = {};
+  for (const [key, field] of Object.entries(schema.properties)) {
+    let validator: z.ZodType = field.type === "string"
+      ? z.string()
+      : field.type === "number"
+        ? z.number()
+        : field.type === "integer"
+          ? z.number().int()
+          : field.type === "boolean"
+            ? z.boolean()
+            : field.type === "array"
+              ? z.array(z.unknown())
+              : field.type === "object"
+                ? z.record(z.string(), z.unknown())
+                : z.unknown();
+    if (field.enum?.length) {
+      validator = validator.refine((item) => field.enum?.some((allowed) => Object.is(allowed, item)), `${key} 不在允许值范围内`);
+    }
+    if (field.type === "number" || field.type === "integer") {
+      if (field.minimum != null) validator = validator.refine((item) => Number(item) >= Number(field.minimum), `${key} 小于最小值`);
+      if (field.maximum != null) validator = validator.refine((item) => Number(item) <= Number(field.maximum), `${key} 超过最大值`);
+    }
+    shape[key] = schema.required?.includes(key) ? validator : validator.optional();
+  }
+  return z.object(shape).strict().parse(value);
+}
 
 const clientToolResultSchema = z.discriminatedUnion("status", [
   z.object({
@@ -98,17 +157,27 @@ aiAgentRoutes.get(
   authRequired(),
   ability("system.aiAgent.query"),
   async (c) => {
-    const models = await sqlite
-      .prepare(
-        `SELECT m.id, m.name, m.model_id AS "modelId", p.name AS "providerName"
-     FROM sys_ai_model m INNER JOIN sys_ai_provider p ON p.id = m.provider_id
-     WHERE m.deleted_at IS NULL AND p.deleted_at IS NULL AND m.status = 1 AND p.status = 1
-       AND m.model_type = 'chat' ORDER BY p.sort ASC, m.sort ASC, m.id ASC`,
-      )
-      .all();
+    const [models, skills] = await Promise.all([
+      sqlite
+        .prepare(
+          `SELECT m.id, m.name, m.model_id AS "modelId", m.model_type AS "modelType",
+            p.name AS "providerName"
+           FROM sys_ai_model m INNER JOIN sys_ai_provider p ON p.id = m.provider_id
+           WHERE m.deleted_at IS NULL AND p.deleted_at IS NULL AND m.status = 1 AND p.status = 1
+             AND m.model_type = 'chat' ORDER BY p.sort ASC, m.sort ASC, m.id ASC`,
+        )
+        .all(),
+      sqlite
+        .prepare(
+          `SELECT id, name, code FROM sys_ai_runtime_skill
+           WHERE deleted_at IS NULL AND status = 1 ORDER BY sort ASC, id ASC`,
+        )
+        .all(),
+    ]);
     return c.json(
       success({
         models,
+        skills,
         tools: await listAiTools(),
         handlers: listAiToolRegistryOptions().map((item) => ({
           value: item.handlerKey,
@@ -215,6 +284,115 @@ aiAgentRoutes.get(
 );
 
 aiAgentRoutes.get(
+  "/ai/workflow/visual/definitions",
+  authRequired(),
+  ability("system.aiAgent.query"),
+  async (c) => c.json(success(await listVisualWorkflowDefinitions())),
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/assets",
+  authRequired(),
+  ability("system.aiAgent.executeWorkflow"),
+  async (c) => {
+    const user = c.get("user");
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiWorkflow",
+        action: "uploadAsset",
+        resource: "/ai/workflow/assets",
+        riskLevel: "medium",
+      },
+      async () => {
+        const body = await c.req.parseBody();
+        const file = body.file;
+        if (!(file instanceof File)) throw new Error("请选择图片文件");
+        if (!file.type.startsWith("image/")) throw new Error("Workflow 资产只能上传图片");
+        return uploadFileToDefaultStorage({
+          file,
+          groupId: null,
+          userId: user.id,
+          usageType: "user_content",
+        });
+      },
+    );
+    return c.json(success({ id: result.id, url: result.url }, "图片已上传"));
+  },
+);
+
+aiAgentRoutes.get(
+  "/ai/workflow/visual/definitions/:id",
+  authRequired(),
+  ability("system.aiAgent.query"),
+  async (c) => {
+    const definition = await getVisualWorkflowDefinition(Number(c.req.param("id")));
+    if (!definition) throw new AiWorkflowNotFoundError("可视化工作流不存在");
+    return c.json(success(definition));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/visual/versions",
+  authRequired(),
+  ability("system.aiAgent.update"),
+  async (c) => {
+    const payload = z.object({
+      code: z.string().regex(/^[a-z][a-z0-9-]*$/).max(100),
+      name: z.string().trim().min(1).max(120),
+      description: z.string().trim().max(1000).nullable().optional(),
+      graph: z.unknown(),
+    }).parse(await c.req.json());
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: "createVisualVersion",
+      resource: "/ai/workflow/visual/versions",
+      riskLevel: "high",
+      details: { code: payload.code },
+    }, () => createVisualWorkflowVersion({ ...payload, userId: c.get("user").id }));
+    return c.json(success(result, "可视化工作流草稿已保存"));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/visual/definitions/:id/versions/:version/publish",
+  authRequired(),
+  ability("system.aiAgent.update"),
+  async (c) => {
+    const definitionId = Number(c.req.param("id"));
+    const version = Number(c.req.param("version"));
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: "publishVisualVersion",
+      resource: "/ai/workflow/visual/publish",
+      resourceId: definitionId,
+      riskLevel: "high",
+      details: { definitionId, version },
+    }, () => publishVisualWorkflowVersion({ definitionId, version, userId: c.get("user").id }));
+    return c.json(success(result, "可视化工作流已发布"));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/visual/definitions/:id/runs",
+  authRequired(),
+  ability("system.aiAgent.executeWorkflow"),
+  async (c) => {
+    const definitionId = Number(c.req.param("id"));
+    const payload = z.object({ value: z.string().trim().min(1).max(20000) }).parse(await c.req.json());
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: "executeVisual",
+      resource: "/ai/workflow/visual/run",
+      resourceId: definitionId,
+      riskLevel: "medium",
+      details: { definitionId },
+    }, () => executeVisualWorkflow({ definitionId, userId: c.get("user").id, value: payload.value }));
+    return c.json(success(result, "可视化工作流执行完成"));
+  },
+);
+
+aiAgentRoutes.get(
   "/ai/workflow/runs",
   authRequired(),
   ability("system.aiAgent.query"),
@@ -234,6 +412,170 @@ aiAgentRoutes.get(
     const run = await getAiWorkflowRun({ id: Number(c.req.param("id")), userId: user.id });
     if (!run) throw new AiWorkflowNotFoundError("AI 工作流运行记录不存在");
     return c.json(success(run));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/runs/:id/waits/:waitId/decision",
+  authRequired(),
+  ability("system.aiAgent.approve"),
+  async (c) => {
+    const runId = Number(c.req.param("id"));
+    const waitId = Number(c.req.param("waitId"));
+    const payload = z.object({
+      approved: z.boolean(),
+      reason: z.string().trim().max(1000).optional().nullable(),
+      data: z.record(z.string(), z.unknown()).optional(),
+    }).parse(await c.req.json());
+    const userId = c.get("user").id;
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: payload.approved ? "approveWorkflow" : "rejectWorkflow",
+      resource: "/ai/workflow/wait/decision",
+      resourceId: waitId,
+      riskLevel: payload.approved ? "high" : "medium",
+      details: { runId, waitId, approved: payload.approved },
+    }, async () => {
+      const decision = await resolveAiWorkflowWait({
+        id: waitId,
+        runId,
+        userId,
+        status: payload.approved ? "approved" : "rejected",
+        resolution: { reason: payload.reason ?? null, data: payload.data ?? null },
+        expectedWaitType: "approval",
+      });
+      if (!decision) throw new HTTPException(409, { message: "审批已处理、已过期或不属于当前用户" });
+      return resumeVisualWorkflow({ runId, userId, waitId });
+    });
+    return c.json(success(result, payload.approved ? "审批通过，Workflow 已继续" : "审批拒绝，Workflow 已进入拒绝分支"));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/runs/:id/events",
+  authRequired(),
+  ability("system.aiAgent.executeWorkflow"),
+  async (c) => {
+    const runId = Number(c.req.param("id"));
+    const payload = z.object({
+      waitId: z.coerce.number().int().positive(),
+      correlationKey: z.string().trim().min(1).max(300),
+      data: z.unknown(),
+    }).parse(await c.req.json());
+    const userId = c.get("user").id;
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: "resolveWorkflowEvent",
+      resource: "/ai/workflow/event",
+      resourceId: payload.waitId,
+      riskLevel: "medium",
+      details: { runId, waitId: payload.waitId, correlationKey: payload.correlationKey },
+    }, async () => {
+      const pendingWaits = await listAiWorkflowWaits({ runId, userId, pendingOnly: true });
+      const pendingWait = pendingWaits.find((item) => item.id === payload.waitId);
+      if (!pendingWait || pendingWait.waitType !== "event" || pendingWait.correlationKey !== payload.correlationKey) {
+        throw new HTTPException(404, { message: "等待事件不存在、已处理或已过期" });
+      }
+      const eventData = pendingWait.correlationKey?.startsWith("human-input:")
+        ? validateHumanWorkflowInput(pendingWait.input, payload.data)
+        : payload.data;
+      const wait = await resolveAiWorkflowWait({
+        id: payload.waitId,
+        runId,
+        userId,
+        status: "resolved",
+        resolution: { correlationKey: payload.correlationKey, data: eventData },
+        correlationKey: payload.correlationKey,
+        expectedWaitType: "event",
+      });
+      if (!wait) throw new HTTPException(404, { message: "等待事件不存在、已处理或已过期" });
+      return resumeVisualWorkflow({ runId, userId, waitId: payload.waitId });
+    });
+    return c.json(success(result, "事件已接收，Workflow 已继续"));
+  },
+);
+
+aiAgentRoutes.post(
+  "/ai/workflow/runs/:id/resume",
+  authRequired(),
+  ability("system.aiAgent.executeWorkflow"),
+  async (c) => {
+    const runId = Number(c.req.param("id"));
+    const payload = z.object({ waitId: z.coerce.number().int().positive().optional() }).parse(await c.req.json().catch(() => ({})));
+    const result = await runWithOperationLog(c, {
+      module: "system.aiWorkflow",
+      action: "resumeWorkflow",
+      resource: "/ai/workflow/run/resume",
+      resourceId: runId,
+      riskLevel: "medium",
+      details: { runId, waitId: payload.waitId ?? null },
+    }, () => resumeVisualWorkflow({ runId, userId: c.get("user").id, waitId: payload.waitId }));
+    return c.json(success(result, "Workflow 恢复检查完成"));
+  },
+);
+
+aiAgentRoutes.get(
+  "/ai/workflow/runs/:id/events",
+  authRequired(),
+  ability("system.aiAgent.query"),
+  async (c) => {
+    const user = c.get("user");
+    const runId = Number(c.req.param("id"));
+    const run = await getAiWorkflowRun({ id: runId, userId: user.id });
+    if (!run) throw new AiWorkflowNotFoundError("AI 工作流运行记录不存在");
+    const url = new URL(c.req.url);
+    let cursor = Math.max(
+      Number(url.searchParams.get("afterEventId") ?? c.req.header("last-event-id") ?? 0),
+      0,
+    );
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let unsubscribe: (() => Promise<void>) | undefined;
+        let wake: (() => void) | undefined;
+        try {
+          unsubscribe = await subscribeAiProgressNotifications({
+            resourceType: "workflow_run",
+            resourceId: runId,
+            onNotify: () => wake?.(),
+          }).catch(() => undefined);
+          for (let tick = 0; tick < 120 && !c.req.raw.signal.aborted; tick += 1) {
+            const events = (await listAiProgressEvents({
+              resourceType: "workflow_run",
+              resourceId: runId,
+              afterId: cursor,
+              limit: 200,
+            })) as Array<{ id: number; eventType: string; payload: unknown }>;
+            for (const event of events) {
+              cursor = Number(event.id);
+              controller.enqueue(
+                encoder.encode(`id: ${event.id}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event.payload)}\n\n`),
+              );
+            }
+            if (events.length === 0) {
+              await Promise.race([
+                new Promise((resolve) => setTimeout(resolve, 1000)),
+                new Promise<void>((resolve) => {
+                  wake = resolve;
+                }),
+              ]);
+              wake = undefined;
+            }
+            if (["completed", "failed", "cancelled"].includes(String((run as unknown as { status: string }).status)) && !events.length) break;
+          }
+        } finally {
+          await unsubscribe?.();
+          controller.close();
+        }
+      },
+    });
+    return new Response(body, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+      },
+    });
   },
 );
 
@@ -419,6 +761,29 @@ aiAgentRoutes.get(
           userId: user.id,
         }),
       ),
+    );
+  },
+);
+
+aiAgentRoutes.get(
+  "/ai/chat/sessions/:id/runs/:runId/events",
+  authRequired(),
+  ability("system.aiChat.query"),
+  async (c) => {
+    const user = c.get("user");
+    const query = new URL(c.req.url).searchParams;
+    const headerEventId = Number(c.req.header("Last-Event-ID") || 0);
+    const afterEventId = Number(query.get("afterEventId") || headerEventId || 0);
+    const events = await listAiAgentRunEvents({
+      runId: Number(c.req.param("runId")),
+      userId: user.id,
+      afterEventId: Number.isFinite(afterEventId) ? afterEventId : 0,
+    });
+    return c.json(
+      success({
+        events,
+        lastEventId: events.length ? events[events.length - 1]?.id : afterEventId,
+      }),
     );
   },
 );

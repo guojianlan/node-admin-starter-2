@@ -228,6 +228,8 @@ async function syncSequences(dbClient: DbClient) {
     "sys_ai_chat_message",
     "sys_ai_agent_run",
     "sys_ai_agent_run_step",
+    "sys_ai_agent_run_event",
+    "sys_ai_tool_execution",
     "sys_ai_tool_approval",
     "sys_ai_workflow_run",
     "sys_ai_workflow_run_step",

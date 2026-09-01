@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { EmbeddingModel, LanguageModel } from "ai";
+import type { EmbeddingModel, ImageModel, LanguageModel } from "ai";
 import { decryptSecret } from "@/server/services/secret";
 import type { AiModelRow } from "./ai-provider-service";
 
@@ -31,6 +31,11 @@ type AiSdkRuntime = {
 
 type AiSdkEmbeddingRuntime = {
   model: EmbeddingModel;
+  endpointHint: string;
+};
+
+export type AiSdkImageRuntime = {
+  model: ImageModel;
   endpointHint: string;
 };
 
@@ -242,4 +247,52 @@ export function buildAiSdkEmbeddingRuntime(
     transformRequestBody: getOpenAiCompatibleBodyTransform(provider),
   });
   return { model: client.embeddingModel(model.modelId), endpointHint };
+}
+
+export function buildAiSdkImageRuntime(
+  provider: AiProviderForSdk,
+  model: AiModelForSdk,
+): AiSdkImageRuntime {
+  if (model.modelType !== "image") throw new Error("只有 Image 模型支持图片生成或编辑");
+  if (!provider.baseUrl) throw new Error("AI Provider Base URL 未配置");
+
+  const baseURL = normalizeBaseUrl(provider.baseUrl);
+  const apiKey = getApiKey(provider);
+  const headers = getHeaders(provider);
+  const endpointHint = `${baseURL}/images/edits`;
+
+  if (provider.providerType === "openai") {
+    const client = createOpenAI({
+      baseURL,
+      apiKey,
+      organization: provider.organization ?? undefined,
+      project: provider.project ?? undefined,
+      headers,
+      name: provider.code,
+    });
+    return { model: client.imageModel(model.modelId), endpointHint };
+  }
+
+  if (provider.providerType === "google") {
+    const client = createGoogle({
+      baseURL,
+      apiKey,
+      headers,
+      name: provider.code,
+    });
+    return { model: client.imageModel(model.modelId), endpointHint };
+  }
+
+  if (!openAiCompatibleProviderTypes.has(provider.providerType)) {
+    throw new Error(`暂不支持 ${provider.providerType} 的 AI SDK 图片 Runtime`);
+  }
+
+  const client = createOpenAICompatible({
+    name: provider.code,
+    baseURL,
+    apiKey,
+    headers,
+    queryParams: getQueryParams(provider),
+  });
+  return { model: client.imageModel(model.modelId), endpointHint };
 }

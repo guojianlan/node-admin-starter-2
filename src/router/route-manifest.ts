@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { AiChatPage } from "@/features/system/ai-chat/AiChatPage";
 import { AiAgentPage } from "@/features/system/ai-agent/AiAgentPage";
+import { AiWorkflowPage } from "@/features/system/ai-workflow/AiWorkflowPage";
 import { AiEvalPage } from "@/features/system/ai-eval/AiEvalPage";
 import { AiGovernancePage } from "@/features/system/ai-governance/AiGovernancePage";
 import { AiKnowledgePage } from "@/features/system/ai-knowledge/AiKnowledgePage";
@@ -238,6 +239,14 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "AI Agent",
     auth: "system.aiAgent.query",
     component: AiAgentPage,
+  },
+  {
+    path: "/system/ai/workflow",
+    key: "system.aiWorkflow",
+    title: "Workflow",
+    auth: "system.aiAgent.query",
+    adminHidden: true,
+    component: AiWorkflowPage,
   },
   {
     path: "/system/ai/web-search",

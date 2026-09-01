@@ -6,7 +6,11 @@ import { getAiToolInputSchema } from "@/server/services/ai-tool-registry";
 export function createMastraToolSet(input: {
   tools: AiToolRow[];
   requiresApproval: (tool: AiToolRow) => boolean;
-  execute: (tool: AiToolRow, toolInput: Record<string, unknown>) => Promise<unknown>;
+  execute: (
+    tool: AiToolRow,
+    toolInput: Record<string, unknown>,
+    toolCallId?: string,
+  ) => Promise<unknown>;
 }): ToolsInput {
   return Object.fromEntries(
     input.tools.map((tool) => [
@@ -16,8 +20,12 @@ export function createMastraToolSet(input: {
         description: tool.description,
         inputSchema: getAiToolInputSchema(tool.handlerKey),
         requireApproval: input.requiresApproval(tool),
-        execute: async (toolInput) =>
-          input.execute(tool, (toolInput ?? {}) as Record<string, unknown>),
+        execute: async (toolInput, context) =>
+          input.execute(
+            tool,
+            (toolInput ?? {}) as Record<string, unknown>,
+            context.agent?.toolCallId,
+          ),
       }),
     ]),
   );

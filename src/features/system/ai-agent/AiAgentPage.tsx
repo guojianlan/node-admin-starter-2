@@ -46,6 +46,7 @@ import { AuthButton } from "@/components/auth-button/AuthButton";
 import { request, requestEventStream, type EventStreamMessage } from "@/lib/request";
 import { feedback } from "@/ui/feedback/feedback";
 import { PageScaffold } from "@/ui/page/PageScaffold";
+import { WorkflowListPanel } from "../ai-workflow/AiWorkflowPage";
 
 type AgentRow = {
   id: number;
@@ -90,6 +91,9 @@ type RunRow = {
   sessionId: number;
   agentName: string;
   status: string;
+  attempt: number;
+  leaseUntil?: string | null;
+  heartbeatAt?: string | null;
   totalSteps: number;
   inputTokens: number;
   outputTokens: number;
@@ -924,6 +928,7 @@ export function AiAgentPage() {
               label: "Workflows",
               children: (
                 <div className="ai-agent-tab-panel ai-agent-workflow-panel">
+                  <WorkflowListPanel embedded />
                   <Alert
                     showIcon
                     type="info"
@@ -1457,6 +1462,12 @@ export function AiAgentPage() {
                   : `${runTraceQuery.data.durationMs} ms`}
               </Descriptions.Item>
               <Descriptions.Item label="步骤">{runTraceQuery.data.totalSteps}</Descriptions.Item>
+              <Descriptions.Item label="Attempt">{runTraceQuery.data.attempt}</Descriptions.Item>
+              <Descriptions.Item label="租约心跳">
+                {runTraceQuery.data.heartbeatAt
+                  ? new Date(runTraceQuery.data.heartbeatAt).toLocaleString()
+                  : "-"}
+              </Descriptions.Item>
               <Descriptions.Item label="Token">
                 {runTraceQuery.data.inputTokens} 输入 / {runTraceQuery.data.outputTokens} 输出
               </Descriptions.Item>

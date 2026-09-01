@@ -25,6 +25,9 @@ Recommended optional variables:
 DATABASE_POOL_SIZE=10
 LOG_LEVEL=info
 ADMIN_BASE_AI_ORCHESTRATOR=legacy
+ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS=60
+ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS=30
+ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL=https://alerts.example.com/hooks/admin-base
 SMOKE_BASE_URL=https://your-admin-domain.example
 SMOKE_USERNAME=admin
 SMOKE_PASSWORD=<admin-or-smoke-user-password>
@@ -126,9 +129,16 @@ PM2 example:
 
 ```bash
 pnpm build
-pm2 start "pnpm start" --name admin-base --time
+pm2 start deploy/pm2/ecosystem.config.cjs
 pm2 save
 ```
+
+The checked-in PM2 configuration runs three independent, auto-restarting processes:
+
+- `admin-base-web`: Next.js + Hono.
+- `admin-base-ai-worker`: claims and executes PostgreSQL AI Jobs.
+- `admin-base-ai-worker-monitor`: detects claimable Jobs waiting beyond the configured threshold,
+  expired leases, and optionally sends state-change webhooks.
 
 Recommended PM2 environment:
 
@@ -141,8 +151,23 @@ DATABASE_POOL_SIZE=10
 LOG_LEVEL=info
 ```
 
-systemd deployments should run the same `pnpm start` command after `pnpm build`,
-with the environment variables above loaded from an environment file owned by the deploy user.
+systemd deployments should run `pnpm start` for Web after `pnpm build`, and enable the checked-in
+`deploy/systemd/admin-base-ai-worker.service` plus
+`deploy/systemd/admin-base-ai-worker-monitor.service`. Copy and review the templates first: adjust
+`User`, `Group`, `WorkingDirectory`, `EnvironmentFile`, and the pnpm path for the target host.
+
+```bash
+sudo cp deploy/systemd/admin-base-ai-worker*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now admin-base-ai-worker.service
+sudo systemctl enable --now admin-base-ai-worker-monitor.service
+```
+
+For containers, run Web, Worker, and Monitor as separate services from the same immutable image and
+environment. Their commands are respectively `pnpm start`, `pnpm ai:worker`, and
+`pnpm ai:worker:monitor`; never run three commands inside one container. Configure restart policies
+for Worker and Monitor, and route their structured stderr/log output or the optional webhook into
+the deployment alerting system.
 
 ## Reverse Proxy
 

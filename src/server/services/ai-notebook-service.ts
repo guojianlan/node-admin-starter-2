@@ -30,6 +30,7 @@ type AiNotebookRow = {
   ownerId: number | null;
   defaultModelId: number | null;
   systemPrompt: string | null;
+  sourceScopeVersion: number;
   status: number;
   sort: number;
   createdBy: number | null;
@@ -62,6 +63,7 @@ type NotebookArtifactRow = {
   ragRunId: number | null;
   invocationId: number | null;
   modelId: number | null;
+  sourceScopeVersion: number;
   sourceSnapshotJson: string;
   citationsJson: string;
   errorMessage: string | null;
@@ -156,6 +158,7 @@ export async function listAiNotebooks(input: {
         nb.dept_id AS "deptId", dept.name AS "deptName", nb.owner_id AS "ownerId",
         owner.nickname AS "ownerName", nb.default_model_id AS "defaultModelId",
         model.name AS "defaultModelName", nb.system_prompt AS "systemPrompt",
+        nb.source_scope_version AS "sourceScopeVersion",
         nb.status, nb.sort, nb.created_at AS "createdAt", nb.updated_at AS "updatedAt",
         COUNT(DISTINCT source.id) FILTER (WHERE source.deleted_at IS NULL)::int AS "sourceCount",
         COUNT(DISTINCT artifact.id) FILTER (WHERE artifact.deleted_at IS NULL)::int AS "artifactCount"
@@ -290,6 +293,7 @@ export async function getVisibleAiNotebook(id: number, userId: number, requireEn
       `SELECT nb.id, nb.name, nb.description, nb.scope_type AS "scopeType",
         nb.dept_id AS "deptId", nb.owner_id AS "ownerId",
         nb.default_model_id AS "defaultModelId", nb.system_prompt AS "systemPrompt",
+        nb.source_scope_version AS "sourceScopeVersion",
         nb.status, nb.sort, nb.created_by AS "createdBy",
         nb.created_at AS "createdAt", nb.updated_at AS "updatedAt"
        FROM sys_ai_notebook nb
@@ -401,6 +405,12 @@ export async function saveAiNotebookMember(input: {
        VALUES (?, ?, ?, ?) ON CONFLICT (notebook_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
     )
     .run(input.notebookId, input.memberUserId, input.role, input.userId);
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook SET source_scope_version = source_scope_version + 1,
+       updated_by = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(input.userId, input.notebookId);
 }
 
 export async function removeAiNotebookMember(input: {
@@ -412,6 +422,12 @@ export async function removeAiNotebookMember(input: {
   await sqlite
     .prepare("DELETE FROM sys_ai_notebook_member WHERE notebook_id = ? AND user_id = ?")
     .run(input.notebookId, input.memberUserId);
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook SET source_scope_version = source_scope_version + 1,
+       updated_by = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(input.userId, input.notebookId);
 }
 
 export async function createAiNotebook(input: {
@@ -457,7 +473,8 @@ export async function updateAiNotebook(input: {
     .prepare(
       `UPDATE sys_ai_notebook
        SET name = ?, description = ?, scope_type = ?, dept_id = ?, owner_id = ?,
-           default_model_id = ?, system_prompt = ?, status = ?, sort = ?, updated_by = ?
+           default_model_id = ?, system_prompt = ?, source_scope_version = source_scope_version + 1,
+           status = ?, sort = ?, updated_by = ?
        WHERE id = ? AND deleted_at IS NULL`,
     )
     .run(
@@ -598,6 +615,12 @@ export async function addAiNotebookSource(input: {
       target.documentId,
       input.userId,
     );
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook SET source_scope_version = source_scope_version + 1,
+       updated_by = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(input.userId, input.notebookId);
   return Number(result.lastInsertRowid);
 }
 
@@ -620,9 +643,17 @@ export async function removeAiNotebookSource(input: {
        WHERE id = ? AND notebook_id = ? AND deleted_at IS NULL`,
     )
     .run(input.userId, input.sourceId, input.notebookId);
+  await sqlite
+    .prepare(
+      `UPDATE sys_ai_notebook SET source_scope_version = source_scope_version + 1,
+       updated_by = ?, updated_at = now() WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(input.userId, input.notebookId);
 }
 
 async function resolveNotebookSourceContext(notebookId: number, userId: number) {
+  const notebook = await getVisibleAiNotebook(notebookId, userId, true);
+  if (!notebook) throw new HTTPException(404, { message: "Notebook 不存在、未启用或无权访问" });
   const scope = await resolveDataScopeForUser(userId);
   const visibility = knowledgeVisibilityClause(scope);
   const sources = (await sqlite
@@ -702,8 +733,24 @@ async function resolveNotebookSourceContext(notebookId: number, userId: number) 
   return {
     knowledgeBaseIds: [...new Set(knowledgeBaseIds)],
     documentIds: [...new Set(documentIds)],
+    sourceScopeVersion: notebook.sourceScopeVersion,
     snapshot,
   };
+}
+
+async function assertNotebookSourceScopeVersion(input: {
+  notebookId: number;
+  userId: number;
+  expectedVersion: number;
+}) {
+  const notebook = await getVisibleAiNotebook(input.notebookId, input.userId, true);
+  if (!notebook) throw new HTTPException(404, { message: "Notebook 不存在、未启用或无权访问" });
+  if (notebook.sourceScopeVersion !== input.expectedVersion) {
+    throw new HTTPException(409, {
+      message: "Notebook 来源或协作权限已变化，请基于最新来源重新生成",
+    });
+  }
+  return notebook.sourceScopeVersion;
 }
 
 export async function askAiNotebook(input: {
@@ -729,7 +776,16 @@ export async function askAiNotebook(input: {
     traceSourceType: "notebook_ask",
     traceSourceId: input.notebookId,
   });
-  return { ...result, sourceSnapshot: sources.snapshot };
+  await assertNotebookSourceScopeVersion({
+    notebookId: input.notebookId,
+    userId: input.userId,
+    expectedVersion: sources.sourceScopeVersion,
+  });
+  return {
+    ...result,
+    sourceScopeVersion: sources.sourceScopeVersion,
+    sourceSnapshot: sources.snapshot,
+  };
 }
 
 function artifactPrompt(type: AiNotebookArtifactType, customPrompt?: string | null) {
@@ -770,7 +826,8 @@ export async function listAiNotebookArtifacts(input: {
       `SELECT id, notebook_id AS "notebookId", artifact_type AS "artifactType", title,
         prompt_text AS "promptText", prompt_hash AS "promptHash", content, status, version,
         rag_run_id AS "ragRunId", invocation_id AS "invocationId", model_id AS "modelId",
-        source_snapshot_json AS "sourceSnapshotJson", citations_json AS "citationsJson",
+        source_scope_version AS "sourceScopeVersion", source_snapshot_json AS "sourceSnapshotJson",
+        citations_json AS "citationsJson",
         error_message AS "errorMessage", generated_at AS "generatedAt",
         created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sys_ai_notebook_artifact
@@ -791,7 +848,8 @@ async function getVisibleArtifact(id: number, userId: number) {
         artifact.prompt_text AS "promptText", artifact.prompt_hash AS "promptHash",
         artifact.content, artifact.status, artifact.version,
         artifact.rag_run_id AS "ragRunId", artifact.invocation_id AS "invocationId",
-        artifact.model_id AS "modelId", artifact.source_snapshot_json AS "sourceSnapshotJson",
+        artifact.model_id AS "modelId", artifact.source_scope_version AS "sourceScopeVersion",
+        artifact.source_snapshot_json AS "sourceSnapshotJson",
         artifact.citations_json AS "citationsJson", artifact.error_message AS "errorMessage",
         artifact.generated_at AS "generatedAt", artifact.created_at AS "createdAt",
         artifact.updated_at AS "updatedAt"
@@ -827,6 +885,11 @@ async function generateArtifact(input: {
     if (result.insufficientEvidence) {
       throw new HTTPException(409, { message: "当前来源证据不足，无法生成 Artifact" });
     }
+    await assertNotebookSourceScopeVersion({
+      notebookId: input.notebook.id,
+      userId: input.userId,
+      expectedVersion: input.sourceContext.sourceScopeVersion,
+    });
     const citations = result.citations.map((citation) => ({
       chunkId: citation.chunkId,
       documentId: citation.documentId,
@@ -856,7 +919,12 @@ async function generateArtifact(input: {
         input.userId,
         input.artifactId,
       );
-    return { id: input.artifactId, ...result, citations };
+    return {
+      id: input.artifactId,
+      ...result,
+      sourceScopeVersion: input.sourceContext.sourceScopeVersion,
+      citations,
+    };
   } catch (error) {
     const classified = classifyAiError(error);
     await sqlite
@@ -898,14 +966,15 @@ export async function createAiNotebookResearchArtifact(input: {
     .prepare(
       `INSERT INTO sys_ai_notebook_artifact
        (notebook_id, artifact_type, title, prompt_text, prompt_hash, status, version,
-        source_snapshot_json, citations_json, created_by, updated_by)
-       VALUES (?, 'brief', ?, ?, ?, 'generating', 1, ?, '[]', ?, ?) RETURNING id`,
+        source_scope_version, source_snapshot_json, citations_json, created_by, updated_by)
+       VALUES (?, 'brief', ?, ?, ?, 'generating', 1, ?, ?, '[]', ?, ?) RETURNING id`,
     )
     .run(
       input.notebookId,
       title,
       prompt,
       promptHash,
+      available.sourceScopeVersion,
       JSON.stringify(snapshot),
       input.userId,
       input.userId,
@@ -915,7 +984,12 @@ export async function createAiNotebookResearchArtifact(input: {
     notebook,
     artifactId,
     prompt,
-    sourceContext: { knowledgeBaseIds: [], documentIds: requestedIds, snapshot },
+    sourceContext: {
+      knowledgeBaseIds: [],
+      documentIds: requestedIds,
+      sourceScopeVersion: available.sourceScopeVersion,
+      snapshot,
+    },
     userId: input.userId,
     requestId: input.requestId,
     traceSourceType: "notebook_research_report",
@@ -945,8 +1019,8 @@ export async function createAiNotebookArtifact(input: {
     .prepare(
       `INSERT INTO sys_ai_notebook_artifact
        (notebook_id, artifact_type, title, prompt_text, prompt_hash, status, version,
-        source_snapshot_json, citations_json, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, 'generating', ?, ?, '[]', ?, ?) RETURNING id`,
+        source_scope_version, source_snapshot_json, citations_json, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, 'generating', ?, ?, ?, '[]', ?, ?) RETURNING id`,
     )
     .run(
       input.notebookId,
@@ -955,6 +1029,7 @@ export async function createAiNotebookArtifact(input: {
       prompt,
       promptHash,
       input.version ?? 1,
+      sourceContext.sourceScopeVersion,
       JSON.stringify(sourceContext.snapshot),
       input.userId,
       input.userId,

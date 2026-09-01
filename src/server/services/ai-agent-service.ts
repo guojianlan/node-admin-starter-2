@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { sqlite, type DbClient } from "@/server/db";
 import {
   isModuleAgentHandlerKey,
@@ -14,6 +15,7 @@ export type AiAgentRow = {
   instructions: string;
   modelId: number | null;
   modelName: string | null;
+  modelIdentifier: string | null;
   temperatureMilli: number;
   maxOutputTokens: number | null;
   maxSteps: number;
@@ -21,6 +23,7 @@ export type AiAgentRow = {
   sort: number;
   isSystem: boolean;
   toolIds: number[];
+  skillIds: number[];
   createdAt: string;
   updatedAt: string;
 };
@@ -50,6 +53,30 @@ export class AiApprovalDecisionConflictError extends Error {
   }
 }
 
+export class AiAgentRunLeaseLostError extends Error {
+  readonly status = 409;
+
+  constructor(message = "AI Agent 运行租约已失效，旧执行不能继续写入") {
+    super(message);
+    this.name = "AiAgentRunLeaseLostError";
+  }
+}
+
+export class AiToolExecutionConflictError extends Error {
+  readonly status = 409;
+
+  constructor(message = "该工具调用已经在执行或已完成，拒绝重复执行") {
+    super(message);
+    this.name = "AiToolExecutionConflictError";
+  }
+}
+
+const DEFAULT_AGENT_RUN_LEASE_SECONDS = 120;
+
+function createAgentRunLeaseOwner() {
+  return `admin-base-agent-run-${randomUUID()}`;
+}
+
 export type ClientToolResultInput =
   | {
       status: "granted";
@@ -72,18 +99,23 @@ export async function listAiAgents(input: { activeOnly?: boolean; dbClient?: DbC
   const rows = (await dbClient
     .prepare(
       `SELECT a.id, a.name, a.code, a.description, a.instructions,
-        a.model_id AS "modelId", m.name AS "modelName",
+        a.model_id AS "modelId", m.name AS "modelName", m.model_id AS "modelIdentifier",
         a.temperature_milli AS "temperatureMilli", a.max_output_tokens AS "maxOutputTokens",
         a.max_steps AS "maxSteps", a.status, a.sort, a.is_system AS "isSystem",
         COALESCE((SELECT json_agg(at.tool_id ORDER BY at.tool_id) FROM sys_ai_agent_tool at WHERE at.agent_id = a.id), '[]') AS "toolIds",
+        COALESCE((SELECT json_agg(agent_skill.skill_id ORDER BY agent_skill.skill_id) FROM sys_ai_agent_skill agent_skill WHERE agent_skill.agent_id = a.id), '[]') AS "skillIds",
         a.created_at AS "createdAt", a.updated_at AS "updatedAt"
        FROM sys_ai_agent a
        LEFT JOIN sys_ai_model m ON m.id = a.model_id
        WHERE a.deleted_at IS NULL ${input.activeOnly ? "AND a.status = 1" : ""}
        ORDER BY a.sort ASC, a.id ASC`,
     )
-    .all()) as Array<Omit<AiAgentRow, "toolIds"> & { toolIds: unknown }>;
-  return rows.map((row) => ({ ...row, toolIds: parseNumberArray(row.toolIds) }));
+    .all()) as Array<Omit<AiAgentRow, "toolIds" | "skillIds"> & { toolIds: unknown; skillIds: unknown }>;
+  return rows.map((row) => ({
+    ...row,
+    toolIds: parseNumberArray(row.toolIds),
+    skillIds: parseNumberArray(row.skillIds),
+  }));
 }
 
 export async function getAiAgent(id: number, dbClient: DbClient = sqlite) {
@@ -311,6 +343,72 @@ export async function softDeleteAiResource(input: {
     .run(input.userId, input.id);
 }
 
+export async function createAgentRunLease(input: {
+  sessionId: number;
+  agentId: number;
+  userId: number;
+  inputMessageId?: number | null;
+  parentRunId?: number | null;
+  sourceApprovalId?: number | null;
+  leaseOwner?: string;
+  leaseSeconds?: number;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const leaseOwner = input.leaseOwner ?? createAgentRunLeaseOwner();
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? DEFAULT_AGENT_RUN_LEASE_SECONDS, 15 * 60));
+  if (input.sourceApprovalId) {
+    const resumed = (await dbClient
+      .prepare(
+        `UPDATE sys_ai_agent_run
+       SET status = 'running', output_message_id = NULL, total_steps = 0,
+         input_tokens = 0, output_tokens = 0, duration_ms = NULL, error_message = NULL,
+         attempt = attempt + 1, lease_owner = ?,
+         lease_until = now() + (? * interval '1 second'), heartbeat_at = now(),
+         started_at = now(), finished_at = NULL, updated_at = now()
+       WHERE source_approval_id = ? AND session_id = ? AND user_id = ?
+         AND status IN ('failed', 'stopped', 'waiting_continuation')
+       RETURNING id, attempt, lease_owner AS "leaseOwner", lease_until AS "leaseUntil"`,
+      )
+      .get(
+        leaseOwner,
+        leaseSeconds,
+        input.sourceApprovalId,
+        input.sessionId,
+        input.userId,
+      )) as
+      | { id: number; attempt: number; leaseOwner: string; leaseUntil: string }
+      | undefined;
+    if (resumed?.id) return resumed;
+  }
+  const created = (await dbClient
+    .prepare(
+      `INSERT INTO sys_ai_agent_run
+      (session_id, agent_id, user_id, status, attempt, lease_owner, lease_until, heartbeat_at,
+       input_message_id, parent_run_id, source_approval_id, started_at)
+     VALUES (?, ?, ?, 'running', 1, ?, now() + (? * interval '1 second'), now(), ?, ?, ?, now())
+     ON CONFLICT (source_approval_id) WHERE source_approval_id IS NOT NULL DO NOTHING
+     RETURNING id, attempt, lease_owner AS "leaseOwner", lease_until AS "leaseUntil"`,
+    )
+    .get(
+      input.sessionId,
+      input.agentId,
+      input.userId,
+      leaseOwner,
+      leaseSeconds,
+      input.inputMessageId ?? null,
+      input.parentRunId ?? null,
+      input.sourceApprovalId ?? null,
+    )) as
+    | { id: number; attempt: number; leaseOwner: string; leaseUntil: string }
+    | undefined;
+  if (!created?.id && input.sourceApprovalId) {
+    throw new AiApprovalDecisionConflictError("该审批已经创建续跑任务，请刷新后查看最新运行状态");
+  }
+  if (!created?.id) throw new Error("AI Agent Run 创建失败");
+  return created;
+}
+
 export async function createAgentRun(input: {
   sessionId: number;
   agentId: number;
@@ -320,41 +418,197 @@ export async function createAgentRun(input: {
   sourceApprovalId?: number | null;
   dbClient?: DbClient;
 }) {
+  const run = await createAgentRunLease(input);
+  return Number(run.id);
+}
+
+export async function heartbeatAgentRun(input: {
+  id: number;
+  leaseOwner: string;
+  leaseSeconds?: number;
+  dbClient?: DbClient;
+}) {
   const dbClient = input.dbClient ?? sqlite;
-  if (input.sourceApprovalId) {
-    const resumed = (await dbClient
-      .prepare(
-        `UPDATE sys_ai_agent_run
-       SET status = 'running', output_message_id = NULL, total_steps = 0,
-         input_tokens = 0, output_tokens = 0, duration_ms = NULL, error_message = NULL,
-         started_at = now(), finished_at = NULL, updated_at = now()
-       WHERE source_approval_id = ? AND session_id = ? AND user_id = ?
-         AND status IN ('failed', 'stopped')
-       RETURNING id`,
-      )
-      .get(input.sourceApprovalId, input.sessionId, input.userId)) as { id: number } | undefined;
-    if (resumed?.id) return resumed.id;
-  }
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? DEFAULT_AGENT_RUN_LEASE_SECONDS, 15 * 60));
   const result = await dbClient
     .prepare(
-      `INSERT INTO sys_ai_agent_run
-      (session_id, agent_id, user_id, status, input_message_id, parent_run_id, source_approval_id, started_at)
-     VALUES (?, ?, ?, 'running', ?, ?, ?, now())
-     ON CONFLICT (source_approval_id) WHERE source_approval_id IS NOT NULL DO NOTHING
-     RETURNING id`,
+      `UPDATE sys_ai_agent_run
+       SET lease_until = now() + (? * interval '1 second'), heartbeat_at = now(), updated_at = now()
+       WHERE id = ? AND status = 'running' AND lease_owner = ? AND lease_until > now()
+       RETURNING id`,
     )
-    .run(
+    .run(leaseSeconds, input.id, input.leaseOwner);
+  if (!result.changes) throw new AiAgentRunLeaseLostError();
+}
+
+export async function assertAgentRunLease(input: {
+  id: number;
+  leaseOwner: string;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const row = await dbClient
+    .prepare(
+      `SELECT id FROM sys_ai_agent_run
+       WHERE id = ? AND status = 'running' AND lease_owner = ? AND lease_until > now()`,
+    )
+    .get(input.id, input.leaseOwner);
+  if (!row) throw new AiAgentRunLeaseLostError();
+}
+
+export async function getAgentRunLease(input: {
+  id: number;
+  sessionId: number;
+  agentId: number;
+  userId: number;
+  attempt: number;
+  leaseOwner: string;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const row = (await dbClient
+    .prepare(
+      `SELECT id, session_id AS "sessionId", agent_id AS "agentId", user_id AS "userId",
+         attempt, input_message_id AS "inputMessageId", output_message_id AS "outputMessageId",
+         lease_owner AS "leaseOwner", lease_until AS "leaseUntil"
+       FROM sys_ai_agent_run
+       WHERE id = ? AND session_id = ? AND agent_id = ? AND user_id = ?
+         AND attempt = ? AND lease_owner = ? AND status = 'running' AND lease_until > now()`,
+    )
+    .get(
+      input.id,
       input.sessionId,
       input.agentId,
       input.userId,
-      input.inputMessageId ?? null,
-      input.parentRunId ?? null,
-      input.sourceApprovalId ?? null,
-    );
-  if (!result.lastInsertRowid && input.sourceApprovalId) {
-    throw new AiApprovalDecisionConflictError("该审批已经创建续跑任务，请刷新后查看最新运行状态");
-  }
-  return Number(result.lastInsertRowid);
+      input.attempt,
+      input.leaseOwner,
+    )) as
+    | {
+        id: number;
+        sessionId: number;
+        agentId: number;
+        userId: number;
+        attempt: number;
+        inputMessageId: number | null;
+        outputMessageId: number | null;
+        leaseOwner: string;
+        leaseUntil: string;
+      }
+    | undefined;
+  if (!row) throw new AiAgentRunLeaseLostError();
+  return row;
+}
+
+export async function claimAgentRunLease(input: {
+  workerId: string;
+  leaseSeconds?: number;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const leaseSeconds = Math.max(
+    30,
+    Math.min(input.leaseSeconds ?? DEFAULT_AGENT_RUN_LEASE_SECONDS, 15 * 60),
+  );
+  const rows = await dbClient
+    .prepare(
+      `WITH candidate AS (
+         SELECT id, status
+         FROM sys_ai_agent_run
+         WHERE status = 'queued'
+            OR (status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+                AND NOT EXISTS (
+                  SELECT 1 FROM sys_ai_tool_approval approval
+                  WHERE approval.run_id = sys_ai_agent_run.id
+                    AND approval.status IN ('pending', 'executing')
+                ))
+         ORDER BY id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE sys_ai_agent_run AS run
+       SET status = 'running',
+           attempt = CASE WHEN candidate.status = 'running' THEN run.attempt + 1 ELSE run.attempt END,
+           lease_owner = ?,
+           lease_until = now() + (? * interval '1 second'),
+           heartbeat_at = now(),
+           started_at = COALESCE(run.started_at, now()),
+           finished_at = NULL,
+           updated_at = now()
+       FROM candidate
+       WHERE run.id = candidate.id
+       RETURNING run.id, run.session_id AS "sessionId", run.agent_id AS "agentId",
+         run.user_id AS "userId", run.attempt, run.input_message_id AS "inputMessageId",
+         run.output_message_id AS "outputMessageId", run.lease_owner AS "leaseOwner",
+         run.lease_until AS "leaseUntil"`,
+    )
+    .all(input.workerId, leaseSeconds);
+  const result = rows[0] as {
+    id?: number;
+    sessionId?: number;
+    agentId?: number;
+    userId?: number;
+    attempt?: number;
+    inputMessageId?: number | null;
+    outputMessageId?: number | null;
+    leaseOwner?: string;
+    leaseUntil?: string;
+  } | undefined;
+  if (!result?.id) return null;
+  return result as {
+    id: number;
+    sessionId: number;
+    agentId: number;
+    userId: number;
+    attempt: number;
+    inputMessageId: number | null;
+    outputMessageId: number | null;
+    leaseOwner: string;
+    leaseUntil: string;
+  };
+}
+
+export async function claimAgentRunLeaseForRun(input: {
+  runId: number;
+  workerId: string;
+  leaseSeconds?: number;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const leaseSeconds = Math.max(
+    30,
+    Math.min(input.leaseSeconds ?? DEFAULT_AGENT_RUN_LEASE_SECONDS, 15 * 60),
+  );
+  return (await dbClient
+    .prepare(
+      `UPDATE sys_ai_agent_run
+       SET status = 'running', attempt = attempt + 1, lease_owner = ?,
+         lease_until = now() + (? * interval '1 second'), heartbeat_at = now(),
+         started_at = COALESCE(started_at, now()), finished_at = NULL, updated_at = now()
+       WHERE id = ? AND (
+         status IN ('waiting_continuation', 'waiting_approval')
+         OR (status = 'running' AND EXISTS (
+           SELECT 1 FROM sys_ai_tool_approval approval
+           WHERE approval.run_id = sys_ai_agent_run.id
+             AND approval.status IN ('pending', 'executing')
+         ))
+       )
+       RETURNING id, session_id AS "sessionId", agent_id AS "agentId", user_id AS "userId",
+         attempt, input_message_id AS "inputMessageId", output_message_id AS "outputMessageId",
+         lease_owner AS "leaseOwner", lease_until AS "leaseUntil"`,
+    )
+    .get(input.workerId, leaseSeconds, input.runId)) as
+    | {
+        id: number;
+        sessionId: number;
+        agentId: number;
+        userId: number;
+        attempt: number;
+        inputMessageId: number | null;
+        outputMessageId: number | null;
+        leaseOwner: string;
+        leaseUntil: string;
+      }
+    | undefined;
 }
 
 export async function finishAgentRun(input: {
@@ -365,27 +619,34 @@ export async function finishAgentRun(input: {
   usage?: Record<string, unknown>;
   durationMs?: number;
   errorMessage?: string | null;
+  leaseOwner?: string;
   dbClient?: DbClient;
 }) {
   const dbClient = input.dbClient ?? sqlite;
+  const leaseCondition = input.leaseOwner
+    ? "AND lease_owner = ? AND lease_until > now() AND status IN ('running', 'waiting_approval', 'waiting_continuation')"
+    : "";
+  const params = [
+    input.status,
+    input.outputMessageId ?? null,
+    input.totalSteps ?? null,
+    Number(input.usage?.inputTokens ?? input.usage?.promptTokens ?? 0),
+    Number(input.usage?.outputTokens ?? input.usage?.completionTokens ?? 0),
+    input.durationMs ?? null,
+    input.errorMessage ?? null,
+    input.status,
+    input.id,
+    ...(input.leaseOwner ? [input.leaseOwner] : []),
+  ] as const;
   await dbClient
     .prepare(
       `UPDATE sys_ai_agent_run SET status = ?, output_message_id = COALESCE(?, output_message_id),
       total_steps = COALESCE(?, total_steps), input_tokens = ?, output_tokens = ?, duration_ms = ?,
       error_message = ?, finished_at = CASE WHEN ? = 'waiting_approval' THEN NULL ELSE now() END,
-      updated_at = now() WHERE id = ?`,
+      lease_owner = NULL, lease_until = NULL, heartbeat_at = now(),
+      updated_at = now() WHERE id = ? ${leaseCondition}`,
     )
-    .run(
-      input.status,
-      input.outputMessageId ?? null,
-      input.totalSteps ?? null,
-      Number(input.usage?.inputTokens ?? input.usage?.promptTokens ?? 0),
-      Number(input.usage?.outputTokens ?? input.usage?.completionTokens ?? 0),
-      input.durationMs ?? null,
-      input.errorMessage ?? null,
-      input.status,
-      input.id,
-    );
+    .run(...params);
 }
 
 export async function appendAgentRunStep(input: {
@@ -401,33 +662,120 @@ export async function appendAgentRunStep(input: {
   usage?: unknown;
   durationMs?: number | null;
   errorMessage?: string | null;
+  leaseOwner?: string;
   dbClient?: DbClient;
 }) {
   const dbClient = input.dbClient ?? sqlite;
-  const result = await dbClient
-    .prepare(
-      `INSERT INTO sys_ai_agent_run_step
+  const leaseOwner = input.leaseOwner;
+  if (leaseOwner) await assertAgentRunLease({ id: input.runId, leaseOwner, dbClient });
+  const insert = leaseOwner
+    ? `INSERT INTO sys_ai_agent_run_step
+      (run_id, step_no, step_type, status, tool_id, tool_name, tool_call_id, input_json,
+       output_json, usage_json, duration_ms, error_message, finished_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       CASE WHEN ? = 'waiting_approval' THEN NULL ELSE now() END
+     FROM sys_ai_agent_run
+     WHERE id = ? AND status = 'running' AND lease_owner = ? AND lease_until > now()
+     RETURNING id`
+    : `INSERT INTO sys_ai_agent_run_step
       (run_id, step_no, step_type, status, tool_id, tool_name, tool_call_id, input_json,
        output_json, usage_json, duration_ms, error_message, finished_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'waiting_approval' THEN NULL ELSE now() END)
-     RETURNING id`,
-    )
-    .run(
-      input.runId,
-      input.stepNo,
-      input.stepType,
-      input.status,
-      input.toolId ?? null,
-      input.toolName ?? null,
-      input.toolCallId ?? null,
-      input.input == null ? null : JSON.stringify(input.input),
-      input.output == null ? null : JSON.stringify(input.output),
-      input.usage == null ? null : JSON.stringify(input.usage),
-      input.durationMs ?? null,
-      input.errorMessage ?? null,
-      input.status,
-    );
+     RETURNING id`;
+  const params = [
+    input.runId,
+    input.stepNo,
+    input.stepType,
+    input.status,
+    input.toolId ?? null,
+    input.toolName ?? null,
+    input.toolCallId ?? null,
+    input.input == null ? null : JSON.stringify(input.input),
+    input.output == null ? null : JSON.stringify(input.output),
+    input.usage == null ? null : JSON.stringify(input.usage),
+    input.durationMs ?? null,
+    input.errorMessage ?? null,
+    input.status,
+    ...(leaseOwner ? [input.runId, leaseOwner] : []),
+  ] as const;
+  const result = await dbClient
+    .prepare(insert)
+    .run(...params);
+  if (!result.lastInsertRowid && leaseOwner) throw new AiAgentRunLeaseLostError();
   return Number(result.lastInsertRowid);
+}
+
+export async function appendAgentRunEvent(input: {
+  runId: number;
+  eventType: string;
+  payload: unknown;
+  leaseOwner: string;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const result = (await dbClient
+    .prepare(
+      `WITH active_run AS (
+         SELECT id, attempt FROM sys_ai_agent_run
+         WHERE id = ? AND status IN ('running', 'waiting_approval', 'waiting_continuation')
+           AND lease_owner = ? AND lease_until > now()
+       )
+       INSERT INTO sys_ai_agent_run_event
+         (run_id, attempt, sequence, event_type, payload_json, created_at)
+       SELECT active_run.id, active_run.attempt,
+         COALESCE((
+           SELECT MAX(previous.sequence) FROM sys_ai_agent_run_event previous
+           WHERE previous.run_id = active_run.id AND previous.attempt = active_run.attempt
+         ), 0) + 1,
+         ?, ?, now()
+       FROM active_run
+       RETURNING id, run_id AS "runId", attempt, sequence, event_type AS "eventType",
+         payload_json AS "payloadJson", created_at AS "createdAt"`,
+    )
+    .get(input.runId, input.leaseOwner, input.eventType, JSON.stringify(input.payload))) as
+    | {
+        id: number;
+        runId: number;
+        attempt: number;
+        sequence: number;
+        eventType: string;
+        payloadJson: string;
+        createdAt: string;
+      }
+    | undefined;
+  if (!result) throw new AiAgentRunLeaseLostError();
+  return { ...result, payload: JSON.parse(result.payloadJson) as unknown };
+}
+
+export async function listAiAgentRunEvents(input: {
+  runId: number;
+  userId: number;
+  afterEventId?: number;
+  limit?: number;
+  dbClient?: DbClient;
+}) {
+  const dbClient = input.dbClient ?? sqlite;
+  const limit = Math.min(Math.max(input.limit ?? 1000, 1), 5000);
+  const rows = (await dbClient
+    .prepare(
+      `SELECT event.id, event.run_id AS "runId", event.attempt, event.sequence,
+        event.event_type AS "eventType", event.payload_json AS "payloadJson",
+        event.created_at AS "createdAt"
+       FROM sys_ai_agent_run_event event
+       INNER JOIN sys_ai_agent_run run ON run.id = event.run_id
+       WHERE event.run_id = ? AND run.user_id = ? AND event.id > ?
+       ORDER BY event.id ASC LIMIT ?`,
+    )
+    .all(input.runId, input.userId, Math.max(input.afterEventId ?? 0, 0), limit)) as Array<{
+    id: number;
+    runId: number;
+    attempt: number;
+    sequence: number;
+    eventType: string;
+    payloadJson: string;
+    createdAt: string;
+  }>;
+  return rows.map((row) => ({ ...row, payload: JSON.parse(row.payloadJson) as unknown }));
 }
 
 export async function createToolApproval(input: {
@@ -439,9 +787,13 @@ export async function createToolApproval(input: {
   toolName: string;
   toolCallId: string;
   toolInput: unknown;
+  leaseOwner?: string;
   dbClient?: DbClient;
 }) {
   const dbClient = input.dbClient ?? sqlite;
+  if (input.leaseOwner) {
+    await assertAgentRunLease({ id: input.runId, leaseOwner: input.leaseOwner, dbClient });
+  }
   const toolInput = (input.toolInput ?? {}) as Record<string, unknown>;
   const moduleApproval =
     input.tool && isModuleAgentHandlerKey(input.tool.handlerKey)
@@ -560,7 +912,8 @@ export async function getLatestSessionAgentRun(input: {
       `SELECT r.id, r.session_id AS "sessionId", r.agent_id AS "agentId", a.name AS "agentName",
       a.code AS "agentCode", COALESCE(s.model_name, m.name) AS "modelName",
       COALESCE(s.model_identifier, m.model_id) AS "modelIdentifier",
-      r.status, r.total_steps AS "totalSteps", r.input_tokens AS "inputTokens",
+      r.status, r.attempt, r.lease_until AS "leaseUntil", r.heartbeat_at AS "heartbeatAt",
+      r.total_steps AS "totalSteps", r.input_tokens AS "inputTokens",
       r.output_tokens AS "outputTokens", r.duration_ms AS "durationMs",
       r.error_message AS "errorMessage", r.parent_run_id AS "parentRunId",
       r.source_approval_id AS "sourceApprovalId",
@@ -583,7 +936,12 @@ export async function getLatestSessionAgentRun(input: {
      FROM sys_ai_agent_run_step WHERE run_id = ? ORDER BY step_no ASC, id ASC`,
     )
     .all(Number(run.id));
-  return { ...run, steps };
+  const events = await listAiAgentRunEvents({
+    runId: Number(run.id),
+    userId: input.userId,
+    dbClient,
+  });
+  return { ...run, steps, events };
 }
 
 export async function getAiAgentRunTrace(input: {
@@ -595,7 +953,9 @@ export async function getAiAgentRunTrace(input: {
   const run = (await dbClient
     .prepare(
       `SELECT r.id, r.session_id AS "sessionId", r.agent_id AS "agentId", a.name AS "agentName",
-        a.code AS "agentCode", r.status, r.total_steps AS "totalSteps",
+        a.code AS "agentCode", r.status, r.attempt,
+        r.lease_until AS "leaseUntil", r.heartbeat_at AS "heartbeatAt",
+        r.total_steps AS "totalSteps",
         r.input_tokens AS "inputTokens", r.output_tokens AS "outputTokens",
         r.duration_ms AS "durationMs", r.error_message AS "errorMessage",
         r.parent_run_id AS "parentRunId", r.source_approval_id AS "sourceApprovalId",
@@ -627,7 +987,7 @@ export async function getAiAgentRunTrace(input: {
     .all(input.id)) as Array<Record<string, unknown> & { id: number }>;
   const invocationIds = invocations.map((item) => Number((item as { id: number }).id));
   const attempts: Array<Record<string, unknown> & { invocationId: number }> = invocationIds.length
-    ? await dbClient
+    ? ((await dbClient
         .prepare(
           `SELECT invocation_id AS "invocationId", attempt_no AS "attemptNo", status,
             provider_name AS "providerName", provider_code AS "providerCode",
@@ -640,11 +1000,17 @@ export async function getAiAgentRunTrace(input: {
            WHERE invocation_id IN (${invocationIds.map(() => "?").join(", ")})
            ORDER BY invocation_id ASC, attempt_no ASC`,
         )
-        .all(...invocationIds) as Array<Record<string, unknown> & { invocationId: number }>
+        .all(...invocationIds)) as Array<Record<string, unknown> & { invocationId: number }>)
     : [];
+  const events = await listAiAgentRunEvents({
+    runId: input.id,
+    userId: input.userId,
+    dbClient,
+  });
   return {
     ...run,
     steps,
+    events,
     invocations: invocations.map((invocation) => ({
       ...invocation,
       attempts: attempts.filter(
@@ -703,17 +1069,122 @@ export async function executeAgentTool(
     dbClient?: DbClient;
     userId?: number;
     requestId?: string;
+    runId?: number;
+    leaseOwner?: string;
+    toolCallId?: string;
+    approvedExecution?: boolean;
     approvedModuleMutation?: boolean;
   } = {},
 ) {
   const dbClient = options.dbClient ?? sqlite;
-  return executeRegisteredAiTool(tool, input, {
-    dbClient,
-    userId: options.userId,
-    requestId: options.requestId,
-    approvedModuleMutation: options.approvedModuleMutation,
-    hasAbility: (ability) => userHasAbility(options.userId, ability, dbClient),
-  });
+  if (options.runId && options.leaseOwner) {
+    await assertAgentRunLease({ id: options.runId, leaseOwner: options.leaseOwner, dbClient });
+  }
+  const toolCallId = options.toolCallId?.trim();
+  const shouldRecordExecution = Boolean(options.runId && toolCallId);
+  if (shouldRecordExecution && !options.leaseOwner && !options.approvedExecution) {
+    throw new AiAgentRunLeaseLostError("工具调用缺少有效运行租约，不能执行外部副作用");
+  }
+
+  let executionId: number | null = null;
+  let attempt: number | null = null;
+  if (shouldRecordExecution) {
+    const executionToolCallId = toolCallId as string;
+    const run = (await dbClient
+      .prepare(
+        `SELECT attempt, status FROM sys_ai_agent_run WHERE id = ?`,
+      )
+      .get(options.runId as number)) as { attempt: number; status: string } | undefined;
+    if (!run) throw new Error("AI Agent Run 不存在");
+    attempt = Number(run.attempt);
+    const claimed = await dbClient
+      .prepare(
+        `INSERT INTO sys_ai_tool_execution
+         (run_id, attempt, tool_id, tool_name, tool_call_id, input_json, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'running')
+         ON CONFLICT (run_id, attempt, tool_call_id) DO NOTHING
+         RETURNING id`,
+      )
+      .run(
+        options.runId as number,
+        attempt,
+        tool.id,
+        tool.code,
+        executionToolCallId,
+        JSON.stringify(input),
+      );
+    if (claimed.lastInsertRowid) {
+      executionId = Number(claimed.lastInsertRowid);
+    } else {
+      const previousAttempt = (await dbClient
+        .prepare(
+          `SELECT status, output_json AS "outputJson", error_message AS "errorMessage"
+           FROM sys_ai_tool_execution
+           WHERE run_id = ? AND tool_call_id = ?
+           ORDER BY attempt DESC LIMIT 1`,
+        )
+        .get(options.runId as number, executionToolCallId)) as
+        | { status: string; outputJson: string | null; errorMessage: string | null }
+        | undefined;
+      if (previousAttempt?.status === "completed") {
+        return previousAttempt.outputJson ? JSON.parse(previousAttempt.outputJson) : null;
+      }
+      const previous = (await dbClient
+        .prepare(
+          `SELECT status, output_json AS "outputJson", error_message AS "errorMessage"
+           FROM sys_ai_tool_execution
+           WHERE run_id = ? AND attempt = ? AND tool_call_id = ?`,
+        )
+        .get(options.runId as number, attempt, executionToolCallId)) as
+        | { status: string; outputJson: string | null; errorMessage: string | null }
+        | undefined;
+      if (previous?.status === "completed") {
+        return previous.outputJson ? JSON.parse(previous.outputJson) : null;
+      }
+      throw new AiToolExecutionConflictError(
+        previous?.status === "failed"
+          ? previous.errorMessage || "该工具调用已失败，不能使用相同调用标识重试"
+          : undefined,
+      );
+    }
+  }
+
+  try {
+    if (options.runId && options.leaseOwner) {
+      // The first check fences the database claim; this second check is deliberately
+      // adjacent to the side effect so an expired attempt cannot continue after takeover.
+      await assertAgentRunLease({ id: options.runId, leaseOwner: options.leaseOwner, dbClient });
+    }
+    const output = await executeRegisteredAiTool(tool, input, {
+      dbClient,
+      userId: options.userId,
+      requestId: options.requestId,
+      approvedModuleMutation: options.approvedModuleMutation,
+      hasAbility: (ability) => userHasAbility(options.userId, ability, dbClient),
+    });
+    if (executionId) {
+      await dbClient
+        .prepare(
+          `UPDATE sys_ai_tool_execution
+           SET status = 'completed', output_json = ?, error_message = NULL,
+             finished_at = now(), updated_at = now()
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(JSON.stringify(output), executionId);
+    }
+    return output;
+  } catch (error) {
+    if (executionId) {
+      await dbClient
+        .prepare(
+          `UPDATE sys_ai_tool_execution
+           SET status = 'failed', error_message = ?, finished_at = now(), updated_at = now()
+           WHERE id = ? AND status = 'running'`,
+        )
+        .run(error instanceof Error ? error.message : String(error), executionId);
+    }
+    throw error;
+  }
 }
 
 export async function decideToolApproval(input: {
@@ -743,11 +1214,17 @@ export async function decideToolApproval(input: {
      )
      SELECT claimed.*, t.handler_key AS "handlerKey", t.code, t.description,
        t.risk_level AS "riskLevel", t.approval_required AS "approvalRequired",
-       t.status AS "toolStatus", t.is_system AS "isSystem", t.name
+       t.status AS "toolStatus", t.is_system AS "isSystem", t.name,
+       t.config_json AS "configJson"
      FROM claimed LEFT JOIN sys_ai_tool t ON t.id = claimed.tool_id`,
     )
     .get(claimStatus, input.reason ?? null, input.userId, input.id, input.userId)) as
-    | (Record<string, unknown> & { input_json?: string; handlerKey?: string; name?: string })
+    | (Record<string, unknown> & {
+        input_json?: string;
+        handlerKey?: string;
+        name?: string;
+        configJson?: string | null;
+      })
     | undefined;
 
   if (!approval) {
@@ -822,6 +1299,20 @@ export async function decideToolApproval(input: {
     });
     return { status: "denied", output: null, sessionId: Number(approval.session_id) };
   }
+  const continuationLease = await claimAgentRunLeaseForRun({
+    runId: Number(approval.run_id),
+    workerId: `approval-${input.id}-${randomUUID().slice(0, 8)}`,
+  });
+  if (!continuationLease) {
+    await dbClient
+      .prepare(
+        `UPDATE sys_ai_tool_approval
+         SET status = 'failed', reason = '运行已被其他执行器接管，请重新发起审批', updated_at = now()
+         WHERE id = ? AND status = 'executing'`,
+      )
+      .run(input.id);
+    throw new AiApprovalDecisionConflictError("该运行已被其他执行器接管，请刷新后重试");
+  }
   const tool: AiToolRow = {
     id: Number(approval.tool_id),
     name: String(approval.name || approval.tool_name),
@@ -829,7 +1320,7 @@ export async function decideToolApproval(input: {
     description: String(approval.description || ""),
     handlerKey: String(approval.handlerKey || ""),
     inputSchemaJson: null,
-    configJson: null,
+    configJson: approval.configJson ? String(approval.configJson) : null,
     riskLevel: String(approval.riskLevel || "medium") as AiToolRow["riskLevel"],
     approvalRequired: Boolean(approval.approvalRequired),
     status: Number(approval.toolStatus ?? 0),
@@ -856,6 +1347,10 @@ export async function decideToolApproval(input: {
     const output = await executeAgentTool(tool, toolInput, {
       dbClient,
       userId: input.userId,
+      runId: Number(approval.run_id),
+      leaseOwner: continuationLease.leaseOwner,
+      toolCallId: String(approval.tool_call_id),
+      approvedExecution: true,
       approvedModuleMutation: true,
     });
     await dbClient
@@ -870,9 +1365,9 @@ export async function decideToolApproval(input: {
       .run(JSON.stringify(output), Number(approval.step_id));
     await dbClient
       .prepare(
-        "UPDATE sys_ai_agent_run SET status = 'waiting_continuation', error_message = NULL, finished_at = NULL, updated_at = now() WHERE id = ?",
+        "UPDATE sys_ai_agent_run SET status = 'waiting_continuation', error_message = NULL, finished_at = NULL, updated_at = now() WHERE id = ? AND lease_owner = ? AND lease_until > now()",
       )
-      .run(Number(approval.run_id));
+      .run(Number(approval.run_id), continuationLease.leaseOwner);
     await dbClient
       .prepare(
         `INSERT INTO sys_ai_chat_message (session_id, user_id, role, content, status)
@@ -898,9 +1393,9 @@ export async function decideToolApproval(input: {
       .run(errorMessage, input.userId, input.id);
     await dbClient
       .prepare(
-        "UPDATE sys_ai_agent_run SET status = 'failed', error_message = ?, finished_at = now(), updated_at = now() WHERE id = ?",
+        "UPDATE sys_ai_agent_run SET status = 'failed', error_message = ?, finished_at = now(), updated_at = now() WHERE id = ? AND lease_owner = ? AND lease_until > now()",
       )
-      .run(errorMessage, Number(approval.run_id));
+      .run(errorMessage, Number(approval.run_id), continuationLease.leaseOwner);
     if (approval.step_id) {
       await dbClient
         .prepare(

@@ -3,6 +3,10 @@
 > 当前核对：2026-08-24
 > 目标：记录当前项目真实技术栈、模块边界、运行链路和架构约束。后续新增能力时，先更新本文，再改实现。
 
+业务与 AI 的长期阶段、技术预研和业务产品合同统一从
+[`docs/admin-base-business-ai-roadmap.md`](./admin-base-business-ai-roadmap.md) 进入。该路线图描述目标和完成闸门，
+不替代本文的当前架构，也不表示规划能力已经实现。
+
 AI 服务商连接、模型、Playground、Chat 和 Agent 的详细职责见
 [`docs/ai-module-boundaries.md`](./ai-module-boundaries.md)。
 Web Search 的已交付边界以及 Knowledge/RAG、Notebook、Eval、Memory、Runtime Skill 和 MCP 的
@@ -19,6 +23,8 @@ CRM、企业知识库、数据查询和供应链的端到端组合示例见
 [`docs/ai-business-use-case-cookbook.md`](./ai-business-use-case-cookbook.md)。
 Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
 [`docs/ai-notebook-citation-experience.md`](./ai-notebook-citation-experience.md)。
+可视化 Workflow 画布、Mastra Builder contract、节点配置和运行边界见
+[`docs/ai-visual-workflow.md`](./ai-visual-workflow.md)。
 
 ## 1. 当前技术栈
 
@@ -38,7 +44,7 @@ Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
 | 文件存储      | 本地存储 + S3-compatible                    | 文件上传、下载、物理删除、默认存储配置                              |
 | 邮件          | Nodemailer                                  | SMTP 配置、测试发送                                                 |
 | AI 模型运行时 | AI SDK 7                                    | Provider、生成、流式、Tool Calling、结构化输出、Embedding 和 Rerank |
-| AI 编排内核   | Mastra Core 1.59                            | 渐进式 Agent/Workflow 编排；当前仅通用助手 canary                   |
+| AI 编排内核   | Mastra Core 1.59                            | 通用助手 canary、Workflow Builder/preflight 和渐进式编排迁移        |
 | 日志          | Pino + `sys_operation_log`                  | 结构化请求日志、错误日志、request id、后台操作日志                  |
 | 文档/文件预览 | `docx-preview`、`xlsx`、浏览器原生预览      | Word、Excel、PDF、图片、音视频、文本预览                            |
 | 图表          | ECharts 6                                   | 仪表盘和后续分析图表                                                |
@@ -205,6 +211,7 @@ CRUD factory 当前能力：
 | `sys_ai_web_search_provider`                                          | Tavily、Brave、SearXNG 搜索连接、密钥和调用优先级                                |
 | `sys_ai_workflow_run`                                                 | 可信 AI Workflow 运行、状态、输入输出和 Request ID                               |
 | `sys_ai_workflow_run_step`                                            | Workflow 确定性步骤、耗时、输入输出和错误                                        |
+| `sys_ai_workflow_wait`                                                | Workflow 审批、业务事件和定时等待，以及恢复关联键、超时和处理结果                 |
 | `sys_ai_purpose_route` / `sys_ai_purpose_model`                       | Chat、Agent、RAG、Eval 等用途的主模型和有序候选模型                              |
 | `sys_ai_invocation` / `sys_ai_invocation_attempt`                     | 逻辑调用、Provider/Model 尝试、Token、费用、延迟和脱敏错误                       |
 | `sys_ai_knowledge_base` / `sys_ai_document` / `sys_ai_document_chunk` | 带全局、部门、个人可见范围的知识库、文件/网站快照来源版本、文本分块和 Embedding  |
@@ -213,11 +220,13 @@ CRUD factory 当前能力：
 | `sys_ai_eval_dataset` / `sys_ai_eval_case`                            | 带可见范围的 Eval 数据集、固定输入、期望和确定性断言                             |
 | `sys_ai_eval_run` / `sys_ai_eval_result`                              | 不可覆盖的同步评测批次、结果、指标及 Agent Run Trace 关联                        |
 | `sys_ai_notebook_artifact`                                            | 带来源版本、引用、RAG Run 和模型 Invocation 快照的生成产物                       |
+| `sys_ai_notebook_research_candidate`                                 | Notebook 联网研究候选 URL 的查询、接受、解析、就绪/失败状态和导入关联               |
 | `sys_ai_memory`                                                       | 用户显式保存的跨会话 User/Agent Memory、状态和过期策略                           |
 | `sys_ai_runtime_skill` / `sys_ai_agent_skill`                         | Runtime Skill 指令、Agent 绑定及允许 Tool 关系                                   |
 | `sys_ai_mcp_server` / `sys_ai_mcp_connection` / `sys_ai_mcp_tool`     | MCP Server、加密 OAuth 连接、远端 Tool 生命周期和 allowlist                      |
 | `sys_ai_provider_circuit`                                             | Provider/用途持久熔断、half-open 探针租约和失败计数                              |
 | `sys_ai_job`                                                          | PostgreSQL Worker Job、幂等键、优先级、重试和领取租约                            |
+| `sys_ai_tool_execution`                                               | Agent Tool 按 Run/Attempt/ToolCall 的副作用幂等记录、结果缓存和失败证据             |
 | `sys_ai_quota_policy` / `sys_ai_billing_ledger`                       | system/department/user 配额和估算/调整/结算账本                                  |
 | `sys_ai_notebook_member`                                              | Notebook viewer/editor 协作成员                                                  |
 
@@ -234,7 +243,7 @@ CRUD factory 当前能力：
 - AI 用途路由和调用账本是全局系统数据，显式使用 `dataScope: false`：只有具备系统权限的管理员可查看或修改。账本默认不保存 Prompt、回复正文或 Provider 密钥。
 - Knowledge 记录显式区分 `global | department | user`。部门和个人归属由服务端写入，列表、按 ID 操作、检索和问答使用同一可见性条件，显式传入未授权知识库 ID 不能绕过过滤。
 - 文件字节继续复用 `sys_storage` 和 `sys_file`，但管理域由 `sys_file.usage_type` 隔离：`general` 只进入普通后台文件管理，`knowledge` 只由 Knowledge/Notebook 来源管理，`user_content` 预留给 C 端上传 API。普通文件列表、下载、移动、回收站和分组统计都不能越过用途域；知识上传不创建普通文件分组记录。从普通文件库导入时，服务端复制物理对象到新路径并创建独立 `knowledge` 文件记录，来源元数据只用于审计追溯，原普通文件的移动、修改或删除不会影响知识文档。
-- Notebook 联网搜索只负责发现候选 URL，选中结果必须重新经过公开 URL 校验、正文抓取、Markdown 快照、分块和索引链路。Deep Research 复用 Worker Job、Workflow Run/Step、Web Search、Website Source、Knowledge/RAG、Citation、Invocation 和 Artifact，不建立第二套检索或 Trace 模型。
+- Notebook 联网搜索只负责发现候选 URL；结果先持久化为 `candidate`，选中结果必须重新经过公开 URL 校验、正文抓取、Markdown 快照、分块和索引链路，候选状态再进入 `accepted -> parsing -> ready | failed`。Deep Research 复用 Worker Job、Workflow Run/Step、Web Search、Website Source、Knowledge/RAG、Citation、Invocation 和 Artifact，不建立第二套检索或 Trace 模型。
 - Knowledge/RAG v1 复用 `sys_file`，支持 TXT、Markdown、PDF 和 DOCX；使用 PostgreSQL `tsvector`/GIN 取得关键词候选，并在 TypeScript 中与 JSON Embedding 计算余弦混合分数。授权过滤完成后，已配置的 `rerank` 用途模型会对最多 50 条候选重排序；调用失败时保留混合检索顺序并记录降级 Trace。当前不假设部署环境已安装 `pgvector`，后续可在不改变 Document/Chunk/RAG API 的前提下迁移向量列。
 - 知识库按实例保存 `auto | documentation | paragraph | sentence | recursive | fixed` 分块模板、目标长度和语义重叠。Markdown 默认保留标题、段落与代码块，PDF/DOCX/TXT 默认使用递归语义边界。每次索引把实际配置和 chunker 版本快照写入文档与 chunk 元数据；修改知识库配置后需要显式重新索引。
 - RAG 问题正文默认只保存 SHA-256，不写入 RAG Run；回答正文不写入调用账本。引用保存当时的 chunk quote，回答 Invocation 可回到统一 Trace 查看 Provider、Model、Token、费用与回退尝试。
@@ -242,7 +251,7 @@ CRUD factory 当前能力：
 - Eval 显式使用 `global | department | user` 数据集归属，Case 继承数据集可见范围。执行复用真实 Agent Runtime，每个 Case 保存独立 Agent Run，并从 Result 回链 Run/Step/Approval 与 Invocation/Attempt。同步 Eval 不自动批准工具；需要人工审批的调用会留下拒绝证据并使 Case 失败。重跑只新增 Run/Result，不覆盖历史。
 - Memory 只接受手工或用户确认写入，按当前用户所有权读取；Runtime Skill 只组合指令和已注册 Tool，不执行上传代码。Agent Knowledge Tool 继续叠加 Knowledge 数据范围。
 - MCP 仅允许受控远程 Streamable HTTP。同步 Tool 默认不可信，必须 allowlist 后执行；OAuth Secret 和 Token 加密保存且不回显。
-- AI Worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期、幂等键、重试和取消。它是 PostgreSQL Queue/Outbox 基础，不等于外部 Broker 或任务调度中心。
+- AI Worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期、幂等键、重试和取消。Workflow 的长 Sleep、Sleep Until、审批超时和事件超时通过 `workflow_resume` Job 到期恢复；Parser 通过 `knowledge_parser` Job 常驻执行。它是 PostgreSQL Queue/Outbox 基础，不等于外部 Broker 或任务调度中心。
 - AI 配额目前按 system/department/user 汇总调用与同币种账本；usage 为模型价格估算，可由管理员确认或作废，但不是 Provider 官方发票。
 - `/system/ai/setup` 是普通接入入口，只编排现有 Provider/Model 契约：发现阶段不落库，完成阶段使用单事务创建连接、批量模型和默认用途；高级管理页面继续保留全部配置能力。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
@@ -323,13 +332,17 @@ pnpm build
 ```bash
 pnpm db:migrate
 pnpm db:seed
-pnpm dev
+pnpm dev:all
 curl http://localhost:3000/api/health
 curl http://localhost:3000/api/ready
 ```
 
 注意：
 
+- `pnpm dev` 只启动 Web/API；涉及 Notebook Deep Research、异步 Artifact 或 Eval Job 时使用
+  `pnpm dev:all` 同时启动 Web/API 与 PostgreSQL AI Worker。
+- 生产环境必须把 Web、Worker 和队列 Monitor 作为独立常驻进程；Monitor 根据超时未领取 Job 和
+  过期租约输出结构化告警，并可发送状态变化 Webhook。
 - `pnpm e2e` 只允许使用 `TEST_DATABASE_URL` 指向的 `*_test` 数据库，并在独立 3101 端口启动服务。
 - 日常生产预检继续使用非破坏性的 `pnpm smoke`；smoke 不执行 migration、seed 或 reset。
 
@@ -354,9 +367,16 @@ AI Chat / Agent / future Workflow
 - Mastra Tool 由现有服务端 Tool Registry 映射，执行仍经过权限、审批、Run/Step 和审计边界。
 - Mastra RequestContext 注入 `userId`、abilities、requestId 和已解析 data scope。
 - Mastra stream 会归一化到现有 SSE 事件，前端和 Chat API 不需要识别第二套协议。
-- Workflow 只能从服务端静态注册表执行；首个 `ai-runtime-preflight` 工作流只读检查 Agent、Provider、
-  Model、Tool 和治理上下文，不调用外部模型、不修改配置。
-- Workflow Run/Step 由 `sys_ai_workflow_run*` 持久化，并继续受 `sys_rule`、Request ID 和操作日志治理。
+- 静态 `ai-runtime-preflight` 继续用于 Runtime 健康检查；管理员发布的可视化 Workflow 从不可变版本动态装载，
+  Agent、Tool、Model、Knowledge 和子 Workflow 引用在发布边界校验。
+- Workflow Run/Step/Wait 与 continuation 由 `sys_ai_workflow_run*` 持久化，并继续受 `sys_rule`、Request ID
+  和操作日志治理。超过 30 秒的时间等待、审批、事件和人工输入可暂停并恢复同一个 Run。
+- 可视化平台治理节点当前编译为带兼容标记的 JSON-safe Mastra Builder 占位合同，实际由 Admin Base executor
+  执行；这不是 Mastra 原生节点。父子 Workflow 保存 parent Run/node/call depth；子 Run 持久暂停会让父 Run
+  创建 `child_workflow` Wait，子流程完成后通过 PostgreSQL Worker 恢复父流程。
+- Workflow Job 的立即 `available_at` 由 PostgreSQL `now()` 生成，避免 Web/DB 时钟偏差；Worker 依赖
+  `FOR UPDATE SKIP LOCKED`、租约、owner 和 attempt fencing 接管过期任务。本机隔离验收已覆盖第一个
+  Worker 被 `SIGKILL` 后由第二个 Worker 接管 Timer 与父子暂停流程，真实多主机和网络分区仍是部署门禁。
 - Web Search 由 `sys_ai_web_search_provider` 和系统内置 `web-search` Tool 提供；仅接受 query/limit，
   按 Provider sort 回退，并把服务端来源写入 Step、SSE 和 Assistant metadata。
 - `ai-reliability-service` 是模型用途解析、调用账本、缓存感知费用估算和有序失败回退的共享边界。Chat、Structured、Embedding、Rerank、Legacy Agent 和 Mastra Agent 共用该边界；已经输出流内容的调用不会切换模型，避免拼接不同模型的半段回答。

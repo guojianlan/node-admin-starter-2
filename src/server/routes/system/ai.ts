@@ -34,6 +34,7 @@ import {
   updateAiChatMessage,
 } from "@/server/services/ai-chat-service";
 import {
+  appendAgentRunEvent,
   appendAgentRunStep,
   createToolApproval,
   finishAgentRun,
@@ -44,6 +45,7 @@ import {
 } from "@/server/services/ai-agent-service";
 import { createAiAgentStream } from "@/server/services/ai-agent-runtime-service";
 import { governAiChatContext } from "@/server/services/ai-context-service";
+import { proposeAiMemoryCandidate } from "@/server/services/ai-governance-service";
 import {
   generateAiText,
   resolveAiOutputTokens,
@@ -1042,8 +1044,8 @@ function toErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function encodeSseEvent(event: string, data: unknown) {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+function encodeSseEvent(event: string, data: unknown, id?: number) {
+  return `${id == null ? "" : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
 async function buildAiPlaygroundStreamResponse(
@@ -1176,6 +1178,13 @@ async function buildAiChatStreamResponse(input: {
       content: trimmedContent,
       status: "completed",
     });
+    await proposeAiMemoryCandidate({
+      userId: input.userId,
+      agentId: session.agentId,
+      sessionId: input.sessionId,
+      messageId: inputMessageId,
+      content: trimmedContent,
+    });
     existingMessages = await listAiChatMessages({
       sessionId: input.sessionId,
       userId: input.userId,
@@ -1210,6 +1219,7 @@ async function buildAiChatStreamResponse(input: {
     modelId: config.model.id,
   });
   const temperature = session.temperatureMilli / 1000;
+  const agentLeaseAbortController = new AbortController();
   let agentRuntime: Awaited<ReturnType<typeof createAiAgentStream>> | null = null;
   let plainRuntime: Awaited<ReturnType<typeof streamAiText>> | null = null;
   try {
@@ -1225,7 +1235,7 @@ async function buildAiChatStreamResponse(input: {
           modelId: selectedModelId,
           maxOutputTokens,
           temperature,
-          abortSignal: input.abortSignal,
+          abortSignal: AbortSignal.any([input.abortSignal, agentLeaseAbortController.signal]),
           abilities: input.abilities,
           requestId: input.requestId,
         })
@@ -1272,11 +1282,21 @@ async function buildAiChatStreamResponse(input: {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
+      const send = async (event: string, data: unknown) => {
+        let eventId: number | undefined;
+        if (agentRuntime) {
+          const persisted = await appendAgentRunEvent({
+            runId: agentRuntime.runId,
+            leaseOwner: agentRuntime.leaseOwner,
+            eventType: event,
+            payload: data,
+          });
+          eventId = persisted.id;
+        }
+        controller.enqueue(encoder.encode(encodeSseEvent(event, data, eventId)));
       };
 
-      send("meta", {
+      await send("meta", {
         sessionId: input.sessionId,
         messageId: assistantMessageId,
         agent: agent ? { id: agent.id, name: agent.name, code: agent.code } : null,
@@ -1325,6 +1345,16 @@ async function buildAiChatStreamResponse(input: {
         generationMs: firstTextMs != null ? Math.max(totalMs - firstTextMs, 0) : null,
         reasoningObserved,
       });
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+      let heartbeatError: unknown = null;
+      if (agentRuntime?.heartbeat) {
+        heartbeatTimer = setInterval(() => {
+          void agentRuntime?.heartbeat().catch((error: unknown) => {
+            heartbeatError = error;
+            agentLeaseAbortController.abort(error);
+          });
+        }, 30_000);
+      }
       try {
         if (agentRuntime) {
           for await (const part of agentRuntime.stream.fullStream) {
@@ -1333,7 +1363,7 @@ async function buildAiChatStreamResponse(input: {
               firstTextMs ??= elapsedMs();
               finishReasoning();
               assistantText += part.text;
-              send("delta", { text: part.text });
+              await send("delta", { text: part.text });
             } else if (part.type === "reasoning-start") {
               markFirstResponse();
               reasoningObserved = true;
@@ -1349,7 +1379,7 @@ async function buildAiChatStreamResponse(input: {
             } else if (part.type === "tool-call") {
               markFirstResponse();
               finishReasoning();
-              send("tool-call", {
+              await send("tool-call", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
                 input: part.input,
@@ -1364,14 +1394,17 @@ async function buildAiChatStreamResponse(input: {
                   if (!known.has(source.url)) searchSources.push(source);
                   known.add(source.url);
                 }
-                send("sources", { toolCallId: part.toolCallId, sources });
+                await send("sources", { toolCallId: part.toolCallId, sources });
               }
-              send("tool-result", {
+              await send("tool-result", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
                 output: part.output,
               });
             } else if (part.type === "tool-approval-request") {
+              // A model may emit several approval requests in one step. Persist only the first
+              // one so each tool is reviewed and executed in sequence after the next continuation.
+              if (waitingApproval) continue;
               markFirstResponse();
               finishReasoning();
               waitingApproval = true;
@@ -1386,6 +1419,7 @@ async function buildAiChatStreamResponse(input: {
                 toolName: part.toolCall.toolName,
                 toolCallId: part.toolCall.toolCallId,
                 input: part.toolCall.input,
+                leaseOwner: agentRuntime.leaseOwner,
               });
               const approvalId = await createToolApproval({
                 runId: agentRuntime.runId,
@@ -1396,8 +1430,9 @@ async function buildAiChatStreamResponse(input: {
                 toolName: part.toolCall.toolName,
                 toolCallId: part.toolCall.toolCallId,
                 toolInput: part.toolCall.input,
+                leaseOwner: agentRuntime.leaseOwner,
               });
-              send("approval", {
+              await send("approval", {
                 id: approvalId,
                 toolName: part.toolCall.toolName,
                 handlerKey: toolRow?.handlerKey ?? null,
@@ -1411,6 +1446,7 @@ async function buildAiChatStreamResponse(input: {
                 status: "completed",
                 usage: part.usage,
                 durationMs: Math.round(part.performance.stepTimeMs),
+                leaseOwner: agentRuntime.leaseOwner,
               });
             } else if (part.type === "finish") {
               markFirstResponse();
@@ -1431,7 +1467,7 @@ async function buildAiChatStreamResponse(input: {
               firstTextMs ??= elapsedMs();
               finishReasoning();
               assistantText += part.text;
-              send("delta", { text: part.text });
+              await send("delta", { text: part.text });
             } else if (part.type === "reasoning-start") {
               markFirstResponse();
               reasoningObserved = true;
@@ -1492,20 +1528,7 @@ async function buildAiChatStreamResponse(input: {
           compactedThroughMessageId: governed.compactedThroughMessageId,
           title: shouldTitleFromContent ? titleFromContent(trimmedContent) : undefined,
         });
-        if (agentRuntime) {
-          await finishAgentRun({
-            id: agentRuntime.runId,
-            status: waitingApproval ? "waiting_approval" : "completed",
-            outputMessageId: assistantMessageId,
-            totalSteps: agentRuntime.currentStepNo(),
-            usage: normalizedUsage,
-            durationMs,
-          });
-          if (continuation) {
-            await finishAgentRun({ id: continuation.parentRunId, status: "completed" });
-          }
-        }
-        send("finish", {
+        await send("finish", {
           messageId: assistantMessageId,
           finishReason,
           rawFinishReason,
@@ -1515,6 +1538,20 @@ async function buildAiChatStreamResponse(input: {
           waitingApproval,
           context: governed.stats,
         });
+        if (agentRuntime) {
+          await finishAgentRun({
+            id: agentRuntime.runId,
+            status: waitingApproval ? "waiting_approval" : "completed",
+            outputMessageId: assistantMessageId,
+            totalSteps: agentRuntime.currentStepNo(),
+            usage: normalizedUsage,
+            durationMs,
+            leaseOwner: agentRuntime.leaseOwner,
+          });
+          if (continuation) {
+            await finishAgentRun({ id: continuation.parentRunId, status: "completed" });
+          }
+        }
       } catch (error) {
         const stopped = input.abortSignal.aborted;
         const durationMs = runtime.resolveDurationMs();
@@ -1533,6 +1570,13 @@ async function buildAiChatStreamResponse(input: {
           metadata: { timing },
           durationMs,
         });
+        await send("error", {
+          message: toErrorMessage(error),
+          messageId: assistantMessageId,
+          status: stopped ? "stopped" : "failed",
+          durationMs,
+          timing,
+        });
         if (agentRuntime) {
           await finishAgentRun({
             id: agentRuntime.runId,
@@ -1540,17 +1584,12 @@ async function buildAiChatStreamResponse(input: {
             outputMessageId: assistantMessageId,
             totalSteps: agentRuntime.currentStepNo(),
             durationMs,
-            errorMessage: stopped ? null : toErrorMessage(error),
+            errorMessage: stopped ? null : toErrorMessage(heartbeatError ?? error),
+            leaseOwner: agentRuntime.leaseOwner,
           });
         }
-        send("error", {
-          message: toErrorMessage(error),
-          messageId: assistantMessageId,
-          status: stopped ? "stopped" : "failed",
-          durationMs,
-          timing,
-        });
       } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
         controller.close();
       }
     },

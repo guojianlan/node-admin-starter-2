@@ -19,6 +19,9 @@ describe("admin base env", () => {
     expect(result.data.adminBaseAdminPassword).toBe(DEFAULT_ADMIN_BASE_ADMIN_PASSWORD);
     expect(result.data.adminBaseTokenTtlDays).toBe(7);
     expect(result.data.databasePoolSize).toBe(10);
+    expect(result.data.aiWorkerStalledAfterSeconds).toBe(60);
+    expect(result.data.aiWorkerMonitorIntervalSeconds).toBe(30);
+    expect(result.data.aiWorkerAlertWebhookUrl).toBeNull();
   });
 
   it("rejects missing production database and secrets", () => {
@@ -52,11 +55,31 @@ describe("admin base env", () => {
       ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
       ADMIN_BASE_ADMIN_PASSWORD: "production-admin-password",
       LOG_LEVEL: "warn",
+      ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS: "120",
+      ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS: "15",
+      ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL: "https://alerts.example.com/admin-base",
     } as NodeJS.ProcessEnv);
 
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.isProduction).toBe(true);
     expect(result.data.logLevel).toBe("warn");
+    expect(result.data.aiWorkerStalledAfterSeconds).toBe(120);
+    expect(result.data.aiWorkerMonitorIntervalSeconds).toBe(15);
+    expect(result.data.aiWorkerAlertWebhookUrl).toBe("https://alerts.example.com/admin-base");
+  });
+
+  it("rejects unsafe Worker monitoring thresholds and invalid webhook URLs", () => {
+    const result = validateAdminBaseEnv({
+      NODE_ENV: "development",
+      ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS: "1",
+      ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS: "2",
+      ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL: "not-a-url",
+    } as NodeJS.ProcessEnv);
+
+    expect(result.success).toBe(false);
+    expect(result.issues.join("\n")).toContain("ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS");
+    expect(result.issues.join("\n")).toContain("ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS");
+    expect(result.issues.join("\n")).toContain("ADMIN_BASE_AI_WORKER_ALERT_WEBHOOK_URL");
   });
 });

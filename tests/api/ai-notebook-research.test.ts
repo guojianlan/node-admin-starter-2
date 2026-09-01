@@ -94,9 +94,12 @@ describe("AI Notebook web research", () => {
       body: JSON.stringify({ query: "private topic", limit: 10 }),
     });
     expect(response.status).toBe(200);
-    const body = await readJson<{ results: Array<{ url: string }>; attempts: unknown[] }>(response);
+    const body = await readJson<{
+      results: Array<{ url: string; candidateId: number }>;
+      attempts: unknown[];
+    }>(response);
     expect(body.data?.results).toEqual([
-      expect.objectContaining({ url: "https://example.com/rag" }),
+      expect.objectContaining({ url: "https://example.com/rag", candidateId: expect.any(Number) }),
     ]);
     expect(body.data?.attempts).toHaveLength(1);
 
@@ -109,6 +112,21 @@ describe("AI Notebook web research", () => {
       .get()) as { detailsJson: string };
     expect(log.detailsJson).toContain("queryHash");
     expect(log.detailsJson).not.toContain("private topic");
+
+    const candidates = await readJson<{
+      data: Array<{ url: string; status: string; candidateId?: number }>;
+      total: number;
+    }>(
+      await app.request(
+        `/api/system/ai/notebook/${notebookId}/sources/search/candidates?page=1&pageSize=10`,
+        { headers: authHeaders(token) },
+      ),
+    );
+    expect(candidates.data?.total).toBe(1);
+    expect(candidates.data?.data[0]).toMatchObject({
+      url: "https://example.com/rag",
+      status: "candidate",
+    });
   });
 
   it("imports selected results with duplicate reuse and isolated partial failure", async () => {
@@ -257,6 +275,18 @@ describe("AI Notebook web research", () => {
     });
     expect(result.failed).toHaveLength(1);
 
+    const candidates = (await sqlite
+      .prepare(
+        `SELECT status, COUNT(*)::int AS count
+         FROM sys_ai_notebook_research_candidate
+         WHERE notebook_id = ? AND deleted_at IS NULL GROUP BY status ORDER BY status`,
+      )
+      .all(notebookId)) as Array<{ status: string; count: number }>;
+    expect(candidates).toEqual([
+      { status: "failed", count: 1 },
+      { status: "ready", count: 2 },
+    ]);
+
     const detail = (await getAiNotebookResearchRun({
       notebookId,
       runId: queued.runId,
@@ -306,6 +336,41 @@ describe("AI Notebook web research", () => {
       .get(queued.jobId);
     expect(run).toEqual({ status: "cancelled" });
     expect(job).toEqual({ status: "cancelled" });
+  });
+
+  it("marks a research Run when its claimable Worker Job exceeds the queue threshold", async () => {
+    const notebookId = await createNotebook();
+    const queued = await enqueueAiNotebookDeepResearch({
+      notebookId,
+      topic: "Worker queue health acceptance",
+      userId: 1,
+    });
+    await sqlite
+      .prepare("UPDATE sys_ai_job SET available_at = now() - interval '2 minutes' WHERE id = ?")
+      .run(queued.jobId);
+
+    const list = await listAiNotebookResearchRuns({ notebookId, userId: 1 });
+    expect(list.workerStalledAfterSeconds).toBeGreaterThanOrEqual(10);
+    expect(list.data[0]).toMatchObject({
+      id: queued.runId,
+      jobId: queued.jobId,
+      jobStatus: "queued",
+      queueStalled: true,
+    });
+    const detail = (await getAiNotebookResearchRun({
+      notebookId,
+      runId: queued.runId,
+      userId: 1,
+    })) as unknown as {
+      queueStalled: boolean;
+      queueWaitSeconds: number;
+      workerStalledAfterSeconds: number;
+    };
+    expect(detail).toMatchObject({
+      queueStalled: true,
+      workerStalledAfterSeconds: list.workerStalledAfterSeconds,
+    });
+    expect(Number(detail.queueWaitSeconds)).toBeGreaterThanOrEqual(100);
   });
 
   it("keeps knowledge uploads out of ordinary file management", async () => {

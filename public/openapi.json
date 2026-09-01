@@ -416,6 +416,9 @@
     "/system/ai/chat/sessions/{id}/approvals": {
       "get": { "tags": ["ai"], "summary": "List tool approvals for AI Chat" }
     },
+    "/system/ai/chat/sessions/{id}/runs/{runId}/events": {
+      "get": { "tags": ["ai"], "summary": "Replay persisted Agent Run events" }
+    },
     "/system/ai/chat/sessions/{sessionId}/client-actions/{id}/result": {
       "post": {
         "tags": ["ai"],
@@ -561,6 +564,12 @@
         "summary": "Securely refetch and import selected search results"
       }
     },
+    "/system/ai/notebook/{id}/sources/search/candidates": {
+      "get": {
+        "tags": ["ai"],
+        "summary": "List persisted Notebook research candidates and lifecycle status"
+      }
+    },
     "/system/ai/notebook/{id}/research": {
       "get": { "tags": ["ai"], "summary": "Page persisted Deep Research runs" },
       "post": { "tags": ["ai"], "summary": "Enqueue a cited Deep Research report" }
@@ -671,6 +680,26 @@
     },
     "/system/ai/governance/mcp/servers/{id}/sync": {
       "post": { "tags": ["ai"], "summary": "Initialize MCP and synchronize remote Tools" }
+    },
+    "/system/ai/governance/mcp/internal/oauth/token": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Issue an internal System Data MCP client-credentials token",
+        "security": []
+      }
+    },
+    "/system/ai/governance/mcp/internal": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Execute the authenticated read-only System Data MCP JSON-RPC endpoint",
+        "security": []
+      }
+    },
+    "/system/ai/governance/mcp/internal/provision": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Provision the built-in System Data MCP and inspection Agent"
+      }
     },
     "/system/ai/governance/mcp/connections": {
       "get": { "tags": ["ai"], "summary": "List masked MCP OAuth connections" }

@@ -3,6 +3,7 @@
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  DatabaseOutlined,
   DeleteOutlined,
   DollarOutlined,
   EditOutlined,
@@ -54,6 +55,15 @@ type Memory = {
   expiresAt?: string;
   updatedAt: string;
 };
+type MemoryCandidate = {
+  id: number;
+  content: string;
+  normalizedKey: string;
+  confidence: number;
+  status: string;
+  conflictGroup?: string | null;
+  createdAt: string;
+};
 type Skill = {
   id: number;
   name: string;
@@ -65,6 +75,15 @@ type Skill = {
   agentIds: number[];
   isSystem: boolean;
 };
+type SkillVersion = {
+  id: number;
+  skillId: number;
+  version: number;
+  status: "draft" | "published" | "retired";
+  contentHash: string;
+  publishedAt?: string | null;
+  createdAt: string;
+};
 type McpServer = {
   id: number;
   name: string;
@@ -72,6 +91,7 @@ type McpServer = {
   endpointUrl: string;
   oauthMode: string;
   status: string;
+  isInternal: boolean;
   hasClientSecret: boolean;
   toolCount: number;
   allowedToolCount: number;
@@ -133,7 +153,18 @@ type Job = {
   resourceType?: string;
   resourceId?: string;
   errorMessage?: string;
+  availableAt?: string;
   createdAt: string;
+};
+type WorkerQueueHealth = {
+  status: "healthy" | "degraded";
+  stalledAfterSeconds: number;
+  queuedCount: number;
+  stalledQueuedCount: number;
+  expiredLeaseCount: number;
+  oldestQueuedAt?: string | null;
+  oldestQueueAgeSeconds: number;
+  checkedAt: string;
 };
 type Ledger = {
   id: number;
@@ -148,7 +179,13 @@ type Ledger = {
   description?: string;
   occurredAt: string;
 };
-type Page<T> = { data: T[]; total: number; page: number; pageSize: number };
+type Page<T> = {
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  workerHealth?: WorkerQueueHealth;
+};
 
 const statusColor: Record<string, string> = {
   active: "success",
@@ -174,6 +211,25 @@ function date(value?: string) {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
+function duration(seconds: number) {
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(seconds / 3_600)} 小时 ${Math.floor((seconds % 3_600) / 60)} 分`;
+}
+
+function workerHealthDescription(health: WorkerQueueHealth) {
+  const problems: string[] = [];
+  if (health.stalledQueuedCount > 0) {
+    problems.push(
+      `${health.stalledQueuedCount} 个可执行任务超过 ${health.stalledAfterSeconds} 秒仍未领取，最老任务已等待 ${duration(health.oldestQueueAgeSeconds)}`,
+    );
+  }
+  if (health.expiredLeaseCount > 0) {
+    problems.push(`${health.expiredLeaseCount} 个运行任务的 Worker 租约已经过期`);
+  }
+  return `${problems.join("；")}。Worker 可能离线、反复退出或处理能力不足。`;
+}
+
 function localDateTimeValue(value?: string) {
   if (!value) return undefined;
   const parsed = new Date(value);
@@ -192,6 +248,7 @@ export function AiGovernancePage() {
   const [settlementForm] = Form.useForm();
   const [memory, setMemory] = useState<Memory | null | undefined>();
   const [skill, setSkill] = useState<Skill | null | undefined>();
+  const [skillVersionSkill, setSkillVersionSkill] = useState<Skill | null>(null);
   const [mcp, setMcp] = useState<McpServer | null | undefined>();
   const [circuit, setCircuit] = useState<Circuit | undefined>();
   const [quota, setQuota] = useState<Quota | null | undefined>();
@@ -222,9 +279,20 @@ export function AiGovernancePage() {
     queryKey: ["ai-governance-memories"],
     queryFn: () => request<Memory[]>("/api/system/ai/governance/memories?includeArchived=1"),
   });
+  const memoryCandidates = useQuery({
+    queryKey: ["ai-governance-memory-candidates"],
+    queryFn: () =>
+      request<MemoryCandidate[]>("/api/system/ai/governance/memory-candidates?status=proposed"),
+  });
   const skills = useQuery({
     queryKey: ["ai-governance-skills"],
     queryFn: () => request<Skill[]>("/api/system/ai/governance/skills"),
+  });
+  const skillVersions = useQuery({
+    queryKey: ["ai-governance-skill-versions", skillVersionSkill?.id],
+    queryFn: () =>
+      request<SkillVersion[]>(`/api/system/ai/governance/skills/${skillVersionSkill!.id}/versions`),
+    enabled: Boolean(skillVersionSkill),
   });
   const servers = useQuery({
     queryKey: ["ai-governance-mcp-servers"],
@@ -249,6 +317,10 @@ export function AiGovernancePage() {
   const jobs = useQuery({
     queryKey: ["ai-governance-jobs"],
     queryFn: () => request<Page<Job>>("/api/system/ai/governance/jobs?page=1&pageSize=100"),
+    refetchInterval: (query) =>
+      query.state.data?.data.some((item) => ["queued", "running"].includes(item.status))
+        ? 5_000
+        : 30_000,
   });
   const billing = useQuery({
     queryKey: ["ai-governance-billing"],
@@ -270,6 +342,52 @@ export function AiGovernancePage() {
     onSuccess: async (keys) => {
       await refresh(...keys);
       feedback.success("操作成功");
+    },
+  });
+  const provisionInternalMcp = useMutation({
+    mutationFn: () =>
+      request<{
+        serverId: number;
+        connectionId: number;
+        agentId: number;
+        discoveredTools: number;
+        allowedTools: number;
+      }>("/api/system/ai/governance/mcp/internal/provision", { method: "POST" }),
+    onSuccess: async (result) => {
+      await refresh(
+        "ai-governance-mcp-servers",
+        "ai-governance-mcp-tools",
+        "ai-governance-mcp-connections",
+        "system-ai-agents",
+      );
+      feedback.success(
+        `系统数据 MCP 已部署：${result.allowedTools} 个只读 Tool，Agent #${result.agentId}`,
+      );
+    },
+  });
+  const skillVersionMutation = useMutation({
+    mutationFn: (input: { url: string; method?: "POST" }) =>
+      request(input.url, { method: input.method ?? "POST" }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ai-governance-skill-versions"] }),
+        queryClient.invalidateQueries({ queryKey: ["ai-governance-skills"] }),
+      ]);
+      feedback.success("Skill 版本操作成功");
+    },
+  });
+  const memoryCandidateMutation = useMutation({
+    mutationFn: (input: { id: number; decision: "accept" | "reject" }) =>
+      request(`/api/system/ai/governance/memory-candidates/${input.id}/decision`, {
+        method: "POST",
+        body: { decision: input.decision },
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ai-governance-memory-candidates"] }),
+        queryClient.invalidateQueries({ queryKey: ["ai-governance-memories"] }),
+      ]);
+      feedback.success("Memory 候选已处理");
     },
   });
   const updateMcpToolPolicy = (
@@ -372,6 +490,7 @@ export function AiGovernancePage() {
   };
 
   const memoryTab = (
+    <Space orientation="vertical" size={16} style={{ width: "100%" }}>
     <Table
       rowKey="id"
       size="small"
@@ -451,6 +570,42 @@ export function AiGovernancePage() {
         },
       ]}
     />
+    <Table
+      rowKey="id"
+      size="small"
+      title={() => (
+        <Space>
+          <Typography.Text strong>待确认 Memory 候选</Typography.Text>
+          <Tag color="processing">自动提取，确认后才写入长期记忆</Tag>
+        </Space>
+      )}
+      loading={memoryCandidates.isLoading}
+      dataSource={memoryCandidates.data ?? []}
+      pagination={{ pageSize: 10 }}
+      columns={[
+        { title: "候选内容", dataIndex: "content", ellipsis: true },
+        { title: "置信度", dataIndex: "confidence", width: 90, render: (value) => `${Math.round(Number(value) * 100)}%` },
+        { title: "冲突键", dataIndex: "normalizedKey", width: 180, ellipsis: true },
+        { title: "发现时间", dataIndex: "createdAt", width: 170, render: date },
+        {
+          title: "操作",
+          width: 150,
+          render: (_, row: MemoryCandidate) => (
+            <Space size={4}>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />} loading={memoryCandidateMutation.isPending} onClick={() => memoryCandidateMutation.mutate({ id: row.id, decision: "accept" })}>
+                保存
+              </Button>
+              <Popconfirm title="拒绝这个 Memory 候选？" onConfirm={() => memoryCandidateMutation.mutate({ id: row.id, decision: "reject" })}>
+                <Button size="small" danger icon={<CloseCircleOutlined />} loading={memoryCandidateMutation.isPending}>
+                  忽略
+                </Button>
+              </Popconfirm>
+            </Space>
+          ),
+        },
+      ]}
+    />
+    </Space>
   );
 
   const skillTab = (
@@ -514,6 +669,12 @@ export function AiGovernancePage() {
             <Space size={4}>
               <Button
                 size="small"
+                onClick={() => setSkillVersionSkill(row)}
+              >
+                版本
+              </Button>
+              <Button
+                size="small"
                 icon={<EditOutlined />}
                 onClick={() => {
                   setSkill(row);
@@ -545,8 +706,19 @@ export function AiGovernancePage() {
       <Alert
         showIcon
         type="warning"
-        title="MCP 默认不可信"
-        description="仅支持受控 HTTPS 远程 Server。同步 Tool 后仍需逐项进入 allowlist；高风险 Tool 保持人工审批。"
+        title="MCP 接入默认按不可信处理"
+        description="远程 Server 同步 Tool 后仍需逐项进入 allowlist；内置系统数据 MCP 只开放页面、菜单、权限和人员组织的脱敏只读查询。"
+        action={
+          <AuthButton auth="system.aiGovernance.approve">
+            <Button
+              icon={<DatabaseOutlined />}
+              loading={provisionInternalMcp.isPending}
+              onClick={() => provisionInternalMcp.mutate()}
+            >
+              部署系统数据 MCP
+            </Button>
+          </AuthButton>
+        }
       />
       <Table
         title={() => <Typography.Text strong>MCP Server</Typography.Text>}
@@ -560,7 +732,10 @@ export function AiGovernancePage() {
             title: "Server",
             render: (_, row: McpServer) => (
               <Space orientation="vertical" size={0}>
-                <Typography.Text strong>{row.name}</Typography.Text>
+                <Space size={6}>
+                  <Typography.Text strong>{row.name}</Typography.Text>
+                  {row.isInternal ? <Tag color="blue">内置只读</Tag> : null}
+                </Space>
                 <Typography.Text type="secondary">{row.code}</Typography.Text>
               </Space>
             ),
@@ -914,12 +1089,30 @@ export function AiGovernancePage() {
 
   const operationsTab = (
     <Space orientation="vertical" size={16} style={{ width: "100%" }}>
-      <Alert
-        showIcon
-        type="info"
-        title="Worker 是独立进程"
-        description="使用 pnpm ai:worker 持续处理，或 pnpm ai:worker:once 处理一项。任务通过 PostgreSQL SKIP LOCKED 领取。"
-      />
+      {jobs.isError ? (
+        <Alert
+          showIcon
+          type="error"
+          title="Worker 队列状态加载失败"
+          description={jobs.error.message}
+        />
+      ) : jobs.isLoading ? (
+        <Alert showIcon type="info" title="正在读取 Worker 队列状态" />
+      ) : jobs.data?.workerHealth?.status === "degraded" ? (
+        <Alert
+          showIcon
+          type="error"
+          title="AI Worker 队列异常"
+          description={workerHealthDescription(jobs.data.workerHealth)}
+        />
+      ) : (
+        <Alert
+          showIcon
+          type="info"
+          title="Worker 是独立进程"
+          description="队列当前没有超时或过期租约。开发环境使用 pnpm dev:all；生产环境应让 Web、Worker 与队列监控进程分别常驻。"
+        />
+      )}
       <Table
         rowKey="id"
         size="small"
@@ -938,7 +1131,21 @@ export function AiGovernancePage() {
             title: "状态",
             dataIndex: "status",
             width: 100,
-            render: (value) => <Tag color={statusColor[value]}>{value}</Tag>,
+            render: (value, row) => {
+              const stalled =
+                value === "queued" &&
+                Boolean(jobs.data?.workerHealth?.status === "degraded") &&
+                Boolean(
+                  row.availableAt &&
+                  Date.now() - new Date(row.availableAt).getTime() >=
+                    (jobs.data?.workerHealth?.stalledAfterSeconds ?? 60) * 1_000,
+                );
+              return (
+                <Tag color={stalled ? "error" : statusColor[value]}>
+                  {stalled ? "未领取" : value}
+                </Tag>
+              );
+            },
           },
           {
             title: "尝试",
@@ -1459,6 +1666,84 @@ export function AiGovernancePage() {
             <Input.TextArea rows={4} maxLength={1000} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        open={Boolean(skillVersionSkill)}
+        title={skillVersionSkill ? `Skill 版本 · ${skillVersionSkill.name}` : "Skill 版本"}
+        width={760}
+        footer={null}
+        onCancel={() => setSkillVersionSkill(null)}
+      >
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type="info"
+            title="版本发布是运行时生效边界"
+            description="草稿只保存当前指令与 Tool/Agent 绑定；发布前会校验依赖，回滚会把历史不可变版本重新发布。"
+          />
+          <Button
+            type="primary"
+            loading={skillVersionMutation.isPending}
+            disabled={!skillVersionSkill}
+            onClick={() =>
+              skillVersionSkill &&
+              skillVersionMutation.mutate({
+                url: `/api/system/ai/governance/skills/${skillVersionSkill.id}/versions`,
+              })
+            }
+          >
+            创建当前配置的草稿版本
+          </Button>
+          <Table
+            rowKey="id"
+            size="small"
+            loading={skillVersions.isLoading}
+            dataSource={skillVersions.data ?? []}
+            pagination={false}
+            columns={[
+              { title: "版本", dataIndex: "version", width: 80, render: (value) => `v${value}` },
+              { title: "状态", dataIndex: "status", width: 100, render: (value) => <Tag color={statusColor[value]}>{value}</Tag> },
+              { title: "Hash", dataIndex: "contentHash", ellipsis: true },
+              { title: "发布时间", dataIndex: "publishedAt", width: 170, render: date },
+              {
+                title: "操作",
+                width: 180,
+                render: (_, row: SkillVersion) => (
+                  <Space size={4}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={row.status === "published"}
+                      loading={skillVersionMutation.isPending}
+                      onClick={() =>
+                        skillVersionSkill &&
+                        skillVersionMutation.mutate({
+                          url: `/api/system/ai/governance/skills/${skillVersionSkill.id}/versions/${row.version}/publish`,
+                        })
+                      }
+                    >
+                      发布
+                    </Button>
+                    <Popconfirm
+                      title={`回滚到 v${row.version}？`}
+                      disabled={row.status === "published"}
+                      onConfirm={() =>
+                        skillVersionSkill &&
+                        skillVersionMutation.mutate({
+                          url: `/api/system/ai/governance/skills/${skillVersionSkill.id}/versions/${row.version}/rollback`,
+                        })
+                      }
+                    >
+                      <Button size="small" disabled={row.status === "published"}>
+                        回滚
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </Space>
       </Modal>
     </PageScaffold>
   );

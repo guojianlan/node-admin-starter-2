@@ -3,9 +3,11 @@ import { createMastraAiAgentStream } from "@/server/mastra/agent-runtime";
 import { resolveAgentOrchestrator } from "@/server/mastra/config";
 import {
   appendAgentRunStep,
-  createAgentRun,
+  assertAgentRunLease,
+  createAgentRunLease,
   executeAgentTool,
   finishAgentRun,
+  heartbeatAgentRun,
   getAiAgent,
   listAiTools,
 } from "./ai-agent-service";
@@ -35,13 +37,22 @@ export type CreateAiAgentStreamInput = {
   abortSignal: AbortSignal;
   abilities?: string[];
   requestId?: string;
+  runLease?: {
+    id: number;
+    attempt: number;
+    leaseOwner: string;
+  };
 };
 
 export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput) {
   const startedAt = performance.now();
   const agent = await getAiAgent(input.agentId);
   if (!agent || agent.status !== 1) throw new Error("Agent 不存在或已停用");
-  const governed = await resolveAgentGovernedContext({ agentId: agent.id, userId: input.userId });
+  const governed = await resolveAgentGovernedContext({
+    agentId: agent.id,
+    userId: input.userId,
+    query: input.messages.at(-1)?.content,
+  });
   const governedMessages = governed.instructions
     ? ([
         { role: "system", content: governed.instructions },
@@ -58,14 +69,18 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
     abortSignal: input.abortSignal,
   });
   const runtime = runtimes[0];
-  const runId = await createAgentRun({
-    sessionId: input.sessionId,
-    agentId: agent.id,
-    userId: input.userId,
-    inputMessageId: input.inputMessageId,
-    parentRunId: input.parentRunId,
-    sourceApprovalId: input.sourceApprovalId,
-  });
+  const run = input.runLease
+    ? (await assertAgentRunLease({ id: input.runLease.id, leaseOwner: input.runLease.leaseOwner }),
+      input.runLease)
+    : await createAgentRunLease({
+        sessionId: input.sessionId,
+        agentId: agent.id,
+        userId: input.userId,
+        inputMessageId: input.inputMessageId,
+        parentRunId: input.parentRunId,
+        sourceApprovalId: input.sourceApprovalId,
+      });
+  const runId = run.id;
   const configuredTools = await listAiTools({ activeOnly: true, agentId: agent.id });
   const toolRows = governed.allowedToolIds
     ? configuredTools.filter((item) => governed.allowedToolIds?.has(item.id))
@@ -91,13 +106,16 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
       description: toolRow.description,
       inputSchema: getAiToolInputSchema(toolRow.handlerKey),
       needsApproval: isAiToolApprovalRequired(toolRow),
-      execute: async (toolInput) => {
+      execute: async (toolInput, toolOptions) => {
         const startedAt = performance.now();
         stepNo += 1;
         try {
           const output = await executeAgentTool(toolRow, toolInput as Record<string, unknown>, {
             userId: input.userId,
             requestId: input.requestId,
+            runId,
+            leaseOwner: run.leaseOwner,
+            toolCallId: toolOptions.toolCallId,
           });
           await appendAgentRunStep({
             runId,
@@ -109,6 +127,7 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
             input: toolInput,
             output,
             durationMs: Math.round(performance.now() - startedAt),
+            leaseOwner: run.leaseOwner,
           });
           return output;
         } catch (error) {
@@ -122,6 +141,7 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
             input: toolInput,
             durationMs: Math.round(performance.now() - startedAt),
             errorMessage: error instanceof Error ? error.message : String(error),
+            leaseOwner: run.leaseOwner,
           });
           throw error;
         }
@@ -148,6 +168,7 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
       id: runId,
       status: "failed",
       errorMessage: error instanceof Error ? error.message : String(error),
+      leaseOwner: run.leaseOwner,
     });
     throw error;
   }
@@ -156,6 +177,7 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
     orchestrator: "legacy" as const,
     agent,
     runId,
+    leaseOwner: run.leaseOwner,
     runtime: {
       ...runtime,
       startedAt,
@@ -170,6 +192,7 @@ export async function createLegacyAiAgentStream(input: CreateAiAgentStreamInput)
     },
     stream,
     toolMap,
+    heartbeat: () => heartbeatAgentRun({ id: runId, leaseOwner: run.leaseOwner }),
     nextStepNo: () => {
       stepNo += 1;
       return stepNo;

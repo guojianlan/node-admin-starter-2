@@ -93,11 +93,19 @@ export function isPublicIpAddress(rawAddress: string) {
   return !(
     address === "::" ||
     address === "::1" ||
+    address.startsWith("ff") ||
     address.startsWith("fc") ||
     address.startsWith("fd") ||
     /^fe[89ab]/.test(address) ||
     address.startsWith("2001:db8:")
   );
+}
+
+function assertAllowedWebPort(url: URL) {
+  const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
+  if (port !== 80 && port !== 443) {
+    throw new WebsiteSourceError("网站来源仅允许使用标准 HTTP/HTTPS 端口");
+  }
 }
 
 function parseWebsiteUrl(value: string) {
@@ -110,6 +118,7 @@ function parseWebsiteUrl(value: string) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new WebsiteSourceError("网站来源仅支持 HTTP 或 HTTPS URL");
   }
+  assertAllowedWebPort(url);
   if (url.username || url.password) throw new WebsiteSourceError("网站 URL 不能包含账号或密码");
   const hostname = url.hostname
     .toLowerCase()

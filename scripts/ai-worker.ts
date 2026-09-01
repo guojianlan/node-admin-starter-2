@@ -1,3 +1,4 @@
+import "../src/server/load-dotenv";
 import { runAiWorker } from "../src/server/services/ai-job-service";
 
 const once = process.argv.includes("--once");

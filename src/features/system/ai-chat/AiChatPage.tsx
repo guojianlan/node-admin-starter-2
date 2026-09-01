@@ -240,6 +240,9 @@ type AgentRunDetail = {
     | "completed"
     | "stopped"
     | "failed";
+  attempt: number;
+  leaseUntil?: string | null;
+  heartbeatAt?: string | null;
   totalSteps: number;
   inputTokens: number;
   outputTokens: number;
@@ -248,6 +251,17 @@ type AgentRunDetail = {
   startedAt?: string | null;
   finishedAt?: string | null;
   steps: AgentRunStep[];
+  events?: PersistedRunEvent[];
+};
+
+type PersistedRunEvent = {
+  id: number;
+  runId: number;
+  attempt: number;
+  sequence: number;
+  eventType: string;
+  payload: unknown;
+  createdAt: string;
 };
 
 type LiveRunEvent = {
@@ -279,6 +293,72 @@ function formatJsonText(value?: string | null) {
   } catch {
     return value;
   }
+}
+
+function ChatApprovalCard({
+  approval,
+  deciding,
+  onDecision,
+}: {
+  approval: ToolApproval;
+  deciding: boolean;
+  onDecision: (id: number, approved: boolean) => void;
+}) {
+  const isReadOnlyMcp = approval.handlerKey === "mcp_gateway";
+  const description = isReadOnlyMcp
+    ? "读取当前管理员有权查看的系统数据，不会修改页面、菜单、人员或权限。"
+    : approval.toolDescription || "执行 Agent 请求的服务端工具";
+
+  return (
+    <section className="ai-chat-approval-card" aria-label="工具调用审批" aria-live="polite">
+      <div className="ai-chat-approval-card-header">
+        <div className="ai-chat-approval-card-title">
+          <span className="ai-chat-approval-card-icon" aria-hidden="true">
+            <SafetyCertificateOutlined />
+          </span>
+          <div>
+            <Typography.Text strong>需要你的确认</Typography.Text>
+            <Typography.Text type="secondary">AI 正在等待工具执行许可</Typography.Text>
+          </div>
+        </div>
+        <Tag color={isReadOnlyMcp ? "blue" : approvalRiskColors[approval.riskLevel]}>
+          {isReadOnlyMcp
+            ? "只读"
+            : approval.riskLevel === "low"
+              ? "低风险"
+              : approval.riskLevel === "medium"
+                ? "中风险"
+                : approval.riskLevel === "high"
+                  ? "高风险"
+                  : "关键操作"}
+        </Tag>
+      </div>
+
+      <div className="ai-chat-approval-card-body">
+        <Typography.Text className="ai-chat-approval-card-tool" strong>
+          {approval.toolDisplayName || approval.toolName}
+        </Typography.Text>
+        <Typography.Paragraph type="secondary">{description}</Typography.Paragraph>
+        <Typography.Text type="secondary" className="ai-chat-approval-card-scope">
+          本次只请求一项工具权限，完成后才会继续下一项。
+        </Typography.Text>
+      </div>
+
+      <div className="ai-chat-approval-card-actions">
+        <Button loading={deciding} onClick={() => onDecision(approval.id, false)}>
+          拒绝
+        </Button>
+        <Button
+          type="primary"
+          icon={<CheckCircleOutlined />}
+          loading={deciding}
+          onClick={() => onDecision(approval.id, true)}
+        >
+          允许执行
+        </Button>
+      </div>
+    </section>
+  );
 }
 
 function parseMessageSources(message: ChatMessage) {
@@ -681,10 +761,7 @@ function RunInspector({
   fallbackAgentName,
   fallbackModelName,
   isStreaming,
-  deciding,
   onClose,
-  onDecision,
-  onContinue,
 }: {
   run?: AgentRunDetail | null;
   activeRunId?: number | null;
@@ -693,10 +770,7 @@ function RunInspector({
   fallbackAgentName?: string | null;
   fallbackModelName?: string | null;
   isStreaming: boolean;
-  deciding: boolean;
   onClose: () => void;
-  onDecision: (id: number, approved: boolean) => void;
-  onContinue: (id: number) => void;
 }) {
   const persistedEvents: LiveRunEvent[] = (run?.steps ?? []).map((step) => ({
     id: step.id,
@@ -775,6 +849,10 @@ function RunInspector({
             <dt>执行步骤</dt>
             <dd>{run?.totalSteps ?? events.length}</dd>
           </div>
+          <div>
+            <dt>Attempt</dt>
+            <dd>{run?.attempt ?? "-"}</dd>
+          </div>
         </dl>
 
         <div className="ai-chat-inspector-section-title">步骤时间线</div>
@@ -813,96 +891,23 @@ function RunInspector({
           </div>
         )}
 
-        {pendingApprovals.map((approval) => (
-          <section key={approval.id} className="ai-chat-inspector-approval">
+        {pendingApprovals.length || resumableApprovals.length ? (
+          <section className="ai-chat-inspector-approval-summary">
             <div className="ai-chat-inspector-approval-title">
-              <Typography.Text strong>等待审批</Typography.Text>
-              <Tag color={approvalRiskColors[approval.riskLevel]}>{approval.riskLevel}</Tag>
+              <Typography.Text strong>
+                {pendingApprovals.length
+                  ? `当前有 ${pendingApprovals.length} 个审批待处理`
+                  : "工具已执行"}
+              </Typography.Text>
+              <Tag color={pendingApprovals.length ? "warning" : "processing"}>聊天窗口处理</Tag>
             </div>
-            <dl>
-              <div>
-                <dt>工具</dt>
-                <dd>{approval.toolDisplayName || approval.toolName}</dd>
-              </div>
-              <div>
-                <dt>影响</dt>
-                <dd>{approval.toolDescription || "执行 Agent 请求的服务端工具"}</dd>
-              </div>
-              <div>
-                <dt>范围</dt>
-                <dd>当前管理员可访问数据</dd>
-              </div>
-              {approval.planHash ? (
-                <div>
-                  <dt>计划</dt>
-                  <dd>
-                    <Typography.Text code copyable>
-                      {approval.planHash}
-                    </Typography.Text>
-                  </dd>
-                </div>
-              ) : null}
-              {approval.expiresAt ? (
-                <div>
-                  <dt>有效期</dt>
-                  <dd>{formatTime(approval.expiresAt)}</dd>
-                </div>
-              ) : null}
-            </dl>
-            <Typography.Text type="secondary">参数</Typography.Text>
-            <pre className="ai-chat-approval-input">{formatJsonText(approval.inputJson)}</pre>
-            {approval.affectedFilesJson ? (
-              <details className="ai-chat-approval-raw">
-                <summary>
-                  <CodeOutlined /> 受影响文件
-                </summary>
-                <pre>{formatJsonText(approval.affectedFilesJson)}</pre>
-              </details>
-            ) : null}
-            {approval.validationJson ? (
-              <details className="ai-chat-approval-raw">
-                <summary>
-                  <SafetyCertificateOutlined /> 隔离验证结果
-                </summary>
-                <pre>{formatJsonText(approval.validationJson)}</pre>
-              </details>
-            ) : null}
-            <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-              <Button
-                type="primary"
-                block
-                loading={deciding}
-                onClick={() => onDecision(approval.id, true)}
-              >
-                批准并继续
-              </Button>
-              <Button block loading={deciding} onClick={() => onDecision(approval.id, false)}>
-                拒绝
-              </Button>
-            </Space>
-            <details className="ai-chat-approval-raw">
-              <summary>
-                <CodeOutlined /> 原始参数 JSON
-              </summary>
-              <pre>{formatJsonText(approval.inputJson)}</pre>
-            </details>
+            <Typography.Text type="secondary">
+              {pendingApprovals.length
+                ? "审批卡片已显示在聊天窗口底部，请在那里确认后继续。"
+                : "如需继续 Agent，请回到聊天窗口底部操作。"}
+            </Typography.Text>
           </section>
-        ))}
-        {resumableApprovals.map((approval) => (
-          <section key={`resume-${approval.id}`} className="ai-chat-inspector-approval">
-            <div className="ai-chat-inspector-approval-title">
-              <Typography.Text strong>工具已执行，等待 Agent 继续</Typography.Text>
-              <Tag color="processing">可恢复</Tag>
-            </div>
-            <Typography.Paragraph type="secondary">
-              工具 {approval.toolDisplayName || approval.toolName}{" "}
-              已完成。刷新或调用中断后，可从该审批恢复后续模型处理。
-            </Typography.Paragraph>
-            <Button type="primary" block loading={deciding} onClick={() => onContinue(approval.id)}>
-              继续 Agent
-            </Button>
-          </section>
-        ))}
+        ) : null}
       </div>
 
       <div className="ai-chat-inspector-footer">
@@ -938,6 +943,15 @@ export function AiChatPage() {
   const controllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const liveRunEventIdRef = useRef(0);
+  const activeRunIdRef = useRef<number | null>(null);
+  const lastServerEventIdRef = useRef(0);
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recoveryRunIdRef = useRef<number | null>(null);
+
+  const setCurrentRunId = (runId: number | null) => {
+    activeRunIdRef.current = runId;
+    setActiveRunId(runId);
+  };
 
   const sessionsQuery = useQuery({
     queryKey: ["system-ai-chat-sessions", keyword],
@@ -1029,7 +1043,7 @@ export function AiChatPage() {
       setActiveSessionId(result.id);
       setMessages([]);
       setInspectorOpen(false);
-      setActiveRunId(null);
+      setCurrentRunId(null);
       setLiveRunEvents([]);
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
     },
@@ -1067,7 +1081,7 @@ export function AiChatPage() {
     onSuccess: async (_, variables) => {
       feedback.success(variables.agentId ? "已切换到 Agent 模式" : "已切换到直接对话");
       setInspectorOpen(false);
-      setActiveRunId(null);
+      setCurrentRunId(null);
       setLiveRunEvents([]);
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
     },
@@ -1084,7 +1098,7 @@ export function AiChatPage() {
         setActiveSessionId(null);
         setMessages([]);
         setInspectorOpen(false);
-        setActiveRunId(null);
+        setCurrentRunId(null);
         setLiveRunEvents([]);
       }
       await queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] });
@@ -1132,10 +1146,14 @@ export function AiChatPage() {
   };
 
   const handleStreamEvent = (message: EventStreamMessage) => {
+    if (message.id != null) {
+      if (message.id <= lastServerEventIdRef.current) return;
+      lastServerEventIdRef.current = message.id;
+    }
     const data = asRecord(message.data);
     if (message.event === "meta" && data) {
       if (typeof data.runId === "number") {
-        setActiveRunId(data.runId);
+        setCurrentRunId(data.runId);
         upsertLiveRunEvent({
           eventKey: "model:active",
           kind: "model",
@@ -1148,6 +1166,16 @@ export function AiChatPage() {
           },
         });
       }
+      return;
+    }
+    if (message.event === "delta" && data && typeof data.text === "string") {
+      setMessages((previous) =>
+        previous.map((item) =>
+          item.id === "streaming-assistant"
+            ? { ...item, content: item.content + data.text }
+            : item,
+        ),
+      );
       return;
     }
     if (message.event === "tool-call" && data) {
@@ -1260,7 +1288,6 @@ export function AiChatPage() {
         status: "waiting",
         input: data?.input,
       });
-      if (!isBrowserLocation) setInspectorOpen(true);
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-approvals"] }),
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-latest-run"] }),
@@ -1292,6 +1319,99 @@ export function AiChatPage() {
     }
   };
 
+  const recoverRunState = async (sessionId: number, expectedRunId: number) => {
+    const run = await request<AgentRunDetail | null>(
+      `/api/system/ai/chat/sessions/${sessionId}/run/latest`,
+      { silent: true },
+    );
+    if (!run || run.id !== expectedRunId) return false;
+
+    const isNewRun = activeRunIdRef.current !== run.id;
+    setCurrentRunId(run.id);
+    if (isNewRun) {
+      setLiveRunEvents([]);
+      liveRunEventIdRef.current = 0;
+    }
+
+    const replay = await request<{ events: PersistedRunEvent[]; lastEventId: number }>(
+      `/api/system/ai/chat/sessions/${sessionId}/runs/${run.id}/events${buildQueryString({
+        afterEventId: lastServerEventIdRef.current,
+      })}`,
+      { silent: true },
+    );
+    const durableMessages = await request<ChatMessage[]>(
+      `/api/system/ai/chat/sessions/${sessionId}/messages`,
+      { silent: true },
+    );
+    const stillRunning = run.status === "running";
+
+    if (isNewRun) {
+      if (stillRunning) {
+        setMessages([
+          ...durableMessages.filter((item) => item.status !== "streaming"),
+          {
+            id: "streaming-assistant",
+            sessionId,
+            role: "assistant",
+            content: "",
+            status: "streaming",
+            streaming: true,
+          },
+        ]);
+      } else {
+        setMessages(durableMessages);
+      }
+    }
+
+    for (const event of replay.events) {
+      handleStreamEvent({
+        event: event.eventType,
+        data: event.payload,
+        id: event.id,
+      });
+    }
+    lastServerEventIdRef.current = Math.max(
+      lastServerEventIdRef.current,
+      replay.lastEventId || 0,
+    );
+
+    if (!stillRunning) {
+      setMessages(durableMessages);
+      setIsStreaming(false);
+      recoveryRunIdRef.current = null;
+      return false;
+    }
+
+    setInspectorOpen(true);
+    setIsStreaming(true);
+    return true;
+  };
+
+  const beginRunRecovery = (sessionId: number, runId: number) => {
+    if (recoveryRunIdRef.current === runId && recoveryTimerRef.current) return;
+    recoveryRunIdRef.current = runId;
+    let attempts = 0;
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const stillRunning = await recoverRunState(sessionId, runId);
+        if (stillRunning && attempts < 120) {
+          recoveryTimerRef.current = setTimeout(() => void poll(), 1500);
+          return;
+        }
+      } catch {
+        if (attempts < 120) {
+          recoveryTimerRef.current = setTimeout(() => void poll(), 2500);
+          return;
+        }
+      }
+      recoveryTimerRef.current = null;
+      recoveryRunIdRef.current = null;
+      setIsStreaming(false);
+    };
+    void poll();
+  };
+
   const executeStream = async (input: {
     sessionId: number;
     path: string;
@@ -1304,10 +1424,17 @@ export function AiChatPage() {
     setStreamError("");
     setStreamFinish(null);
     setMessages(input.nextMessages);
-    setActiveRunId(null);
+    setCurrentRunId(null);
     setLiveRunEvents([]);
     liveRunEventIdRef.current = 0;
+    lastServerEventIdRef.current = 0;
+    recoveryRunIdRef.current = null;
+    if (recoveryTimerRef.current) {
+      clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
 
+    let recoveredAfterDisconnect = false;
     try {
       await requestEventStream(input.path, {
         method: "POST",
@@ -1315,47 +1442,47 @@ export function AiChatPage() {
         signal: controller.signal,
         silent: true,
         onEvent: handleStreamEvent,
-        onChunk: (chunk) => {
-          setMessages((previous) =>
-            previous.map((message) =>
-              message.id === "streaming-assistant"
-                ? { ...message, content: message.content + chunk }
-                : message,
-            ),
-          );
-        },
       });
     } catch (error) {
       if (controller.signal.aborted) {
         feedback.info("已停止生成");
       } else {
-        const message = friendlyStreamError(
-          error instanceof Error ? error.message : "AI Chat 发送失败",
-        );
-        setStreamError(message);
-        feedback.error(message);
+        const runId = activeRunIdRef.current;
+        if (runId) {
+          recoveredAfterDisconnect = true;
+          setStreamError("连接已断开，正在从已保存的运行事件恢复");
+          beginRunRecovery(input.sessionId, runId);
+        } else {
+          const message = friendlyStreamError(
+            error instanceof Error ? error.message : "AI Chat 发送失败",
+          );
+          setStreamError(message);
+          feedback.error(message);
+        }
       }
-      setMessages((previous) =>
-        previous.map((item) =>
-          item.id === "streaming-assistant"
-            ? {
-                ...item,
-                streaming: false,
-                status: controller.signal.aborted ? "stopped" : "failed",
-              }
-            : item,
-        ),
-      );
+      if (!recoveredAfterDisconnect) {
+        setMessages((previous) =>
+          previous.map((item) =>
+            item.id === "streaming-assistant"
+              ? {
+                  ...item,
+                  streaming: false,
+                  status: controller.signal.aborted ? "stopped" : "failed",
+                }
+              : item,
+          ),
+        );
+      }
     } finally {
       if (controllerRef.current === controller) controllerRef.current = null;
-      setIsStreaming(false);
+      if (!recoveredAfterDisconnect) setIsStreaming(false);
       const durableMessages = await request<ChatMessage[]>(
         `/api/system/ai/chat/sessions/${input.sessionId}/messages`,
         { silent: true },
       ).catch(() => null);
       if (durableMessages) {
         queryClient.setQueryData(["system-ai-chat-messages", input.sessionId], durableMessages);
-        setMessages([]);
+        if (!recoveredAfterDisconnect) setMessages([]);
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["system-ai-chat-sessions"] }),
@@ -1365,7 +1492,35 @@ export function AiChatPage() {
     }
   };
 
+  useEffect(() => {
+    const latestRun = latestRunQuery.data;
+    if (
+      !activeSessionId ||
+      isStreaming ||
+      !latestRun ||
+      latestRun.status !== "running" ||
+      activeRunIdRef.current === latestRun.id
+    ) {
+      return;
+    }
+    beginRunRecovery(activeSessionId, latestRun.id);
+    // Recovery helpers intentionally close over the current Chat state and are recreated per render.
+    // The run identity and status are the only values that should trigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, isStreaming, latestRunQuery.data]);
+
+  useEffect(
+    () => () => {
+      if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+    },
+    [],
+  );
+
   const sendMessage = async () => {
+    if (approvalsQuery.data?.some((approval) => approval.status === "pending")) {
+      feedback.info("请先处理当前工具审批，再发送新的消息");
+      return;
+    }
     const content = input.trim();
     if (!content) {
       feedback.warning("请输入聊天内容");
@@ -1380,7 +1535,7 @@ export function AiChatPage() {
       body: { content },
       nextMessages: [
         ...baseMessages,
-        { id: `local-user-${Date.now()}`, sessionId, role: "user", content, status: "completed" },
+        { id: "local-user", sessionId, role: "user", content, status: "completed" },
         {
           id: "streaming-assistant",
           sessionId,
@@ -1540,9 +1695,16 @@ export function AiChatPage() {
   const displayProviderName =
     activeModel?.providerName || activeSession?.providerCode || runtime?.provider.name;
   const webSearchAvailable = Boolean(activeAgent?.toolCodes.includes("web-search"));
-  const pendingLocationApproval = (approvalsQuery.data ?? []).find(
-    (approval) => approval.status === "pending" && approval.handlerKey === "browser_location",
-  );
+  const activePendingApproval = [...(approvalsQuery.data ?? [])]
+    .filter((approval) => approval.status === "pending")
+    .sort((left, right) => left.id - right.id)[0];
+  const pendingLocationApproval =
+    activePendingApproval?.handlerKey === "browser_location" ? activePendingApproval : null;
+  const pendingToolApproval =
+    activePendingApproval && activePendingApproval.handlerKey !== "browser_location"
+      ? activePendingApproval
+      : null;
+  const hasPendingApproval = Boolean(pendingLocationApproval || pendingToolApproval);
   const pendingLocationReason = pendingLocationApproval
     ? String(
         asRecord(parseJsonText(pendingLocationApproval.inputJson))?.reason ||
@@ -1613,7 +1775,7 @@ export function AiChatPage() {
                       setInspectorOpen(false);
                       setStreamError("");
                       setStreamFinish(null);
-                      setActiveRunId(null);
+                      setCurrentRunId(null);
                       setLiveRunEvents([]);
                     }}
                   >
@@ -2039,6 +2201,14 @@ export function AiChatPage() {
 
           <div className="ai-chat-composer">
             <div className="ai-chat-composer-notices">
+              {pendingToolApproval ? (
+                <ChatApprovalCard
+                  key={pendingToolApproval.id}
+                  approval={pendingToolApproval}
+                  deciding={approvalMutation.isPending}
+                  onDecision={(id, approved) => approvalMutation.mutate({ id, approved })}
+                />
+              ) : null}
               {pendingLocationApproval && activeSessionId ? (
                 <section
                   className="ai-chat-client-permission"
@@ -2102,6 +2272,7 @@ export function AiChatPage() {
                 className="ai-chat-composer-input"
                 value={input}
                 variant="borderless"
+                disabled={isStreaming || hasPendingApproval}
                 autoSize={{ minRows: 2, maxRows: 8 }}
                 placeholder="输入消息，Shift + Enter 换行，Enter 发送"
                 onChange={(event) => setInput(event.target.value)}
@@ -2130,7 +2301,7 @@ export function AiChatPage() {
                       aria-label="发送消息"
                       icon={<SendOutlined />}
                       loading={createSessionMutation.isPending}
-                      disabled={!input.trim()}
+                      disabled={!input.trim() || hasPendingApproval}
                       onClick={() => void sendMessage()}
                     />
                   </Tooltip>
@@ -2149,12 +2320,7 @@ export function AiChatPage() {
             fallbackAgentName={activeSession?.agentName}
             fallbackModelName={displayModelId || displayModelName}
             isStreaming={isStreaming}
-            deciding={approvalMutation.isPending}
             onClose={() => setInspectorOpen(false)}
-            onDecision={(id, approved) => approvalMutation.mutate({ id, approved })}
-            onContinue={(id) => {
-              if (activeSessionId) void resumeAgent(activeSessionId, id, displayedMessages);
-            }}
           />
         ) : null}
       </div>

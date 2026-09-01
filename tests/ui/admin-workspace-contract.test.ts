@@ -282,6 +282,24 @@ describe("admin workspace layout contract", () => {
     expect(css).toContain(".ai-agent-workflow-panel");
   });
 
+  it("keeps the visual Workflow editor as a bounded infinite-canvas work surface", () => {
+    const canvas = fs.readFileSync(
+      path.join(projectRoot, "src/features/system/ai-agent/VisualWorkflowCanvas.tsx"),
+      "utf8",
+    );
+    const css = fs.readFileSync(path.join(projectRoot, "src/app/globals.css"), "utf8");
+
+    expect(canvas).toContain("application/x-admin-workflow-node");
+    expect(canvas).toContain("selectionOnDrag={canvasTool === \"select\"}");
+    expect(canvas).toContain("panActivationKeyCode=\"Space\"");
+    expect(canvas).toContain("copyWorkflowSelection");
+    expect(canvas).toContain("pasteWorkflowSelection");
+    expect(canvas).toContain("serializeWorkflowGraph(nodes, edges)");
+    expect(canvas).toContain("deleteKeyCode={null}");
+    expect(css).toContain(".ai-visual-workflow-canvas-toolbar");
+    expect(css).toContain(".ai-visual-workflow-shortcuts");
+  });
+
   it("keeps Web Search configuration governed and renders server-derived Chat sources", () => {
     const providerPage = fs.readFileSync(
       path.join(projectRoot, "src/features/system/ai-web-search/AiWebSearchPage.tsx"),

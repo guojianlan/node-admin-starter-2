@@ -1,8 +1,76 @@
 import crypto from "node:crypto";
 import { sqlite } from "@/server/db";
+import { getAdminBaseEnv } from "@/server/env";
 
-export const aiJobTypes = ["notebook_artifact", "eval_dataset", "notebook_deep_research"] as const;
+export const aiJobTypes = [
+  "notebook_artifact",
+  "eval_dataset",
+  "notebook_deep_research",
+  "knowledge_parser",
+  "workflow_resume",
+] as const;
 export type AiJobType = (typeof aiJobTypes)[number];
+
+export type AiWorkerQueueHealth = {
+  status: "healthy" | "degraded";
+  stalledAfterSeconds: number;
+  queuedCount: number;
+  stalledQueuedCount: number;
+  expiredLeaseCount: number;
+  oldestQueuedAt: string | null;
+  oldestQueueAgeSeconds: number;
+  checkedAt: string;
+};
+
+export async function getAiWorkerQueueHealth(
+  stalledAfterSeconds = getAdminBaseEnv().aiWorkerStalledAfterSeconds,
+): Promise<AiWorkerQueueHealth> {
+  const threshold = Math.min(Math.max(Math.round(stalledAfterSeconds), 10), 86_400);
+  const row = (await sqlite
+    .prepare(
+      `SELECT
+         (COUNT(*) FILTER (
+           WHERE status = 'queued' AND available_at <= now() AND attempts < max_attempts
+         ))::int AS "queuedCount",
+         (COUNT(*) FILTER (
+           WHERE status = 'queued' AND available_at <= now() - (? * interval '1 second')
+             AND attempts < max_attempts
+         ))::int AS "stalledQueuedCount",
+         (COUNT(*) FILTER (
+           WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= now()
+         ))::int AS "expiredLeaseCount",
+         MIN(available_at) FILTER (
+           WHERE status = 'queued' AND available_at <= now() AND attempts < max_attempts
+         ) AS "oldestQueuedAt",
+         COALESCE(EXTRACT(EPOCH FROM (
+           now() - MIN(available_at) FILTER (
+             WHERE status = 'queued' AND available_at <= now() AND attempts < max_attempts
+           )
+         ))::int, 0) AS "oldestQueueAgeSeconds",
+         now() AS "checkedAt"
+       FROM sys_ai_job`,
+    )
+    .get(threshold)) as {
+    queuedCount: number;
+    stalledQueuedCount: number;
+    expiredLeaseCount: number;
+    oldestQueuedAt: string | null;
+    oldestQueueAgeSeconds: number;
+    checkedAt: string;
+  };
+  const stalledQueuedCount = Number(row.stalledQueuedCount);
+  const expiredLeaseCount = Number(row.expiredLeaseCount);
+  return {
+    status: stalledQueuedCount > 0 || expiredLeaseCount > 0 ? "degraded" : "healthy",
+    stalledAfterSeconds: threshold,
+    queuedCount: Number(row.queuedCount),
+    stalledQueuedCount,
+    expiredLeaseCount,
+    oldestQueuedAt: row.oldestQueuedAt,
+    oldestQueueAgeSeconds: Number(row.oldestQueueAgeSeconds),
+    checkedAt: row.checkedAt,
+  };
+}
 
 export async function enqueueAiJob(input: {
   jobType: AiJobType;
@@ -14,14 +82,15 @@ export async function enqueueAiJob(input: {
   priority?: number;
   maxAttempts?: number;
   idempotencyKey?: string;
+  availableAt?: string | Date;
 }) {
   const idempotencyKey = input.idempotencyKey?.trim() || crypto.randomUUID();
   const result = await sqlite
     .prepare(
       `INSERT INTO sys_ai_job
        (job_type, payload_json, status, priority, max_attempts, idempotency_key,
-        user_id, resource_type, resource_id, request_id)
-       VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+        user_id, resource_type, resource_id, request_id, available_at)
+       VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()))
        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
        RETURNING id`,
     )
@@ -35,6 +104,7 @@ export async function enqueueAiJob(input: {
       input.resourceType ?? null,
       input.resourceId == null ? null : String(input.resourceId),
       input.requestId ?? null,
+      input.availableAt instanceof Date ? input.availableAt.toISOString() : input.availableAt ?? null,
     );
   if (result.lastInsertRowid) return Number(result.lastInsertRowid);
   const existing = (await sqlite
@@ -127,6 +197,26 @@ async function executeAiJob(job: ClaimedJob) {
       requestId: job.requestId ?? undefined,
     });
   }
+  if (job.jobType === "knowledge_parser") {
+    const { indexKnowledgeDocument } = await import("./ai-knowledge-service");
+    return indexKnowledgeDocument({
+      documentId: Number(payload.documentId),
+      userId: job.userId,
+      requestId: job.requestId ?? undefined,
+      expectedDocumentVersion:
+        payload.expectedDocumentVersion == null
+          ? undefined
+          : Number(payload.expectedDocumentVersion),
+    });
+  }
+  if (job.jobType === "workflow_resume") {
+    const { resumeVisualWorkflow } = await import("./ai-visual-workflow-service");
+    return resumeVisualWorkflow({
+      runId: Number(payload.runId),
+      userId: job.userId,
+      waitId: payload.waitId == null ? undefined : Number(payload.waitId),
+    });
+  }
   throw new Error(`未注册的 AI Job 类型：${job.jobType}`);
 }
 
@@ -190,7 +280,13 @@ export async function runAiWorker(input: {
 }) {
   const workerId = input.workerId ?? `ai-worker-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
   do {
-    const result = await processNextAiJob(workerId);
+    const { maintainAiMemoryState } = await import("./ai-governance-service");
+    await maintainAiMemoryState().catch(() => undefined);
+    // Agent Runs and background jobs share one long-running worker process, but keep
+    // independent leases so a slow parser cannot block an expired Agent takeover.
+    const { processNextAgentRun } = await import("./ai-agent-worker-service");
+    const agentResult = await processNextAgentRun(`${workerId}:agent`);
+    const result = agentResult ?? (await processNextAiJob(workerId));
     if (input.once) return result;
     if (!result) {
       await new Promise((resolve) => setTimeout(resolve, input.pollMs ?? 1000));

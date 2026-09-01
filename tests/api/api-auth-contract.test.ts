@@ -39,10 +39,19 @@ describe.sequential("API authentication contract coverage", () => {
 
       expect(response.status, `${testCase.operation} must reject anonymous requests`).toBe(401);
       expect(response.headers.get("content-type")).toContain("application/json");
+      const expectedMessage = testCase.operation.startsWith(
+        "POST /api/system/ai/governance/mcp/internal",
+      )
+        ? undefined
+        : "Token not provided";
+      if (expectedMessage) {
       await expect(response.json()).resolves.toMatchObject({
         success: false,
-        msg: "Token not provided",
+        msg: expectedMessage,
       });
+      } else {
+        await expect(response.json()).resolves.toMatchObject({ success: false });
+      }
     });
   }
 });

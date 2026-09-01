@@ -452,6 +452,31 @@ async function storeBufferInDefaultStorage(input: {
   };
 }
 
+export async function storeGeneratedImage(input: {
+  name?: string;
+  mime?: string | null;
+  buffer: Buffer;
+  userId: number;
+  metadata?: Record<string, unknown>;
+}) {
+  const mime = input.mime?.startsWith("image/") ? input.mime : "image/png";
+  const extension = mime === "image/jpeg" ? ".jpg" : mime === "image/webp" ? ".webp" : ".png";
+  return storeBufferInDefaultStorage({
+    originalName: path.basename(input.name || `ai-generated-${Date.now()}${extension}`),
+    mime,
+    buffer: input.buffer,
+    groupId: null,
+    userId: input.userId,
+    enableSha256Dedupe: false,
+    usageType: "user_content",
+    metadata: {
+      generated: true,
+      generatedBy: "ai-image-workflow",
+      ...(input.metadata ?? {}),
+    },
+  });
+}
+
 export async function uploadFileToDefaultStorage(input: {
   file: File;
   groupId: number | null;

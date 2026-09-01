@@ -17,6 +17,7 @@ import {
   RightOutlined,
   SendOutlined,
   TeamOutlined,
+  WarningOutlined,
 } from "@ant-design/icons";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -184,6 +185,17 @@ type WebSearchResponse = {
     error?: string;
   }>;
 };
+type ResearchCandidate = {
+  id: number;
+  url: string;
+  canonicalUrl?: string | null;
+  title?: string | null;
+  snippet?: string | null;
+  source?: string | null;
+  status: "candidate" | "accepted" | "pending" | "parsing" | "ready" | "failed" | "rejected";
+  errorMessage?: string | null;
+  createdAt: string;
+};
 type ResearchRun = {
   id: number;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -196,6 +208,10 @@ type ResearchRun = {
     citationCount?: number;
   } | null;
   errorMessage?: string | null;
+  jobId?: number | null;
+  jobStatus?: string | null;
+  queueStalled?: boolean;
+  queueWaitSeconds?: number;
   durationMs?: number | null;
   createdAt: string;
   finishedAt?: string | null;
@@ -211,6 +227,7 @@ type ResearchStep = {
   durationMs?: number | null;
 };
 type ResearchRunDetail = ResearchRun & { steps: ResearchStep[] };
+type ResearchRunPage = PageResult<ResearchRun> & { workerStalledAfterSeconds: number };
 
 const scopeLabels: Record<ScopeType, string> = {
   global: "全局",
@@ -243,6 +260,16 @@ function sourceDomain(url: string) {
   } catch {
     return url;
   }
+}
+
+function researchFailureGuidance(run: ResearchRun) {
+  const stepErrors =
+    "steps" in run ? (run as ResearchRunDetail).steps.map((step) => step.errorMessage) : [];
+  const message = [run.errorMessage, ...stepErrors].filter(Boolean).join("\n");
+  if (message.includes("域名解析到内网或保留 IP")) {
+    return "研究课题本身通常没有问题。候选来源被 SSRF 安全策略拒绝；如果本机使用代理、TUN 或 fake-IP DNS，请先让公开域名返回真实公网 IP，或检查搜索 Provider 返回的 URL。原样重试可能再次失败。";
+  }
+  return "可基于相同主题创建一个新的研究 Run。旧 Run 和失败步骤会保留用于审计；如果失败原因持续相同，请先修复 Provider、网络或来源配置。";
 }
 
 function formatTime(value?: string | null) {
@@ -323,7 +350,7 @@ export function AiNotebookPage() {
   const researchRunsQuery = useQuery({
     queryKey: ["system-ai-notebook-research", activeNotebookId],
     queryFn: () =>
-      request<PageResult<ResearchRun>>(
+      request<ResearchRunPage>(
         `/api/system/ai/notebook/${activeNotebookId}/research?page=1&pageSize=20`,
         { silent: true },
       ),
@@ -345,6 +372,15 @@ export function AiNotebookPage() {
       query.state.data?.status === "queued" || query.state.data?.status === "running"
         ? 2000
         : false,
+  });
+  const researchCandidatesQuery = useQuery({
+    queryKey: ["system-ai-notebook-research-candidates", activeNotebookId],
+    queryFn: () =>
+      request<PageResult<ResearchCandidate>>(
+        `/api/system/ai/notebook/${activeNotebookId}/sources/search/candidates?page=1&pageSize=50&status=candidate`,
+        { silent: true },
+      ),
+    enabled: Boolean(activeNotebookId),
   });
 
   useEffect(() => {
@@ -410,6 +446,7 @@ export function AiNotebookPage() {
       queryClient.invalidateQueries({ queryKey: ["system-ai-notebook-artifacts"] }),
       queryClient.invalidateQueries({ queryKey: ["system-ai-notebook-members"] }),
       queryClient.invalidateQueries({ queryKey: ["system-ai-notebook-research"] }),
+      queryClient.invalidateQueries({ queryKey: ["system-ai-notebook-research-candidates"] }),
     ]);
   };
 
@@ -520,6 +557,30 @@ export function AiNotebookPage() {
       await refresh();
     },
   });
+  const rejectResearchCandidate = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason?: string }) =>
+      request(`/api/system/ai/notebook/${activeNotebookId}/sources/search/candidates/${id}/reject`, {
+        method: "POST",
+        body: { reason },
+      }),
+    onSuccess: async () => {
+      feedback.success("候选来源已拒绝");
+      await queryClient.invalidateQueries({
+        queryKey: ["system-ai-notebook-research-candidates", activeNotebookId],
+      });
+    },
+  });
+  const acceptResearchCandidate = useMutation({
+    mutationFn: (candidate: ResearchCandidate) =>
+      request(`/api/system/ai/notebook/${activeNotebookId}/sources/search/import`, {
+        method: "POST",
+        body: { items: [{ candidateId: candidate.id, url: candidate.url, title: candidate.title }] },
+      }),
+    onSuccess: async () => {
+      feedback.success("候选来源已加入解析队列");
+      await refresh();
+    },
+  });
   const askMutation = useMutation({
     mutationFn: (query: string) =>
       request<AskResult>(`/api/system/ai/notebook/${activeNotebookId}/ask`, {
@@ -612,6 +673,27 @@ export function AiNotebookPage() {
       await refresh();
     },
     onError: (_error, topic) => setQuestion((value) => value || topic),
+  });
+  const retryResearch = useMutation({
+    mutationFn: (run: ResearchRun) =>
+      request<{ runId: number; jobId: number }>(
+        `/api/system/ai/notebook/${activeNotebookId}/research`,
+        {
+          method: "POST",
+          body: {
+            topic: run.input?.topic,
+            queryCount: run.input?.queryCount ?? 3,
+            maxSources: run.input?.maxSources ?? 6,
+          },
+        },
+      ),
+    onSuccess: async (result) => {
+      feedback.success(`已创建新的研究任务，Run #${result.runId}`);
+      setSelectedResearchRunId(result.runId);
+      setInspectorTab("research");
+      setInspectorCollapsed(false);
+      await refresh();
+    },
   });
   const cancelResearch = useMutation({
     mutationFn: (runId: number) =>
@@ -1010,16 +1092,23 @@ export function AiNotebookPage() {
                     <button
                       type="button"
                       className="ai-notebook-research-progress"
+                      data-stalled={activeResearchRun.queueStalled || undefined}
                       onClick={() => {
                         setInspectorTab("research");
                         setSelectedResearchRunId(activeResearchRun.id);
                       }}
                     >
-                      <Spin size="small" />
+                      {activeResearchRun.queueStalled ? (
+                        <WarningOutlined className="ai-notebook-research-stalled-icon" />
+                      ) : (
+                        <Spin size="small" />
+                      )}
                       <span>
-                        {activeResearchRun.status === "queued"
-                          ? "研究任务等待执行"
-                          : "正在规划检索、抓取来源并生成引用报告"}
+                        {activeResearchRun.queueStalled
+                          ? `任务等待 ${activeResearchRun.queueWaitSeconds ?? 0} 秒仍未被 Worker 领取`
+                          : activeResearchRun.status === "queued"
+                            ? "研究任务等待执行"
+                            : "正在规划检索、抓取来源并生成引用报告"}
                       </span>
                       <Typography.Text type="secondary">
                         Run #{activeResearchRun.id}
@@ -1322,7 +1411,26 @@ export function AiNotebookPage() {
                                               </Button>
                                             </AuthButton>,
                                           ]
-                                        : undefined
+                                        : run.status === "failed"
+                                          ? [
+                                              <AuthButton
+                                                key="retry"
+                                                auth="system.aiNotebook.artifact"
+                                              >
+                                                <Button
+                                                  type="text"
+                                                  size="small"
+                                                  loading={retryResearch.isPending}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    retryResearch.mutate(run);
+                                                  }}
+                                                >
+                                                  重新研究
+                                                </Button>
+                                              </AuthButton>,
+                                            ]
+                                          : undefined
                                     }
                                     onClick={() => setSelectedResearchRunId(run.id)}
                                   >
@@ -1340,6 +1448,72 @@ export function AiNotebookPage() {
                                   </List.Item>
                                 );
                               }}
+                            />
+                          </div>
+                        </div>
+                      ),
+                    },
+                    {
+                      key: "candidates",
+                      label: `候选 ${researchCandidatesQuery.data?.total ?? 0}`,
+                      children: (
+                        <div className="ai-notebook-artifacts-tab">
+                          <Alert
+                            type="info"
+                            showIcon
+                            message="管理员审核"
+                            description="联网搜索只产生候选来源。确认后才会抓取正文并进入当前 Notebook；拒绝不会污染知识库。"
+                          />
+                          <div className="ai-notebook-panel-scroll">
+                            <List
+                              loading={researchCandidatesQuery.isFetching}
+                              dataSource={researchCandidatesQuery.data?.data ?? []}
+                              locale={{
+                                emptyText: <Empty description="没有待审核来源" image={Empty.PRESENTED_IMAGE_SIMPLE} />,
+                              }}
+                              renderItem={(candidate) => (
+                                <List.Item
+                                  className="ai-notebook-artifact-row"
+                                  actions={[
+                                    <Button
+                                      key="accept"
+                                      type="link"
+                                      size="small"
+                                      loading={acceptResearchCandidate.isPending}
+                                      onClick={() => acceptResearchCandidate.mutate(candidate)}
+                                    >
+                                      采纳
+                                    </Button>,
+                                    <Popconfirm
+                                      key="reject"
+                                      title="拒绝这个候选来源？"
+                                      onConfirm={() => rejectResearchCandidate.mutate({ id: candidate.id })}
+                                    >
+                                      <Button type="link" danger size="small" loading={rejectResearchCandidate.isPending}>
+                                        拒绝
+                                      </Button>
+                                    </Popconfirm>,
+                                  ]}
+                                >
+                                  <List.Item.Meta
+                                    title={candidate.title || candidate.url}
+                                    description={
+                                      <Space orientation="vertical" size={2} style={{ width: "100%" }}>
+                                        <Typography.Text ellipsis={{ tooltip: candidate.url }}>
+                                          <LinkOutlined /> {candidate.url}
+                                        </Typography.Text>
+                                        <Typography.Text type="secondary" ellipsis={{ tooltip: candidate.snippet || undefined }}>
+                                          {candidate.snippet || "暂无摘要"}
+                                        </Typography.Text>
+                                        <Space size={6}>
+                                          <Tag>{candidate.source || "web"}</Tag>
+                                          <Typography.Text type="secondary">{formatTime(candidate.createdAt)}</Typography.Text>
+                                        </Space>
+                                      </Space>
+                                    }
+                                  />
+                                </List.Item>
+                              )}
                             />
                           </div>
                         </div>
@@ -1853,6 +2027,17 @@ export function AiNotebookPage() {
                 取消任务
               </Button>
             </AuthButton>
+          ) : researchRunQuery.data?.status === "failed" ? (
+            <AuthButton auth="system.aiNotebook.artifact">
+              <Button
+                type="primary"
+                icon={<ReloadOutlined />}
+                loading={retryResearch.isPending}
+                onClick={() => retryResearch.mutate(researchRunQuery.data!)}
+              >
+                创建新 Run 重试
+              </Button>
+            </AuthButton>
           ) : researchRunQuery.data?.output?.artifactId ? (
             <Button
               type="primary"
@@ -1890,12 +2075,27 @@ export function AiNotebookPage() {
                   {researchStatusMeta[researchRunQuery.data.status].label}
                 </Tag>
               </div>
+              {researchRunQuery.data.queueStalled ? (
+                <Alert
+                  type="error"
+                  showIcon
+                  title="任务长时间未被 Worker 领取"
+                  description={`已等待 ${researchRunQuery.data.queueWaitSeconds ?? 0} 秒。Worker 可能没有启动、正在反复退出或队列处理能力不足；开发环境可使用 pnpm dev:all。`}
+                />
+              ) : null}
               {researchRunQuery.data.errorMessage ? (
                 <Alert
                   type="error"
                   showIcon
                   title="研究失败"
-                  description={researchRunQuery.data.errorMessage}
+                  description={
+                    <Space orientation="vertical" size={4}>
+                      <span>{researchRunQuery.data.errorMessage}</span>
+                      <Typography.Text type="secondary">
+                        {researchFailureGuidance(researchRunQuery.data)}
+                      </Typography.Text>
+                    </Space>
+                  }
                 />
               ) : null}
               {researchRunQuery.data.output ? (

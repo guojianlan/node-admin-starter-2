@@ -239,6 +239,9 @@ describe("AI Notebook v1", () => {
     );
     const notebookId = Number(created.data?.id);
     expect(notebookId).toBeGreaterThan(0);
+    await expect(getVisibleAiNotebook(notebookId, 1)).resolves.toMatchObject({
+      sourceScopeVersion: 1,
+    });
 
     const noSource = await app.request(`/api/system/ai/notebook/${notebookId}/ask`, {
       method: "POST",
@@ -256,6 +259,9 @@ describe("AI Notebook v1", () => {
     );
     const sourceId = Number(source.data?.id);
     expect(sourceId).toBeGreaterThan(0);
+    await expect(getVisibleAiNotebook(notebookId, 1)).resolves.toMatchObject({
+      sourceScopeVersion: 2,
+    });
     const duplicate = await app.request(`/api/system/ai/notebook/${notebookId}/sources`, {
       method: "POST",
       headers: authHeaders(token),
@@ -281,7 +287,11 @@ describe("AI Notebook v1", () => {
       expect.objectContaining({ documentId: first.documentId, version: 1 }),
     ]);
 
-    const artifact = await readJson<{ id: number; citations: Array<{ documentId: number }> }>(
+    const artifact = await readJson<{
+      id: number;
+      sourceScopeVersion: number;
+      citations: Array<{ documentId: number }>;
+    }>(
       await app.request(`/api/system/ai/notebook/${notebookId}/artifacts`, {
         method: "POST",
         headers: authHeaders(token, "notebook-artifact-generate"),
@@ -290,7 +300,18 @@ describe("AI Notebook v1", () => {
     );
     expect(artifact.data).toMatchObject({
       id: expect.any(Number),
+      sourceScopeVersion: 2,
       citations: [expect.objectContaining({ documentId: first.documentId })],
+    });
+
+    const disabled = await app.request(`/api/system/ai/knowledge/documents/${first.documentId}/status`, {
+      method: "PUT",
+      headers: authHeaders(token, "notebook-knowledge-status-change"),
+      body: JSON.stringify({ status: "disabled" }),
+    });
+    expect(disabled.status).toBe(200);
+    await expect(getVisibleAiNotebook(notebookId, 1)).resolves.toMatchObject({
+      sourceScopeVersion: 3,
     });
 
     const removed = await app.request(`/api/system/ai/notebook/${notebookId}/sources/${sourceId}`, {
@@ -298,6 +319,9 @@ describe("AI Notebook v1", () => {
       headers: authHeaders(token, "notebook-source-remove"),
     });
     expect(removed.status).toBe(200);
+    await expect(getVisibleAiNotebook(notebookId, 1)).resolves.toMatchObject({
+      sourceScopeVersion: 4,
+    });
     await app.request(`/api/system/ai/notebook/${notebookId}/sources`, {
       method: "POST",
       headers: authHeaders(token),
@@ -346,7 +370,11 @@ describe("AI Notebook v1", () => {
       ],
     });
 
-    const regenerated = await readJson<{ id: number; citations: Array<{ documentId: number }> }>(
+    const regenerated = await readJson<{
+      id: number;
+      sourceScopeVersion: number;
+      citations: Array<{ documentId: number }>;
+    }>(
       await app.request(`/api/system/ai/notebook/artifacts/${artifact.data?.id}/regenerate`, {
         method: "POST",
         headers: authHeaders(token, "notebook-artifact-regenerate"),
@@ -354,11 +382,12 @@ describe("AI Notebook v1", () => {
     );
     expect(regenerated.data).toMatchObject({
       id: expect.any(Number),
+      sourceScopeVersion: 5,
       citations: [expect.objectContaining({ documentId: second.documentId })],
     });
     expect(regenerated.data?.id).not.toBe(artifact.data?.id);
     const versionedArtifacts = await readJson<{
-      data: Array<{ id: number; version: number }>;
+      data: Array<{ id: number; version: number; sourceScopeVersion: number }>;
       total: number;
     }>(
       await app.request(`/api/system/ai/notebook/${notebookId}/artifacts?page=1&pageSize=10`, {
@@ -368,8 +397,8 @@ describe("AI Notebook v1", () => {
     expect(versionedArtifacts.data).toMatchObject({
       total: 2,
       data: [
-        { id: regenerated.data?.id, version: 2 },
-        { id: artifact.data?.id, version: 1 },
+        { id: regenerated.data?.id, version: 2, sourceScopeVersion: 5 },
+        { id: artifact.data?.id, version: 1, sourceScopeVersion: 2 },
       ],
     });
 

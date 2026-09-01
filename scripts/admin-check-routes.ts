@@ -117,6 +117,20 @@ const explicitRouteAllowlist = new Map(
       allowMissingOperationLog: true,
       reason: "chunk upload part is high-volume upload plumbing; complete action is audited",
     },
+    {
+      key: "ai-governance.ts:POST /ai/governance/mcp/internal/oauth/token",
+      allowMissingAbility: true,
+      allowMissingOperationLog: true,
+      reason:
+        "internal OAuth token exchange uses MCP client credentials instead of admin auth; provisioning is audited",
+    },
+    {
+      key: "ai-governance.ts:POST /ai/governance/mcp/internal",
+      allowMissingAbility: true,
+      allowMissingOperationLog: true,
+      reason:
+        "read-only MCP JSON-RPC validates its signed access token and invoking user query ability",
+    },
   ].map((item) => [item.key, item]),
 );
 

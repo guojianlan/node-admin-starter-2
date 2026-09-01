@@ -20,6 +20,7 @@ export type AiWebSearchProviderRow = {
 };
 
 export type WebSearchResult = {
+  candidateId?: number;
   title: string;
   url: string;
   snippet: string;

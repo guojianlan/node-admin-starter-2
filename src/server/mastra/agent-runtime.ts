@@ -2,10 +2,12 @@ import { Agent } from "@mastra/core/agent";
 import type { ModelMessage } from "ai";
 import {
   appendAgentRunStep,
-  createAgentRun,
+  assertAgentRunLease,
+  createAgentRunLease,
   executeAgentTool,
   finishAgentRun,
   getAiAgent,
+  heartbeatAgentRun,
   listAiTools,
 } from "@/server/services/ai-agent-service";
 import { isAiToolApprovalRequired } from "@/server/services/ai-agent-runtime-policy";
@@ -59,6 +61,11 @@ export async function createMastraAiAgentStream(input: {
   abortSignal: AbortSignal;
   abilities?: string[];
   requestId?: string;
+  runLease?: {
+    id: number;
+    attempt: number;
+    leaseOwner: string;
+  };
 }) {
   const startedAt = performance.now();
   const agentRow = await getAiAgent(input.agentId);
@@ -66,6 +73,7 @@ export async function createMastraAiAgentStream(input: {
   const governed = await resolveAgentGovernedContext({
     agentId: agentRow.id,
     userId: input.userId,
+    query: input.messages.at(-1)?.content,
   });
   const governedMessages = governed.instructions
     ? ([
@@ -83,14 +91,18 @@ export async function createMastraAiAgentStream(input: {
     abortSignal: input.abortSignal,
   });
   const runtime = runtimes[0];
-  const runId = await createAgentRun({
-    sessionId: input.sessionId,
-    agentId: agentRow.id,
-    userId: input.userId,
-    inputMessageId: input.inputMessageId,
-    parentRunId: input.parentRunId,
-    sourceApprovalId: input.sourceApprovalId,
-  });
+  const run = input.runLease
+    ? (await assertAgentRunLease({ id: input.runLease.id, leaseOwner: input.runLease.leaseOwner }),
+      input.runLease)
+    : await createAgentRunLease({
+        sessionId: input.sessionId,
+        agentId: agentRow.id,
+        userId: input.userId,
+        inputMessageId: input.inputMessageId,
+        parentRunId: input.parentRunId,
+        sourceApprovalId: input.sourceApprovalId,
+      });
+  const runId = run.id;
   const configuredTools = await listAiTools({ activeOnly: true, agentId: agentRow.id });
   const toolRows = governed.allowedToolIds
     ? configuredTools.filter((item) => governed.allowedToolIds?.has(item.id))
@@ -100,13 +112,16 @@ export async function createMastraAiAgentStream(input: {
   const tools = createMastraToolSet({
     tools: toolRows,
     requiresApproval: isAiToolApprovalRequired,
-    execute: async (toolRow, toolInput) => {
+    execute: async (toolRow, toolInput, toolCallId) => {
       const toolStartedAt = performance.now();
       stepNo += 1;
       try {
         const output = await executeAgentTool(toolRow, toolInput, {
           userId: input.userId,
           requestId: input.requestId,
+          runId,
+          leaseOwner: run.leaseOwner,
+          toolCallId,
         });
         await appendAgentRunStep({
           runId,
@@ -118,6 +133,7 @@ export async function createMastraAiAgentStream(input: {
           input: toolInput,
           output,
           durationMs: Math.round(performance.now() - toolStartedAt),
+          leaseOwner: run.leaseOwner,
         });
         return output;
       } catch (error) {
@@ -131,6 +147,7 @@ export async function createMastraAiAgentStream(input: {
           input: toolInput,
           durationMs: Math.round(performance.now() - toolStartedAt),
           errorMessage: error instanceof Error ? error.message : String(error),
+          leaseOwner: run.leaseOwner,
         });
         throw error;
       }
@@ -180,6 +197,7 @@ export async function createMastraAiAgentStream(input: {
       orchestrator: "mastra" as const,
       agent: agentRow,
       runId,
+      leaseOwner: run.leaseOwner,
       runtime: {
         ...runtime,
         startedAt,
@@ -189,6 +207,7 @@ export async function createMastraAiAgentStream(input: {
       },
       stream: { fullStream: adaptMastraAgentStream(stream) },
       toolMap,
+      heartbeat: () => heartbeatAgentRun({ id: runId, leaseOwner: run.leaseOwner }),
       nextStepNo: () => {
         stepNo += 1;
         return stepNo;
@@ -200,6 +219,7 @@ export async function createMastraAiAgentStream(input: {
       id: runId,
       status: "failed",
       errorMessage: error instanceof Error ? error.message : String(error),
+      leaseOwner: run.leaseOwner,
     });
     throw error;
   }

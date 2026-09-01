@@ -5,6 +5,7 @@ import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { ability } from "@/server/middleware/ability";
 import { authRequired } from "@/server/middleware/auth";
+import { sqlite } from "@/server/db";
 import {
   addKnowledgeDocument,
   askKnowledge,
@@ -23,6 +24,7 @@ import {
 } from "@/server/services/ai-knowledge-service";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 import { uploadFileToDefaultStorage } from "@/server/services/storage-service";
+import { enqueueAiJob } from "@/server/services/ai-job-service";
 
 const idSchema = z.coerce.number().int().positive();
 const knowledgeBaseSchema = z
@@ -292,6 +294,7 @@ aiKnowledgeRoutes.post(
   ability("system.aiKnowledge.index"),
   async (c) => {
     const documentId = idSchema.parse(c.req.param("id"));
+    const asyncMode = new URL(c.req.url).searchParams.get("async") === "1";
     const result = await runWithOperationLog(
       c,
       {
@@ -301,14 +304,31 @@ aiKnowledgeRoutes.post(
         resourceId: documentId,
         riskLevel: "high",
       },
-      () =>
-        indexKnowledgeDocument({
+      async () => {
+        if (asyncMode) {
+          const document = (await sqlite
+            .prepare("SELECT version FROM sys_ai_document WHERE id = ? AND deleted_at IS NULL")
+            .get(documentId)) as { version: number } | undefined;
+          if (!document) throw new Error("知识文档不存在或已删除");
+          const jobId = await enqueueAiJob({
+            jobType: "knowledge_parser",
+            payload: { documentId, expectedDocumentVersion: document.version },
+            userId: c.get("user").id,
+            resourceType: "knowledge_document",
+            resourceId: documentId,
+            requestId: c.get("requestId"),
+            idempotencyKey: `knowledge-parser:${documentId}:${document.version}`,
+          });
+          return { queued: true, jobId, documentId, version: document.version };
+        }
+        return indexKnowledgeDocument({
           documentId,
           userId: c.get("user").id,
           requestId: c.get("requestId"),
-        }),
+        });
+      },
     );
-    return c.json(success(result, "文档索引已完成"));
+    return c.json(success(result, asyncMode ? "文档索引任务已进入 Worker" : "文档索引已完成"));
   },
 );
 

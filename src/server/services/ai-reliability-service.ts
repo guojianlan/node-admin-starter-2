@@ -350,7 +350,7 @@ export function classifyAiError(error: unknown) {
     ? "aborted"
     : lower.includes("timeout")
       ? "timeout"
-      : lower.includes("429") || lower.includes("rate limit")
+      : lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")
         ? "rate_limit"
         : lower.includes("401") || lower.includes("403") || lower.includes("auth")
           ? "authentication"

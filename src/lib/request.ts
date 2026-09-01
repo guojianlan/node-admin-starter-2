@@ -18,6 +18,7 @@ type TextStreamRequestOptions = RequestOptions & {
 export type EventStreamMessage = {
   event: string;
   data: unknown;
+  id?: number;
 };
 
 type EventStreamRequestOptions = RequestOptions & {
@@ -172,12 +173,18 @@ export async function requestTextStream(
   }
 }
 
-function parseEventStreamBlock(block: string): EventStreamMessage | null {
+export function parseEventStreamBlock(block: string): EventStreamMessage | null {
   let event = "message";
+  let id: number | undefined;
   const dataLines: string[] = [];
 
   for (const line of block.split(/\r?\n/)) {
     if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("id:")) {
+      const parsed = Number(line.slice("id:".length).trim());
+      if (Number.isSafeInteger(parsed) && parsed > 0) id = parsed;
+      continue;
+    }
     if (line.startsWith("event:")) {
       event = line.slice("event:".length).trim() || event;
       continue;
@@ -195,7 +202,7 @@ function parseEventStreamBlock(block: string): EventStreamMessage | null {
   } catch {
     data = rawData;
   }
-  return { event, data };
+  return { event, data, ...(id == null ? {} : { id }) };
 }
 
 export async function requestEventStream(

@@ -3082,6 +3082,734 @@ WHERE key = 'file.allowed_extensions'
   AND lower(',' || coalesce("values", '') || ',') NOT LIKE '%,markdown,%';
 `,
   },
+  {
+    id: "0047_ai_agent_run_leases",
+    sql: `
+ALTER TABLE sys_ai_agent_run
+  ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sys_ai_agent_run
+  ADD COLUMN IF NOT EXISTS lease_owner TEXT;
+ALTER TABLE sys_ai_agent_run
+  ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE sys_ai_agent_run
+  ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_lease_idx
+  ON sys_ai_agent_run(status, lease_until);
+
+UPDATE sys_ai_agent_run
+SET attempt = 1
+WHERE attempt IS NULL OR attempt < 1;
+`,
+  },
+  {
+    id: "0048_ai_agent_run_events",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_agent_run_event (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_agent_run(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_agent_run_event_sequence_unique
+  ON sys_ai_agent_run_event(run_id, attempt, sequence);
+CREATE INDEX IF NOT EXISTS sys_ai_agent_run_event_run_id_idx
+  ON sys_ai_agent_run_event(run_id, id);
+`,
+  },
+  {
+    id: "0049_ai_tool_execution_idempotency",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_tool_execution (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_agent_run(id) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL,
+  tool_id INTEGER REFERENCES sys_ai_tool(id) ON DELETE SET NULL,
+  tool_name TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  input_json TEXT,
+  output_json TEXT,
+  error_message TEXT,
+  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed')),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_tool_execution_run_attempt_call_unique
+  ON sys_ai_tool_execution(run_id, attempt, tool_call_id);
+CREATE INDEX IF NOT EXISTS sys_ai_tool_execution_run_status_idx
+  ON sys_ai_tool_execution(run_id, status);
+`,
+  },
+  {
+    id: "0050_ai_notebook_source_scope_version",
+    sql: `
+ALTER TABLE sys_ai_notebook
+  ADD COLUMN IF NOT EXISTS source_scope_version INTEGER NOT NULL DEFAULT 1;
+UPDATE sys_ai_notebook
+SET source_scope_version = 1
+WHERE source_scope_version IS NULL OR source_scope_version < 1;
+`,
+  },
+  {
+    id: "0051_ai_notebook_artifact_source_scope_version",
+    sql: `
+ALTER TABLE sys_ai_notebook_artifact
+  ADD COLUMN IF NOT EXISTS source_scope_version INTEGER NOT NULL DEFAULT 1;
+UPDATE sys_ai_notebook_artifact
+SET source_scope_version = 1
+WHERE source_scope_version IS NULL OR source_scope_version < 1;
+`,
+  },
+  {
+    id: "0052_ai_notebook_research_candidates",
+    sql: `
+CREATE TABLE IF NOT EXISTS sys_ai_notebook_research_candidate (
+  id SERIAL PRIMARY KEY,
+  notebook_id INTEGER NOT NULL REFERENCES sys_ai_notebook(id) ON DELETE CASCADE,
+  workflow_run_id INTEGER REFERENCES sys_ai_workflow_run(id) ON DELETE SET NULL,
+  query_text TEXT NOT NULL,
+  url TEXT NOT NULL,
+  canonical_url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  snippet TEXT,
+  source TEXT,
+  published_at TEXT,
+  status TEXT NOT NULL DEFAULT 'candidate'
+    CHECK (status IN ('candidate', 'accepted', 'pending', 'parsing', 'ready', 'failed', 'rejected')),
+  document_id INTEGER REFERENCES sys_ai_document(id) ON DELETE SET NULL,
+  notebook_source_id INTEGER REFERENCES sys_ai_notebook_source(id) ON DELETE SET NULL,
+  error_message TEXT,
+  accepted_at TIMESTAMPTZ,
+  parsed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER,
+  updated_by INTEGER,
+  deleted_by INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_notebook_research_candidate_url_unique
+  ON sys_ai_notebook_research_candidate(notebook_id, canonical_url)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_research_candidate_notebook_status_idx
+  ON sys_ai_notebook_research_candidate(notebook_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_notebook_research_candidate_workflow_idx
+  ON sys_ai_notebook_research_candidate(workflow_run_id);
+DROP TRIGGER IF EXISTS trg_sys_ai_notebook_research_candidate_updated_at
+  ON sys_ai_notebook_research_candidate;
+CREATE TRIGGER trg_sys_ai_notebook_research_candidate_updated_at
+BEFORE UPDATE ON sys_ai_notebook_research_candidate
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    `,
+  },
+  {
+    id: "0053_ai_governance_worker_foundations",
+    sql: `
+ALTER TABLE sys_ai_memory ADD COLUMN IF NOT EXISTS importance INTEGER NOT NULL DEFAULT 50;
+ALTER TABLE sys_ai_memory ADD COLUMN IF NOT EXISTS normalized_key TEXT;
+ALTER TABLE sys_ai_memory ADD COLUMN IF NOT EXISTS embedding_json TEXT;
+ALTER TABLE sys_ai_memory ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_memory ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS sys_ai_memory_normalized_key_idx
+  ON sys_ai_memory(user_id, normalized_key);
+
+CREATE TABLE IF NOT EXISTS sys_ai_memory_candidate (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  agent_id INTEGER REFERENCES sys_ai_agent(id) ON DELETE CASCADE,
+  source_session_id INTEGER REFERENCES sys_ai_chat_session(id) ON DELETE SET NULL,
+  source_message_id INTEGER REFERENCES sys_ai_chat_message(id) ON DELETE SET NULL,
+  content TEXT NOT NULL,
+  normalized_key TEXT NOT NULL,
+  confidence INTEGER NOT NULL DEFAULT 80,
+  status TEXT NOT NULL DEFAULT 'proposed'
+    CHECK (status IN ('proposed', 'accepted', 'rejected', 'merged', 'expired')),
+  conflict_group TEXT,
+  embedding_json TEXT,
+  merged_memory_id INTEGER REFERENCES sys_ai_memory(id) ON DELETE SET NULL,
+  rejection_reason TEXT,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_memory_candidate_user_status_idx
+  ON sys_ai_memory_candidate(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS sys_ai_memory_candidate_key_idx
+  ON sys_ai_memory_candidate(user_id, normalized_key);
+
+CREATE TABLE IF NOT EXISTS sys_ai_runtime_skill_version (
+  id SERIAL PRIMARY KEY,
+  skill_id INTEGER NOT NULL REFERENCES sys_ai_runtime_skill(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  instructions TEXT NOT NULL,
+  tool_ids_json TEXT NOT NULL DEFAULT '[]',
+  agent_ids_json TEXT NOT NULL DEFAULT '[]',
+  compatibility_json TEXT NOT NULL DEFAULT '{}',
+  content_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'retired')),
+  published_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(skill_id, version)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_runtime_skill_version_status_idx
+  ON sys_ai_runtime_skill_version(skill_id, status);
+
+ALTER TABLE sys_ai_mcp_connection ADD COLUMN IF NOT EXISTS revoke_url TEXT;
+ALTER TABLE sys_ai_mcp_connection ADD COLUMN IF NOT EXISTS remote_session_id TEXT;
+ALTER TABLE sys_ai_mcp_connection ADD COLUMN IF NOT EXISTS capabilities_json TEXT;
+ALTER TABLE sys_ai_mcp_connection ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_mcp_server ADD COLUMN IF NOT EXISTS revoke_url TEXT;
+ALTER TABLE sys_ai_mcp_tool ADD COLUMN IF NOT EXISTS schema_hash TEXT;
+ALTER TABLE sys_ai_mcp_tool ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'discovered';
+ALTER TABLE sys_ai_mcp_tool ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_mcp_tool ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+ALTER TABLE sys_ai_mcp_tool DROP CONSTRAINT IF EXISTS sys_ai_mcp_tool_lifecycle_check;
+ALTER TABLE sys_ai_mcp_tool ADD CONSTRAINT sys_ai_mcp_tool_lifecycle_check
+  CHECK (lifecycle IN ('discovered', 'approved', 'active', 'stale', 'revoked'));
+CREATE TABLE IF NOT EXISTS sys_ai_mcp_tool_version (
+  id SERIAL PRIMARY KEY,
+  tool_id INTEGER NOT NULL REFERENCES sys_ai_mcp_tool(id) ON DELETE CASCADE,
+  schema_hash TEXT NOT NULL,
+  input_schema_json TEXT,
+  description TEXT,
+  discovered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(tool_id, schema_hash)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_mcp_tool_version_tool_idx
+  ON sys_ai_mcp_tool_version(tool_id, discovered_at DESC);
+CREATE TABLE IF NOT EXISTS sys_ai_mcp_session (
+  id SERIAL PRIMARY KEY,
+  server_id INTEGER NOT NULL REFERENCES sys_ai_mcp_server(id) ON DELETE CASCADE,
+  connection_id INTEGER REFERENCES sys_ai_mcp_connection(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES sys_user(id) ON DELETE CASCADE,
+  remote_session_id TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'stale', 'closed')),
+  expires_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(server_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_mcp_session_status_idx
+  ON sys_ai_mcp_session(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_progress_event (
+  id SERIAL PRIMARY KEY,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  run_id INTEGER,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sys_ai_progress_event_resource_idx
+  ON sys_ai_progress_event(resource_type, resource_id, id);
+CREATE INDEX IF NOT EXISTS sys_ai_progress_event_run_idx
+  ON sys_ai_progress_event(run_id, id);
+
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_definition (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'disabled')),
+  current_version INTEGER,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  deleted_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_definition_status_idx
+  ON sys_ai_workflow_definition(status, updated_at DESC);
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_definition_version (
+  id SERIAL PRIMARY KEY,
+  definition_id INTEGER NOT NULL REFERENCES sys_ai_workflow_definition(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  graph_json TEXT NOT NULL,
+  input_schema_json TEXT NOT NULL DEFAULT '{}',
+  output_schema_json TEXT NOT NULL DEFAULT '{}',
+  compatibility_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'retired')),
+  published_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(definition_id, version)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_definition_version_status_idx
+  ON sys_ai_workflow_definition_version(definition_id, status);
+`,
+  },
+  {
+    id: "0054_ai_visual_workflow_tables",
+    sql: `
+-- 0053 was already applied in some development databases before the visual
+-- Workflow tables were added to that migration. Keep this repair additive so
+-- existing databases converge without rewriting migration history.
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_definition (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'disabled')),
+  current_version INTEGER,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  deleted_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_definition_status_idx
+  ON sys_ai_workflow_definition(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_definition_version (
+  id SERIAL PRIMARY KEY,
+  definition_id INTEGER NOT NULL REFERENCES sys_ai_workflow_definition(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  graph_json TEXT NOT NULL,
+  input_schema_json TEXT NOT NULL DEFAULT '{}',
+  output_schema_json TEXT NOT NULL DEFAULT '{}',
+  compatibility_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'retired')),
+  published_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(definition_id, version)
+);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_definition_version_status_idx
+  ON sys_ai_workflow_definition_version(definition_id, status);
+`,
+  },
+  {
+    id: "0055_ai_image_workflow_tool",
+    sql: `
+INSERT INTO sys_ai_tool
+  (name, code, description, handler_key, input_schema_json, risk_level,
+   approval_required, status, sort, is_system)
+VALUES
+  ('图片创意改造', 'image-transform',
+   '读取有权限的图片，调用已配置的 Image Provider 生成改造结果并保存为新文件',
+   'image_transform',
+   '{"fileId":"number","instruction":"string","modelId":"number?","size":"string?","style":"string?"}',
+   'medium', false, 1, 8, true)
+ON CONFLICT (code) WHERE deleted_at IS NULL DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  handler_key = EXCLUDED.handler_key,
+  input_schema_json = EXCLUDED.input_schema_json,
+  risk_level = EXCLUDED.risk_level,
+  approval_required = EXCLUDED.approval_required,
+  status = EXCLUDED.status,
+  sort = EXCLUDED.sort,
+  is_system = EXCLUDED.is_system,
+  updated_at = now();
+
+INSERT INTO sys_ai_agent_tool (agent_id, tool_id, approval_mode)
+SELECT agent.id, tool.id, 'never'
+FROM sys_ai_agent agent CROSS JOIN sys_ai_tool tool
+WHERE agent.code = 'general-assistant'
+  AND agent.deleted_at IS NULL
+  AND tool.code = 'image-transform'
+  AND tool.deleted_at IS NULL
+ON CONFLICT (agent_id, tool_id) DO UPDATE SET approval_mode = 'never';
+
+INSERT INTO sys_ai_workflow_definition
+  (code, name, description, status, current_version)
+VALUES
+  ('funny-image-transform', '搞怪图片生成器',
+   '上传图片后，按要求调用受控 Image Tool 生成一张新的搞怪图片；原图不会被覆盖。',
+   'draft', 1)
+ON CONFLICT (code) DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  current_version = COALESCE(sys_ai_workflow_definition.current_version, EXCLUDED.current_version),
+  updated_at = now();
+
+INSERT INTO sys_ai_workflow_definition_version
+  (definition_id, version, graph_json, input_schema_json, output_schema_json,
+   compatibility_json, status)
+SELECT
+  definition.id,
+  1,
+  '{
+    "nodes": [
+      {"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"图片输入"}},
+      {"id":"args","type":"mapping","position":{"x":300,"y":180},"data":{"label":"生成参数","mapConfig":{"fileId":{"initData":true,"path":"fileId"},"instruction":{"initData":true,"path":"instruction"},"modelId":{"initData":true,"path":"modelId"},"size":{"initData":true,"path":"size"},"style":{"initData":true,"path":"style"}}}},
+      {"id":"transform","type":"tool","position":{"x":560,"y":180},"data":{"label":"图片创意改造","toolId":"image-transform"}},
+      {"id":"output","type":"output","position":{"x":820,"y":180},"data":{"label":"生成结果"}}
+    ],
+    "edges": [
+      {"id":"input-args","source":"input","target":"args"},
+      {"id":"args-transform","source":"args","target":"transform"},
+      {"id":"transform-output","source":"transform","target":"output"}
+    ]
+  }',
+  '{"type":"object","required":["fileId","instruction"]}',
+  '{"type":"object","required":["fileId","url"]}',
+  '{"requires":"active-image-provider-and-model","tool":"image_transform"}',
+  'draft'
+FROM sys_ai_workflow_definition definition
+WHERE definition.code = 'funny-image-transform'
+ON CONFLICT (definition_id, version) DO NOTHING;
+`,
+  },
+  {
+    id: "0056_ai_image_workflow_draft_pointer",
+    sql: `
+UPDATE sys_ai_workflow_definition definition
+SET current_version = 1,
+    updated_at = now()
+WHERE definition.code = 'funny-image-transform'
+  AND definition.status = 'draft'
+  AND definition.current_version IS NULL
+  AND EXISTS (
+    SELECT 1 FROM sys_ai_workflow_definition_version version
+    WHERE version.definition_id = definition.id AND version.version = 1
+  );
+    `,
+  },
+  {
+    id: "0057_ai_image_workflow_schemas",
+    sql: `
+UPDATE sys_ai_workflow_definition_version version
+SET input_schema_json = '{
+  "type": "object",
+  "title": "搞怪图片输入",
+  "required": ["fileId", "instruction"],
+  "properties": {
+    "fileId": {"type":"number","title":"原图","x-input":"image","description":"上传需要改造的图片"},
+    "instruction": {"type":"string","title":"改造指令","description":"描述希望图片变成什么样"},
+    "size": {"type":"string","title":"输出尺寸","default":"1024x1024"},
+    "style": {"type":"string","title":"风格","default":"cartoon"}
+  }
+}',
+    output_schema_json = '{
+  "type": "object",
+  "title": "图片生成结果",
+  "required": ["fileId", "url"],
+  "properties": {
+    "fileId": {"type":"number","title":"结果文件 ID"},
+    "url": {"type":"string","format":"uri","title":"结果图片"},
+    "sourceFileId": {"type":"number","title":"原图文件 ID"}
+  }
+}'
+WHERE version.definition_id = (SELECT definition.id FROM sys_ai_workflow_definition definition WHERE definition.code = 'funny-image-transform')
+  AND version.version = 1;
+
+UPDATE sys_ai_workflow_definition_version version
+SET graph_json = jsonb_set(
+  jsonb_set(
+    version.graph_json::jsonb,
+    '{nodes,0,data}',
+    '{"label":"图片输入","type":"input","schema":{"type":"object","title":"搞怪图片输入","required":["fileId","instruction"],"properties":{"fileId":{"type":"number","title":"原图","x-input":"image","description":"上传需要改造的图片"},"instruction":{"type":"string","title":"改造指令","description":"描述希望图片变成什么样"},"size":{"type":"string","title":"输出尺寸","default":"1024x1024"},"style":{"type":"string","title":"风格","default":"cartoon"}}}}'::jsonb,
+    true
+  ),
+  '{nodes,3,data}',
+  '{"label":"生成结果","type":"output","schema":{"type":"object","title":"图片生成结果","required":["fileId","url"],"properties":{"fileId":{"type":"number","title":"结果文件 ID"},"url":{"type":"string","format":"uri","title":"结果图片"},"sourceFileId":{"type":"number","title":"原图文件 ID"}}}}'::jsonb,
+  true
+)
+WHERE version.definition_id = (SELECT definition.id FROM sys_ai_workflow_definition definition WHERE definition.code = 'funny-image-transform')
+  AND version.version = 1;
+`,
+  },
+  {
+    id: "0058_ai_image_workflow_complete_template",
+    sql: `
+UPDATE sys_ai_workflow_definition_version version
+SET input_schema_json = '{
+  "type":"object",
+  "title":"搞怪图片输入",
+  "required":["fileId","instruction"],
+  "properties":{
+    "fileId":{"type":"number","title":"原图","x-input":"image","description":"上传需要改造的图片"},
+    "instruction":{"type":"string","title":"改造指令","description":"描述希望图片变成什么样"},
+    "size":{"type":"string","title":"输出尺寸","default":"1024x1024"},
+    "style":{"type":"string","title":"风格","default":"cartoon"}
+  }
+}',
+    output_schema_json = '{
+  "type":"object",
+  "title":"图片生成结果",
+  "required":["fileId","url"],
+  "properties":{
+    "fileId":{"type":"number","title":"结果文件 ID"},
+    "url":{"type":"string","format":"uri","title":"结果图片"},
+    "sourceFileId":{"type":"number","title":"原图文件 ID"}
+  }
+}',
+    graph_json = jsonb_set(
+      version.graph_json::jsonb,
+      '{nodes}',
+      (
+        SELECT jsonb_agg(
+          CASE node->>'id'
+            WHEN 'input' THEN node || jsonb_build_object(
+              'type', 'input',
+              'data', (node->'data') || jsonb_build_object(
+                'label', '图片输入',
+                'type', 'input',
+                'description', '接收一张图片和改造要求',
+                'schema', '{"type":"object","title":"搞怪图片输入","required":["fileId","instruction"],"properties":{"fileId":{"type":"number","title":"原图","x-input":"image","description":"上传需要改造的图片"},"instruction":{"type":"string","title":"改造指令","description":"描述希望图片变成什么样"},"size":{"type":"string","title":"输出尺寸","default":"1024x1024"},"style":{"type":"string","title":"风格","default":"cartoon"}}}'::jsonb
+              )
+            )
+            WHEN 'args' THEN node || jsonb_build_object(
+              'type', 'mapping',
+              'data', (node->'data') || jsonb_build_object(
+                'label', '生成参数',
+                'type', 'mapping',
+                'description', '把输入 Schema 映射成图片 Tool 的参数',
+                'mapConfig', '{"fileId":{"initData":true,"path":"fileId"},"instruction":{"initData":true,"path":"instruction"},"size":{"initData":true,"path":"size"},"style":{"initData":true,"path":"style"}}'::jsonb
+              )
+            )
+            WHEN 'transform' THEN node || jsonb_build_object(
+              'type', 'tool',
+              'data', (node->'data') || jsonb_build_object(
+                'label', '图片创意改造',
+                'type', 'tool',
+                'toolId', 'image-transform',
+                'modelSelection', 'active',
+                'description', '使用当前启用的 Image Model 生成新图片'
+              )
+            )
+            WHEN 'output' THEN node || jsonb_build_object(
+              'type', 'output',
+              'data', (node->'data') || jsonb_build_object(
+                'label', '生成结果',
+                'type', 'output',
+                'description', '返回新图片文件 ID、URL 和原图文件 ID',
+                'schema', '{"type":"object","title":"图片生成结果","required":["fileId","url"],"properties":{"fileId":{"type":"number","title":"结果文件 ID"},"url":{"type":"string","format":"uri","title":"结果图片"},"sourceFileId":{"type":"number","title":"原图文件 ID"}}}'::jsonb
+              )
+            )
+            ELSE node
+          END ORDER BY node_order
+        )
+        FROM jsonb_array_elements(version.graph_json::jsonb->'nodes') WITH ORDINALITY AS item(node, node_order)
+      ),
+      true
+    )
+WHERE version.definition_id = (SELECT definition.id FROM sys_ai_workflow_definition definition WHERE definition.code = 'funny-image-transform')
+  AND version.version = 1
+  AND version.status = 'draft';
+`,
+  },
+  {
+    id: "0059_ai_image_workflow_refresh_current_draft",
+    sql: `
+INSERT INTO sys_ai_workflow_definition_version
+  (definition_id, version, graph_json, input_schema_json, output_schema_json, compatibility_json, status)
+SELECT
+  definition.id,
+  COALESCE(MAX(version.version), 0) + 1,
+  '{
+    "nodes": [
+      {"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"图片输入","type":"input","description":"接收一张图片和改造要求","schema":{"type":"object","title":"搞怪图片输入","required":["fileId","instruction"],"properties":{"fileId":{"type":"number","title":"原图","x-input":"image","description":"上传需要改造的图片"},"instruction":{"type":"string","title":"改造指令","description":"描述希望图片变成什么样"},"size":{"type":"string","title":"输出尺寸","default":"1024x1024"},"style":{"type":"string","title":"风格","default":"cartoon"}}}}},
+      {"id":"args","type":"mapping","position":{"x":400,"y":180},"data":{"label":"生成参数","type":"mapping","description":"把输入 Schema 映射成图片 Tool 的参数","mapConfig":{"fileId":{"initData":true,"path":"fileId"},"instruction":{"initData":true,"path":"instruction"},"size":{"initData":true,"path":"size"},"style":{"initData":true,"path":"style"}}}},
+      {"id":"transform","type":"tool","position":{"x":720,"y":180},"data":{"label":"图片创意改造","type":"tool","toolId":"image-transform","modelSelection":"active","description":"使用当前启用的 Image Model 生成新图片"}},
+      {"id":"output","type":"output","position":{"x":1040,"y":180},"data":{"label":"生成结果","type":"output","description":"返回新图片文件 ID、URL 和原图文件 ID","schema":{"type":"object","title":"图片生成结果","required":["fileId","url"],"properties":{"fileId":{"type":"number","title":"结果文件 ID"},"url":{"type":"string","format":"uri","title":"结果图片"},"sourceFileId":{"type":"number","title":"原图文件 ID"}}}}}
+    ],
+    "edges": [
+      {"id":"input-args","source":"input","target":"args"},
+      {"id":"args-transform","source":"args","target":"transform"},
+      {"id":"transform-output","source":"transform","target":"output"}
+    ]
+  }',
+  '{"type":"object","title":"搞怪图片输入","required":["fileId","instruction"],"properties":{"fileId":{"type":"number","title":"原图","x-input":"image"},"instruction":{"type":"string","title":"改造指令"},"size":{"type":"string","title":"输出尺寸","default":"1024x1024"},"style":{"type":"string","title":"风格","default":"cartoon"}}}',
+  '{"type":"object","title":"图片生成结果","required":["fileId","url"],"properties":{"fileId":{"type":"number","title":"结果文件 ID"},"url":{"type":"string","format":"uri","title":"结果图片"},"sourceFileId":{"type":"number","title":"原图文件 ID"}}}',
+  '{"requires":"active-image-provider-and-model","tool":"image_transform","template":"fully-configured-funny-image-transform"}',
+  'draft'
+FROM sys_ai_workflow_definition definition
+LEFT JOIN sys_ai_workflow_definition_version version ON version.definition_id = definition.id
+WHERE definition.code = 'funny-image-transform'
+  AND NOT EXISTS (
+    SELECT 1 FROM sys_ai_workflow_definition_version existing
+    WHERE existing.definition_id = definition.id
+      AND existing.compatibility_json LIKE '%fully-configured-funny-image-transform%'
+  )
+GROUP BY definition.id;
+
+UPDATE sys_ai_workflow_definition definition
+SET status = 'draft',
+    current_version = (
+      SELECT version.version
+      FROM sys_ai_workflow_definition_version version
+      WHERE version.definition_id = definition.id
+        AND version.compatibility_json LIKE '%fully-configured-funny-image-transform%'
+      ORDER BY version.version DESC
+      LIMIT 1
+    ),
+    updated_at = now()
+WHERE definition.code = 'funny-image-transform'
+  AND EXISTS (
+    SELECT 1 FROM sys_ai_workflow_definition_version version
+    WHERE version.definition_id = definition.id
+      AND version.compatibility_json LIKE '%fully-configured-funny-image-transform%'
+  );
+`,
+  },
+  {
+    id: "0060_ai_visual_workflow_examples",
+    sql: `
+INSERT INTO sys_ai_workflow_definition
+  (code, name, description, status, current_version)
+VALUES
+  ('demo-customer-priority-routing', '客户优先级路由', '根据客户等级执行第一个命中的处理分支，演示条件判断与默认分支。', 'published', 1),
+  ('demo-parallel-system-snapshot', '并行系统快照', '同时读取当前时间和管理员有权查看的系统指标，演示并行执行与结果汇总。', 'published', 1),
+  ('demo-foreach-batch-calculation', '批量计算任务', '以受控并发遍历表达式数组，演示 Foreach 的逐项执行和顺序汇总。', 'published', 1),
+  ('demo-loop-until-result', '循环直到得到结果', '重复调用计算器并检查声明式停止条件，演示 Loop 与 20 次安全上限。', 'published', 1),
+  ('demo-delayed-notification', '延迟处理通知', '等待短暂时间后组装处理结果，演示 Sleep 节点和后续字段映射。', 'published', 1),
+  ('demo-ai-parallel-review', 'AI 并行双视角评审', '让两个 Agent 分支并行评审同一段内容；发布运行前需要配置可用的 Chat Provider 和模型。', 'draft', 1)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO sys_ai_workflow_definition_version
+  (definition_id, version, graph_json, input_schema_json, output_schema_json,
+   compatibility_json, status, published_at)
+SELECT definition.id, 1, example.graph_json, example.input_schema_json,
+  example.output_schema_json, example.compatibility_json, example.version_status,
+  CASE WHEN example.version_status = 'published' THEN now() ELSE NULL END
+FROM sys_ai_workflow_definition definition
+INNER JOIN (VALUES
+  (
+    'demo-customer-priority-routing',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"客户请求","type":"input","description":"输入客户等级和计算表达式","schema":{"type":"object","title":"客户路由输入","required":["route","expression"],"properties":{"route":{"type":"string","title":"客户等级","description":"输入 high 进入高优先级分支","default":"high"},"expression":{"type":"string","title":"报价表达式","default":"1200*0.92"}}}}},{"id":"route","type":"condition","position":{"x":420,"y":180},"data":{"label":"判断客户优先级","type":"condition","description":"从上到下判断，执行第一个命中的分支","children":[{"type":"tool","id":"high-priority","label":"高优先级客户","toolId":"calculator","predicate":{"op":"eq","left":{"path":"inputData.route"},"right":{"literal":"high"}}},{"type":"tool","id":"default-route","label":"默认处理","toolId":"calculator","isDefault":true}]}},{"id":"output","type":"output","position":{"x":800,"y":180},"data":{"label":"路由结果","type":"output","description":"返回被选中分支的计算结果"}}],"edges":[{"id":"input-route","source":"input","target":"route"},{"id":"route-output","source":"route","target":"output"}]}$graph$,
+    $schema$ {"type":"object","title":"客户路由输入","required":["route","expression"],"properties":{"route":{"type":"string","title":"客户等级","default":"high"},"expression":{"type":"string","title":"报价表达式","default":"1200*0.92"}}}$schema$,
+    $schema$ {"type":"object","title":"计算结果"}$schema$,
+    $compat$ {"template":"condition-with-default","requires":[],"runtime":"deterministic"}$compat$,
+    'published'
+  ),
+  (
+    'demo-parallel-system-snapshot',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"快照请求","type":"input","description":"触发一次系统快照","schema":{"type":"object","title":"系统快照输入","properties":{"scope":{"type":"string","title":"快照范围","default":"overview"}}}}},{"id":"parallel","type":"parallel","position":{"x":420,"y":180},"data":{"label":"并行读取系统信息","type":"parallel","description":"两个任务同时开始，全部完成后合并结果","children":[{"type":"tool","id":"clock","label":"读取当前时间","toolId":"current-time"},{"type":"tool","id":"health","label":"读取系统状态","toolId":"system-status"}]}},{"id":"output","type":"output","position":{"x":800,"y":180},"data":{"label":"系统快照","type":"output","description":"按分支 key 返回时间和系统指标"}}],"edges":[{"id":"input-parallel","source":"input","target":"parallel"},{"id":"parallel-output","source":"parallel","target":"output"}]}$graph$,
+    $schema$ {"type":"object","title":"系统快照输入","properties":{"scope":{"type":"string","title":"快照范围","default":"overview"}}}$schema$,
+    $schema$ {"type":"object","title":"并行结果"}$schema$,
+    $compat$ {"template":"parallel-tools","requires":["system-status abilities"],"runtime":"deterministic"}$compat$,
+    'published'
+  ),
+  (
+    'demo-foreach-batch-calculation',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"表达式列表","type":"input","description":"输入任意数量的计算任务","schema":{"type":"array","title":"批量表达式","default":[{"expression":"12*3"},{"expression":"99/3"},{"expression":"(18+6)*2"}],"items":{"type":"object","required":["expression"],"properties":{"expression":{"type":"string"}}}}}},{"id":"foreach","type":"foreach","position":{"x":420,"y":180},"data":{"label":"并发遍历计算","type":"foreach","description":"最多 3 项同时执行，返回顺序与输入一致","concurrency":3,"body":{"type":"tool","id":"calculate-item","label":"计算当前表达式","toolId":"calculator"}}},{"id":"output","type":"output","position":{"x":800,"y":180},"data":{"label":"批量结果","type":"output","description":"返回每个表达式对应的结果数组"}}],"edges":[{"id":"input-foreach","source":"input","target":"foreach"},{"id":"foreach-output","source":"foreach","target":"output"}]}$graph$,
+    $schema$ {"type":"array","title":"批量表达式","default":[{"expression":"12*3"},{"expression":"99/3"},{"expression":"(18+6)*2"}],"items":{"type":"object","required":["expression"],"properties":{"expression":{"type":"string"}}}}$schema$,
+    $schema$ {"type":"array","title":"批量计算结果"}$schema$,
+    $compat$ {"template":"foreach-concurrency","requires":[],"runtime":"deterministic"}$compat$,
+    'published'
+  ),
+  (
+    'demo-loop-until-result',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"循环输入","type":"input","description":"输入一个待计算表达式","schema":{"type":"object","title":"循环计算输入","required":["expression"],"properties":{"expression":{"type":"string","title":"表达式","default":"21*2"}}}}},{"id":"loop","type":"loop","position":{"x":420,"y":180},"data":{"label":"计算直到结果存在","type":"loop","description":"先执行循环体，再检查 result 是否有值","loopType":"dountil","body":{"type":"tool","id":"calculate","label":"执行计算","toolId":"calculator"},"predicate":{"op":"truthy","value":{"path":"inputData.result"}}}},{"id":"output","type":"output","position":{"x":800,"y":180},"data":{"label":"循环结果","type":"output","description":"返回最后一次循环体输出"}}],"edges":[{"id":"input-loop","source":"input","target":"loop"},{"id":"loop-output","source":"loop","target":"output"}]}$graph$,
+    $schema$ {"type":"object","title":"循环计算输入","required":["expression"],"properties":{"expression":{"type":"string","title":"表达式","default":"21*2"}}}$schema$,
+    $schema$ {"type":"object","title":"循环结果"}$schema$,
+    $compat$ {"template":"loop-until-predicate","maxIterations":20,"requires":[],"runtime":"deterministic"}$compat$,
+    'published'
+  ),
+  (
+    'demo-delayed-notification',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"通知内容","type":"input","description":"输入需要延迟处理的消息","schema":{"type":"object","title":"延迟通知输入","required":["message"],"properties":{"message":{"type":"string","title":"消息内容","default":"订单已进入处理队列"}}}}},{"id":"wait","type":"sleep","position":{"x":360,"y":180},"data":{"label":"等待 800 毫秒","type":"sleep","description":"暂停当前流程后继续，不阻塞其他并行分支","duration":800}},{"id":"result","type":"mapping","position":{"x":640,"y":180},"data":{"label":"组装通知结果","type":"mapping","description":"从初始输入读取消息并标记完成","mapConfig":{"status":{"value":"completed"},"message":{"initData":true,"path":"message"}}}},{"id":"output","type":"output","position":{"x":940,"y":180},"data":{"label":"通知结果","type":"output","description":"返回延迟处理状态和原消息"}}],"edges":[{"id":"input-wait","source":"input","target":"wait"},{"id":"wait-result","source":"wait","target":"result"},{"id":"result-output","source":"result","target":"output"}]}$graph$,
+    $schema$ {"type":"object","title":"延迟通知输入","required":["message"],"properties":{"message":{"type":"string","title":"消息内容","default":"订单已进入处理队列"}}}$schema$,
+    $schema$ {"type":"object","title":"延迟通知结果","properties":{"status":{"type":"string"},"message":{"type":"string"}}}$schema$,
+    $compat$ {"template":"sleep-and-map","maxInlineSleepMs":86400000,"requires":[],"runtime":"deterministic"}$compat$,
+    'published'
+  ),
+  (
+    'demo-ai-parallel-review',
+    $graph$ {"nodes":[{"id":"input","type":"input","position":{"x":80,"y":180},"data":{"label":"待评审内容","type":"input","description":"输入需要从两个视角评审的文本","schema":{"type":"object","title":"AI 并行评审输入","required":["prompt"],"properties":{"prompt":{"type":"string","title":"评审内容","description":"例如一段产品方案或客户跟进计划","default":"评审这份 CRM 客户唤醒方案，指出风险和可执行改进。"}}}}},{"id":"parallel","type":"parallel","position":{"x":420,"y":180},"data":{"label":"双视角并行评审","type":"parallel","description":"两个 Agent 分支并行处理同一份输入","children":[{"type":"agent","id":"risk-review","label":"风险视角","agentId":"1"},{"type":"agent","id":"action-review","label":"执行视角","agentId":"1"}]}},{"id":"output","type":"output","position":{"x":800,"y":180},"data":{"label":"评审意见","type":"output","description":"按分支返回两份独立评审结果"}}],"edges":[{"id":"input-parallel","source":"input","target":"parallel"},{"id":"parallel-output","source":"parallel","target":"output"}]}$graph$,
+    $schema$ {"type":"object","title":"AI 并行评审输入","required":["prompt"],"properties":{"prompt":{"type":"string","title":"评审内容","default":"评审这份 CRM 客户唤醒方案，指出风险和可执行改进。"}}}$schema$,
+    $schema$ {"type":"object","title":"AI 并行评审结果"}$schema$,
+    $compat$ {"template":"parallel-agents","requires":["enabled chat provider","enabled chat model","general-assistant model binding"],"runtime":"ai-sdk-7"}$compat$,
+    'draft'
+  )
+) AS example(code, graph_json, input_schema_json, output_schema_json, compatibility_json, version_status)
+  ON example.code = definition.code
+WHERE NOT EXISTS (
+  SELECT 1 FROM sys_ai_workflow_definition_version existing
+  WHERE existing.definition_id = definition.id AND existing.version = 1
+);
+`,
+  },
+  {
+    id: "0061_ai_workflow_runtime_nodes",
+    sql: `
+ALTER TABLE sys_ai_workflow_run
+  ADD COLUMN IF NOT EXISTS definition_id INTEGER REFERENCES sys_ai_workflow_definition(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS continuation_json TEXT;
+
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_definition_idx
+  ON sys_ai_workflow_run(definition_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sys_ai_workflow_wait (
+  id SERIAL PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES sys_ai_workflow_run(id) ON DELETE CASCADE,
+  step_id INTEGER REFERENCES sys_ai_workflow_run_step(id) ON DELETE SET NULL,
+  node_id TEXT NOT NULL,
+  wait_type TEXT NOT NULL CHECK (wait_type IN ('approval', 'event', 'timer')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'resolved', 'expired', 'cancelled')),
+  correlation_key TEXT,
+  input_json TEXT,
+  resolution_json TEXT,
+  resume_at TIMESTAMPTZ,
+  timeout_at TIMESTAMPTZ,
+  decided_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_workflow_wait_run_node_pending_unique
+  ON sys_ai_workflow_wait(run_id, node_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_wait_status_resume_idx
+  ON sys_ai_workflow_wait(status, resume_at);
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_wait_correlation_idx
+  ON sys_ai_workflow_wait(correlation_key, status);
+
+DROP TRIGGER IF EXISTS trg_sys_ai_workflow_wait_updated_at ON sys_ai_workflow_wait;
+CREATE TRIGGER trg_sys_ai_workflow_wait_updated_at
+BEFORE UPDATE ON sys_ai_workflow_wait
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+`,
+  },
+  {
+    id: "0062_ai_workflow_parent_child_resume",
+    sql: `
+ALTER TABLE sys_ai_workflow_run
+  ADD COLUMN IF NOT EXISTS parent_run_id INTEGER,
+  ADD COLUMN IF NOT EXISTS parent_node_id TEXT,
+  ADD COLUMN IF NOT EXISTS call_depth INTEGER NOT NULL DEFAULT 0;
+
+DO $migration$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'sys_ai_workflow_run_parent_fk'
+  ) THEN
+    ALTER TABLE sys_ai_workflow_run
+      ADD CONSTRAINT sys_ai_workflow_run_parent_fk
+      FOREIGN KEY (parent_run_id) REFERENCES sys_ai_workflow_run(id) ON DELETE SET NULL;
+  END IF;
+END
+$migration$;
+
+CREATE INDEX IF NOT EXISTS sys_ai_workflow_run_parent_idx
+  ON sys_ai_workflow_run(parent_run_id, status, created_at DESC);
+
+ALTER TABLE sys_ai_workflow_wait
+  ADD COLUMN IF NOT EXISTS child_run_id INTEGER REFERENCES sys_ai_workflow_run(id) ON DELETE SET NULL;
+
+ALTER TABLE sys_ai_workflow_wait
+  DROP CONSTRAINT IF EXISTS sys_ai_workflow_wait_wait_type_check;
+ALTER TABLE sys_ai_workflow_wait
+  ADD CONSTRAINT sys_ai_workflow_wait_wait_type_check
+  CHECK (wait_type IN ('approval', 'event', 'timer', 'child_workflow'));
+
+CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_workflow_wait_child_pending_unique
+  ON sys_ai_workflow_wait(child_run_id)
+  WHERE child_run_id IS NOT NULL AND status = 'pending';
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

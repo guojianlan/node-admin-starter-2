@@ -34,6 +34,8 @@ import {
   getAiNotebookResearchRun,
   importAiNotebookSearchResults,
   listAiNotebookResearchRuns,
+  listAiNotebookResearchCandidates,
+  rejectAiNotebookResearchCandidate,
   searchAiNotebookWebSources,
 } from "@/server/services/ai-notebook-research-service";
 import { sanitizePersistedUrl } from "@/server/services/ai-website-source-service";
@@ -65,6 +67,7 @@ const webSearchImportSchema = z.object({
   items: z
     .array(
       z.object({
+        candidateId: idSchema.optional(),
         url: z.string().trim().url().max(2048),
         title: z.string().trim().max(300).optional(),
       }),
@@ -72,6 +75,15 @@ const webSearchImportSchema = z.object({
     .min(1)
     .max(10),
 });
+const researchCandidateStatusSchema = z.enum([
+  "candidate",
+  "accepted",
+  "pending",
+  "parsing",
+  "ready",
+  "failed",
+  "rejected",
+]);
 const deepResearchSchema = z.object({
   topic: z.string().trim().min(2).max(1000),
   queryCount: z.coerce.number().int().min(1).max(5).default(3),
@@ -118,6 +130,38 @@ aiNotebookRoutes.get(
         }),
       ),
     );
+  },
+);
+
+aiNotebookRoutes.post(
+  "/ai/notebook/:id/sources/search/candidates/:candidateId/reject",
+  authRequired(),
+  ability("system.aiNotebook.update"),
+  async (c) => {
+    const notebookId = idSchema.parse(c.req.param("id"));
+    const candidateId = idSchema.parse(c.req.param("candidateId"));
+    const payload = z.object({ reason: z.string().trim().max(500).optional() }).parse(
+      await c.req.json().catch(() => ({})),
+    );
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "system.aiNotebook",
+        action: "rejectResearchCandidate",
+        resource: "/ai/notebook/research-candidate",
+        resourceId: candidateId,
+        riskLevel: "medium",
+        details: { notebookId, candidateId },
+      },
+      () =>
+        rejectAiNotebookResearchCandidate({
+          notebookId,
+          candidateId,
+          userId: c.get("user").id,
+          reason: payload.reason,
+        }),
+    );
+    return c.json(success(result, "候选来源已拒绝"));
   },
 );
 
@@ -457,6 +501,31 @@ aiNotebookRoutes.post(
         result.failed.length
           ? `已导入 ${successCount} 项，${result.failed.length} 项失败`
           : `已导入 ${successCount} 项来源`,
+      ),
+    );
+  },
+);
+
+aiNotebookRoutes.get(
+  "/ai/notebook/:id/sources/search/candidates",
+  authRequired(),
+  ability("system.aiNotebook.query"),
+  async (c) => {
+    const url = new URL(c.req.url);
+    const pagination = paginationSchema.parse({
+      page: url.searchParams.get("page") ?? undefined,
+      pageSize: url.searchParams.get("pageSize") ?? undefined,
+    });
+    return c.json(
+      success(
+        await listAiNotebookResearchCandidates({
+          notebookId: idSchema.parse(c.req.param("id")),
+          userId: c.get("user").id,
+          status: url.searchParams.get("status")
+            ? researchCandidateStatusSchema.parse(url.searchParams.get("status"))
+            : undefined,
+          ...pagination,
+        }),
       ),
     );
   },

@@ -241,3 +241,59 @@ export async function getAiRuntimeConfig(
     },
   };
 }
+
+/**
+ * Image models do not participate in the text-purpose fallback table yet. They
+ * are resolved explicitly so a Chat/Agent model can never be used as an image
+ * model by accident.
+ */
+export async function getAiImageRuntimeConfig(modelId?: number | null): Promise<AiProviderRuntimeConfig> {
+  const model = requireActiveModel(
+    modelId
+      ? await getAiModel(modelId)
+      : ((await sqlite
+          .prepare(`${modelSelectSql("AND model_type = 'image' AND status = 1")} ORDER BY id ASC LIMIT 1`)
+          .get()) as AiModelRow | undefined),
+  );
+  if (model.modelType !== "image") {
+    throw new AiRuntimeConfigurationError("图片工作流需要 Image 类型模型，请在模型管理中配置");
+  }
+  const provider = requireActiveProvider(await getAiProvider(model.providerId));
+  return {
+    provider: {
+      id: provider.id,
+      code: provider.code,
+      name: provider.name,
+      providerType: provider.providerType,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      organization: provider.organization,
+      project: provider.project,
+      timeoutMs: resolveAiProviderTimeoutMs(provider.timeoutMs),
+      options: parseOptions(provider.optionsJson),
+    },
+    model: {
+      id: model.id,
+      name: model.name,
+      modelId: model.modelId,
+      modelType: model.modelType,
+      capabilities: parseOptions(model.capabilitiesJson),
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      inputPrice: model.inputPrice,
+      cachedInputPrice: model.cachedInputPrice,
+      cacheWritePrice: model.cacheWritePrice,
+      outputPrice: model.outputPrice,
+      currency: model.currency,
+    },
+  };
+}
+
+export async function hasActiveAiImageModel() {
+  const row = await sqlite
+    .prepare(
+      "SELECT 1 FROM sys_ai_model m INNER JOIN sys_ai_provider p ON p.id = m.provider_id WHERE m.model_type = 'image' AND m.status = 1 AND m.deleted_at IS NULL AND p.status = 1 AND p.deleted_at IS NULL LIMIT 1",
+    )
+    .get();
+  return Boolean(row);
+}

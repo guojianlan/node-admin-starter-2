@@ -1,24 +1,35 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { resetTestDatabase, sqlite } from "../helpers/db";
 import {
   appendAgentRunStep,
+  appendAgentRunEvent,
   AiApprovalDecisionConflictError,
+  AiAgentRunLeaseLostError,
+  claimAgentRunLease,
   createAgentRun,
+  createAgentRunLease,
+  createToolApproval,
   decideToolApproval,
   executeAgentTool,
+  finishAgentRun,
+  heartbeatAgentRun,
   listAiAgents,
+  listAiAgentRunEvents,
   listAiTools,
   saveAiTool,
 } from "@/server/services/ai-agent-service";
+import { saveAiMcpServer, setAiMcpToolPolicy } from "@/server/services/ai-governance-service";
 
 beforeAll(async () => {
   await resetTestDatabase();
 });
 
 async function createApprovalFixture(toolCode: string, toolInput: Record<string, unknown>) {
-  const agent = await sqlite
-    .prepare("SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent' AND deleted_at IS NULL")
-    .get() as { id: number } | undefined;
+  const agent = (await sqlite
+    .prepare(
+      "SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent' AND deleted_at IS NULL",
+    )
+    .get()) as { id: number } | undefined;
   if (!agent) throw new Error("Missing seeded module development agent");
   const sessionResult = await sqlite
     .prepare(
@@ -45,6 +56,297 @@ async function createApprovalFixture(toolCode: string, toolInput: Record<string,
 }
 
 describe("AI Agent approval governance", () => {
+  it("fences Agent Run attempts with a lease owner and heartbeat", async () => {
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'run lease test', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const sessionId = Number(sessionResult.lastInsertRowid);
+    const run = await createAgentRunLease({
+      sessionId,
+      agentId: agent.id,
+      userId: 1,
+      leaseSeconds: 30,
+    });
+
+    expect(run).toMatchObject({ attempt: 1 });
+    expect(run.leaseOwner).toMatch(/^admin-base-agent-run-/);
+    expect(run.leaseUntil).toBeTruthy();
+    await expect(heartbeatAgentRun({ id: run.id, leaseOwner: run.leaseOwner })).resolves.toBeUndefined();
+    await expect(
+      heartbeatAgentRun({ id: run.id, leaseOwner: "stale-agent-attempt" }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+
+    const stepId = await appendAgentRunStep({
+      runId: run.id,
+      stepNo: 1,
+      stepType: "model",
+      status: "completed",
+      output: { ok: true },
+      leaseOwner: run.leaseOwner,
+    });
+    expect(stepId).toBeGreaterThan(0);
+    const firstEvent = await appendAgentRunEvent({
+      runId: run.id,
+      eventType: "meta",
+      payload: { runId: run.id },
+      leaseOwner: run.leaseOwner,
+    });
+    const secondEvent = await appendAgentRunEvent({
+      runId: run.id,
+      eventType: "delta",
+      payload: { text: "hello" },
+      leaseOwner: run.leaseOwner,
+    });
+    expect(secondEvent.sequence).toBe(firstEvent.sequence + 1);
+    await expect(
+      listAiAgentRunEvents({ runId: run.id, userId: 1, afterEventId: firstEvent.id }),
+    ).resolves.toMatchObject([{ id: secondEvent.id, eventType: "delta" }]);
+    await expect(
+      appendAgentRunStep({
+        runId: run.id,
+        stepNo: 2,
+        stepType: "tool",
+        status: "completed",
+        leaseOwner: "stale-agent-attempt",
+      }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+
+    await finishAgentRun({
+      id: run.id,
+      status: "completed",
+      totalSteps: 1,
+      leaseOwner: run.leaseOwner,
+    });
+    const completed = (await sqlite
+      .prepare(
+        `SELECT status, lease_owner AS "leaseOwner", lease_until AS "leaseUntil"
+         FROM sys_ai_agent_run WHERE id = ?`,
+      )
+      .get(run.id)) as { status: string; leaseOwner: string | null; leaseUntil: string | null };
+    expect(completed).toEqual({ status: "completed", leaseOwner: null, leaseUntil: null });
+
+    await finishAgentRun({ id: run.id, status: "failed", leaseOwner: "stale-agent-attempt" });
+    const unchanged = (await sqlite
+      .prepare("SELECT status FROM sys_ai_agent_run WHERE id = ?")
+      .get(run.id)) as { status: string };
+    expect(unchanged.status).toBe("completed");
+  });
+
+  it("rejects all writes and tool execution after a lease expires", async () => {
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'expired run lease test', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const run = await createAgentRunLease({
+      sessionId: Number(sessionResult.lastInsertRowid),
+      agentId: agent.id,
+      userId: 1,
+    });
+    const tool = (await listAiTools({ activeOnly: true, agentId: agent.id })).find(
+      (item) => item.code === "module_design",
+    );
+    if (!tool) throw new Error("Missing module_design tool");
+    const stepId = await appendAgentRunStep({
+      runId: run.id,
+      stepNo: 1,
+      stepType: "approval",
+      status: "waiting_approval",
+      toolId: tool.id,
+      toolName: tool.code,
+      toolCallId: `expired-approval-${Date.now()}`,
+      input: { contract: { name: "expired", title: "must not approve", fields: [] } },
+      leaseOwner: run.leaseOwner,
+    });
+    await sqlite
+      .prepare("UPDATE sys_ai_agent_run SET lease_until = now() - interval '1 second' WHERE id = ?")
+      .run(run.id);
+
+    await expect(heartbeatAgentRun({ id: run.id, leaseOwner: run.leaseOwner })).rejects.toBeInstanceOf(
+      AiAgentRunLeaseLostError,
+    );
+    await expect(
+      executeAgentTool(
+        tool,
+        { contract: { name: `expired-${Date.now()}`, title: "must not execute", fields: [] } },
+        { userId: 1, runId: run.id, leaseOwner: run.leaseOwner },
+      ),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+    await expect(
+      createToolApproval({
+        runId: run.id,
+        stepId,
+        sessionId: Number(sessionResult.lastInsertRowid),
+        userId: 1,
+        tool,
+        toolName: tool.code,
+        toolCallId: `expired-approval-${Date.now()}`,
+        toolInput: { contract: { name: "expired", title: "must not approve", fields: [] } },
+        leaseOwner: run.leaseOwner,
+      }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+    await expect(
+      appendAgentRunStep({
+        runId: run.id,
+        stepNo: 1,
+        stepType: "model",
+        status: "completed",
+        leaseOwner: run.leaseOwner,
+      }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+    await finishAgentRun({ id: run.id, status: "failed", leaseOwner: run.leaseOwner });
+    const unchanged = (await sqlite
+      .prepare("SELECT status, lease_owner AS \"leaseOwner\" FROM sys_ai_agent_run WHERE id = ?")
+      .get(run.id)) as { status: string; leaseOwner: string | null };
+    expect(unchanged).toEqual({ status: "running", leaseOwner: run.leaseOwner });
+  });
+
+  it("reuses a completed tool result for the same run attempt and tool call", async () => {
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'general-assistant'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'tool idempotency test', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const run = await createAgentRunLease({
+      sessionId: Number(sessionResult.lastInsertRowid),
+      agentId: agent.id,
+      userId: 1,
+    });
+    const tool = (await listAiTools({ activeOnly: true, agentId: agent.id })).find(
+      (item) => item.code === "calculator",
+    );
+    if (!tool) throw new Error("Missing calculator tool");
+
+    const first = await executeAgentTool(
+      tool,
+      { expression: "2 + 2" },
+      { userId: 1, runId: run.id, leaseOwner: run.leaseOwner, toolCallId: "calc-call-1" },
+    );
+    const replay = await executeAgentTool(
+      tool,
+      { expression: "999" },
+      { userId: 1, runId: run.id, leaseOwner: run.leaseOwner, toolCallId: "calc-call-1" },
+    );
+
+    expect(first).toEqual({ expression: "2 + 2", result: 4 });
+    expect(replay).toEqual(first);
+    const records = (await sqlite
+      .prepare(
+        `SELECT COUNT(*)::int AS total, MAX(status) AS status
+         FROM sys_ai_tool_execution WHERE run_id = ? AND tool_call_id = 'calc-call-1'`,
+      )
+      .get(run.id)) as { total: number; status: string };
+    expect(records).toEqual({ total: 1, status: "completed" });
+  });
+
+  it("atomically reclaims one expired Agent Run and fences the previous worker", async () => {
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'general-assistant'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'agent worker reclaim test', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const first = await createAgentRunLease({
+      sessionId: Number(sessionResult.lastInsertRowid),
+      agentId: agent.id,
+      userId: 1,
+    });
+    await sqlite
+      .prepare("UPDATE sys_ai_agent_run SET lease_until = now() - interval '1 second' WHERE id = ?")
+      .run(first.id);
+
+    const [workerA, workerB] = await Promise.all([
+      claimAgentRunLease({ workerId: "agent-worker-a", leaseSeconds: 30 }),
+      claimAgentRunLease({ workerId: "agent-worker-b", leaseSeconds: 30 }),
+    ]);
+    const claims = [workerA, workerB].filter((claim) => claim?.id === first.id);
+    expect(claims).toHaveLength(1);
+    const takeover = claims[0];
+    if (!takeover) throw new Error("Missing Agent Run takeover");
+    expect(takeover.attempt).toBe(2);
+    expect(takeover.leaseOwner).toMatch(/^agent-worker-/);
+    await expect(
+      heartbeatAgentRun({ id: first.id, leaseOwner: first.leaseOwner }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+    await expect(
+      heartbeatAgentRun({ id: first.id, leaseOwner: takeover.leaseOwner }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("increments the attempt when an approval continuation takes over a waiting run", async () => {
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'continuation lease test', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const sessionId = Number(sessionResult.lastInsertRowid);
+    const first = await createAgentRunLease({
+      sessionId,
+      agentId: agent.id,
+      userId: 1,
+    });
+    const approvalResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_tool_approval
+          (run_id, session_id, user_id, tool_name, tool_call_id, expires_at, status)
+         VALUES (?, ?, 1, 'continuation-test', ?, now() + interval '30 minutes', 'pending')
+         RETURNING id`,
+      )
+      .run(first.id, sessionId, `continuation-${Date.now()}`);
+    const approvalId = Number(approvalResult.lastInsertRowid);
+    await sqlite
+      .prepare("UPDATE sys_ai_agent_run SET source_approval_id = ?, status = 'waiting_continuation', lease_owner = NULL, lease_until = NULL WHERE id = ?")
+      .run(approvalId, first.id);
+    const second = await createAgentRunLease({
+      sessionId,
+      agentId: agent.id,
+      userId: 1,
+      sourceApprovalId: approvalId,
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.attempt).toBe(2);
+    expect(second.leaseOwner).not.toBe(first.leaseOwner);
+    await expect(
+      appendAgentRunStep({
+        runId: first.id,
+        stepNo: 1,
+        stepType: "model",
+        status: "completed",
+        leaseOwner: first.leaseOwner,
+      }),
+    ).rejects.toBeInstanceOf(AiAgentRunLeaseLostError);
+    await expect(
+      appendAgentRunStep({
+        runId: second.id,
+        stepNo: 1,
+        stepType: "model",
+        status: "completed",
+        leaseOwner: second.leaseOwner,
+      }),
+    ).resolves.toBeGreaterThan(0);
+  });
+
   it("seeds the development agent and records constrained tool actions in operation logs", async () => {
     const agents = await listAiAgents();
     const developmentAgent = agents.find((item) => item.code === "module-development-agent");
@@ -235,6 +537,118 @@ describe("AI Agent approval governance", () => {
       )
       .get(fixture.sessionId)) as { total: number };
     expect(resultMessages.total).toBe(1);
+  });
+
+  it("preserves MCP gateway config when an approved tool is resumed", async () => {
+    const serverId = await saveAiMcpServer({
+      userId: 1,
+      payload: {
+        name: "Approval MCP",
+        code: `approval-mcp-${Date.now()}`,
+        endpointUrl: "https://approval-mcp.test/rpc",
+        transport: "streamable_http",
+        oauthMode: "none",
+        status: "active",
+      },
+    });
+    const mcpToolResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_mcp_tool
+          (server_id, remote_name, display_name, description, allowlisted, status)
+         VALUES (?, 'list_records', 'List records', 'Read records', true, 1)
+         RETURNING id`,
+      )
+      .run(serverId);
+    const mcpToolId = Number(mcpToolResult.lastInsertRowid);
+    await setAiMcpToolPolicy({
+      id: mcpToolId,
+      userId: 1,
+      allowlisted: true,
+      riskLevel: "low",
+      approvalRequired: true,
+      status: 1,
+    });
+    const mirroredToolResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_tool
+          (name, code, description, handler_key, config_json, risk_level,
+           approval_required, status, is_system, created_by, updated_by)
+         VALUES ('List records', ?, 'Read records', 'mcp_gateway', ?, 'low', true, 1, true, 1, 1)
+         RETURNING id`,
+      )
+      .run(
+        `approval-mcp-tool-${Date.now()}`,
+        JSON.stringify({ serverId, mcpToolId, remoteName: "list_records" }),
+      );
+    const mirroredToolId = Number(mirroredToolResult.lastInsertRowid);
+    const agent = (await sqlite
+      .prepare("SELECT id FROM sys_ai_agent WHERE code = 'module-development-agent'")
+      .get()) as { id: number };
+    const sessionResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_chat_session (user_id, title, agent_id, status, created_by, updated_by)
+         VALUES (1, 'MCP approval resume', ?, 1, 1, 1) RETURNING id`,
+      )
+      .run(agent.id);
+    const sessionId = Number(sessionResult.lastInsertRowid);
+    const runId = await createAgentRun({ sessionId, agentId: agent.id, userId: 1 });
+    const stepId = await appendAgentRunStep({
+      runId,
+      stepNo: 1,
+      stepType: "approval",
+      status: "waiting_approval",
+      toolId: mirroredToolId,
+      toolName: "approval-mcp-tool",
+      toolCallId: `mcp-approval-${Date.now()}`,
+      input: { includeHidden: true },
+    });
+    const approvalResult = await sqlite
+      .prepare(
+        `INSERT INTO sys_ai_tool_approval
+          (run_id, step_id, session_id, user_id, tool_id, tool_name, tool_call_id, input_json,
+           expires_at, status)
+         VALUES (?, ?, ?, 1, ?, 'approval-mcp-tool', ?, ?, now() + interval '30 minutes', 'pending')
+         RETURNING id`,
+      )
+      .run(
+        runId,
+        stepId,
+        sessionId,
+        mirroredToolId,
+        `mcp-approval-${Date.now()}`,
+        JSON.stringify({ includeHidden: true }),
+      );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const payload = JSON.parse(String(init?.body)) as { method: string };
+        if (payload.method === "initialize") {
+          return Response.json(
+            { jsonrpc: "2.0", id: "initialize", result: { protocolVersion: "2025-06-18" } },
+            { headers: { "mcp-session-id": "approval-session" } },
+          );
+        }
+        if (payload.method === "notifications/initialized")
+          return new Response(null, { status: 202 });
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "call",
+          result: { content: [{ type: "text", text: "approved" }] },
+        });
+      }),
+    );
+
+    const result = await decideToolApproval({
+      id: Number(approvalResult.lastInsertRowid),
+      userId: 1,
+      approved: true,
+    });
+    expect(result).toMatchObject({ status: "executed", sessionId });
+    const approval = (await sqlite
+      .prepare("SELECT status, reason FROM sys_ai_tool_approval WHERE id = ?")
+      .get(approvalResult.lastInsertRowid)) as { status: string; reason: string | null };
+    expect(approval).toEqual({ status: "executed", reason: null });
   });
 
   it("expires pending approvals and leaves the requested tool unexecuted", async () => {
