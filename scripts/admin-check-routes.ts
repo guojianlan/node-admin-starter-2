@@ -85,7 +85,8 @@ const explicitRouteAllowlist = new Map(
       key: "profile.ts:POST /profile/oauth/:provider/bind",
       allowMissingAbility: true,
       allowMissingOperationLog: true,
-      reason: "starts a current-user OAuth bind redirect and does not mutate managed resources directly",
+      reason:
+        "starts a current-user OAuth bind redirect and does not mutate managed resources directly",
     },
     {
       key: "profile.ts:DELETE /profile/oauth/:provider/unbind",
@@ -104,6 +105,13 @@ const explicitRouteAllowlist = new Map(
       allowMissingAbility: true,
       allowMissingOperationLog: true,
       reason: "current-user bulk read receipt action",
+    },
+    {
+      key: "saas/index.ts:POST /invitations/accept",
+      allowMissingAbility: true,
+      allowMissingOperationLog: false,
+      reason:
+        "current-user invitation acceptance is bound to auth, one-time token hash, expiry and matching account email",
     },
     {
       key: "file.ts:POST /file/chunk/init",
@@ -135,13 +143,11 @@ const explicitRouteAllowlist = new Map(
 );
 
 function listRouteFiles(dir: string): string[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .flatMap((entry) => {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) return listRouteFiles(entryPath);
-      return entry.isFile() && entry.name.endsWith(".ts") ? [entryPath] : [];
-    });
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listRouteFiles(entryPath);
+    return entry.isFile() && entry.name.endsWith(".ts") ? [entryPath] : [];
+  });
 }
 
 function routePathFromArg(arg: ts.Expression | undefined) {
@@ -180,7 +186,8 @@ function collectExplicitMutationRouteIssues() {
               missing.push("operationLog");
             }
             if (missing.length) {
-              const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+              const line =
+                sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
               issues.push({ file, method: method.toUpperCase(), path: routePath, line, missing });
             }
           }
@@ -225,7 +232,10 @@ if (
     console.error("CRUD actions missing permission config:", missingCrudPermissions);
   }
   if (explicitMutationRouteIssues.length) {
-    console.error("Explicit mutation routes missing ability or operation log:", explicitMutationRouteIssues);
+    console.error(
+      "Explicit mutation routes missing ability or operation log:",
+      explicitMutationRouteIssues,
+    );
   }
   await closeDb();
   process.exit(1);

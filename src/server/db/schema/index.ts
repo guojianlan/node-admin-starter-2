@@ -286,7 +286,9 @@ export const saasWorkspace = pgTable(
     name: text("name").notNull(),
     code: text("code").notNull(),
     description: text("description"),
-    status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
     isSystem: boolean("is_system").notNull().default(false),
     ...timestamps,
     ...softDelete,
@@ -312,7 +314,9 @@ export const saasTenantMember = pgTable(
     role: text("role", { enum: ["owner", "admin", "member", "viewer"] })
       .notNull()
       .default("member"),
-    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+    status: text("status", { enum: ["active", "suspended"] })
+      .notNull()
+      .default("active"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: integer("created_by"),
   },
@@ -334,7 +338,9 @@ export const saasWorkspaceMember = pgTable(
     role: text("role", { enum: ["owner", "editor", "reviewer", "viewer"] })
       .notNull()
       .default("viewer"),
-    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+    status: text("status", { enum: ["active", "suspended"] })
+      .notNull()
+      .default("active"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: integer("created_by"),
   },
@@ -345,6 +351,120 @@ export const saasWorkspaceMember = pgTable(
       table.status,
       table.workspaceId,
     ),
+  ],
+);
+
+export const saasInvitation = pgTable(
+  "saas_invitation",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
+    email: text("email").notNull(),
+    tenantRole: text("tenant_role", { enum: ["admin", "member", "viewer"] })
+      .notNull()
+      .default("member"),
+    workspaceRole: text("workspace_role", { enum: ["editor", "reviewer", "viewer"] }),
+    tokenHash: text("token_hash").notNull(),
+    status: text("status", { enum: ["pending", "accepted", "revoked", "expired"] })
+      .notNull()
+      .default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedBy: integer("accepted_by").references(() => sysUser.id, { onDelete: "set null" }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: integer("revoked_by").references(() => sysUser.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("saas_invitation_token_hash_unique").on(table.tokenHash),
+    uniqueIndex("saas_invitation_tenant_email_pending_unique")
+      .on(table.tenantId, table.email)
+      .where(sql`${table.status} = 'pending'`),
+    index("saas_invitation_tenant_status_created_idx").on(
+      table.tenantId,
+      table.status,
+      table.createdAt,
+    ),
+    index("saas_invitation_email_status_idx").on(table.email, table.status),
+  ],
+);
+
+export const saasModule = pgTable(
+  "saas_module",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    version: text("version").notNull().default("0.1.0"),
+    description: text("description"),
+    status: text("status", { enum: ["draft", "active", "disabled", "retired"] })
+      .notNull()
+      .default("draft"),
+    routeKey: text("route_key").notNull(),
+    routePath: text("route_path").notNull(),
+    requiredAbility: text("required_ability").notNull(),
+    dependenciesJson: text("dependencies_json").notNull().default("[]"),
+    capabilitiesJson: text("capabilities_json").notNull().default("[]"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_module_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    uniqueIndex("saas_module_route_key_active_unique")
+      .on(table.routeKey)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_module_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const saasTenantEntitlement = pgTable(
+  "saas_tenant_entitlement",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    moduleId: integer("module_id")
+      .notNull()
+      .references(() => saasModule.id, { onDelete: "restrict" }),
+    status: text("status", { enum: ["trial", "active", "suspended", "expired"] })
+      .notNull()
+      .default("trial"),
+    source: text("source", { enum: ["manual", "trial", "plan"] })
+      .notNull()
+      .default("manual"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    memberLimitOverride: integer("member_limit_override"),
+    monthlyTaskLimitOverride: integer("monthly_task_limit_override"),
+    maxConcurrentTaskOverride: integer("max_concurrent_task_override"),
+    exportProfileOverride: text("export_profile_override"),
+    notes: text("notes"),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_tenant_entitlement_tenant_module_active_unique")
+      .on(table.tenantId, table.moduleId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_tenant_entitlement_tenant_status_idx").on(
+      table.tenantId,
+      table.status,
+      table.expiresAt,
+    ),
+    index("saas_tenant_entitlement_module_status_idx").on(table.moduleId, table.status),
   ],
 );
 
@@ -1876,7 +1996,9 @@ export const sysAiWorkflowDefinition = pgTable(
     code: text("code").notNull(),
     name: text("name").notNull(),
     description: text("description"),
-    status: text("status", { enum: ["draft", "published", "disabled"] }).notNull().default("draft"),
+    status: text("status", { enum: ["draft", "published", "disabled"] })
+      .notNull()
+      .default("draft"),
     currentVersion: integer("current_version"),
     createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
     updatedBy: integer("updated_by").references(() => sysUser.id, { onDelete: "set null" }),
@@ -1901,7 +2023,9 @@ export const sysAiWorkflowDefinitionVersion = pgTable(
     inputSchemaJson: text("input_schema_json").notNull().default("{}"),
     outputSchemaJson: text("output_schema_json").notNull().default("{}"),
     compatibilityJson: text("compatibility_json").notNull().default("{}"),
-    status: text("status", { enum: ["draft", "published", "retired"] }).notNull().default("draft"),
+    status: text("status", { enum: ["draft", "published", "retired"] })
+      .notNull()
+      .default("draft"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2104,7 +2228,11 @@ export const sysAiMemoryCandidate = pgTable(
     ...timestamps,
   },
   (table) => [
-    index("sys_ai_memory_candidate_user_status_idx").on(table.userId, table.status, table.updatedAt),
+    index("sys_ai_memory_candidate_user_status_idx").on(
+      table.userId,
+      table.status,
+      table.updatedAt,
+    ),
     index("sys_ai_memory_candidate_key_idx").on(table.userId, table.normalizedKey),
   ],
 );
@@ -2318,7 +2446,9 @@ export const sysAiMcpSession = pgTable(
     userId: integer("user_id").references(() => sysUser.id, { onDelete: "cascade" }),
     remoteSessionId: text("remote_session_id").notNull(),
     capabilitiesJson: text("capabilities_json").notNull().default("{}"),
-    status: text("status", { enum: ["active", "stale", "closed"] }).notNull().default("active"),
+    status: text("status", { enum: ["active", "stale", "closed"] })
+      .notNull()
+      .default("active"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

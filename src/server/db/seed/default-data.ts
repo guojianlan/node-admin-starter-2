@@ -583,6 +583,43 @@ const moduleRules = [
       ["update", "编辑 Workspace"],
     ],
   },
+  {
+    route: {
+      id: 430,
+      parentId: 400,
+      key: "saas.member",
+      name: "成员与邀请",
+      path: "/saas/members",
+      icon: "user",
+      order: 30,
+    },
+    actions: [
+      ["query", "查询成员"],
+      ["update", "分配成员角色"],
+      ["remove", "移除成员"],
+      ["invite", "创建邀请"],
+      ["revokeInvite", "撤销邀请"],
+    ],
+  },
+  {
+    route: {
+      id: 440,
+      parentId: 400,
+      key: "saas.module",
+      name: "模块与 Entitlement",
+      path: "/saas/modules",
+      icon: "appstore",
+      order: 40,
+    },
+    actions: [
+      ["query", "查询模块目录"],
+      ["create", "创建模块定义"],
+      ["update", "编辑模块定义"],
+      ["entitlementQuery", "查询 Tenant Entitlement"],
+      ["entitlementCreate", "开通 Tenant Entitlement"],
+      ["entitlementUpdate", "编辑 Tenant Entitlement"],
+    ],
+  },
 ] as const;
 
 export const seedRules: SeedRule[] = [
@@ -676,6 +713,17 @@ export const seedRules: SeedRule[] = [
     name: "SaaS 控制面",
     icon: "appstore",
     order: 20,
+  },
+  {
+    id: 450,
+    parentId: 400,
+    type: "route",
+    key: "saas.invitationAccept",
+    name: "接受 SaaS 邀请",
+    path: "/saas/invitations/accept",
+    icon: "user",
+    order: 90,
+    hidden: 1,
   },
   {
     id: 140,

@@ -3912,6 +3912,125 @@ WHERE workspace.code = 'default' AND workspace.deleted_at IS NULL AND app_user.d
 ON CONFLICT (workspace_id, user_id) DO NOTHING;
 `,
   },
+  {
+    id: "0064_saas_membership_and_entitlements",
+    sql: `
+CREATE TABLE IF NOT EXISTS saas_invitation (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL,
+  email TEXT NOT NULL,
+  tenant_role TEXT NOT NULL DEFAULT 'member' CHECK (tenant_role IN ('admin', 'member', 'viewer')),
+  workspace_role TEXT CHECK (workspace_role IN ('editor', 'reviewer', 'viewer')),
+  token_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'revoked', 'expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  accepted_at TIMESTAMPTZ,
+  accepted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  revoked_at TIMESTAMPTZ,
+  revoked_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CHECK ((workspace_id IS NULL AND workspace_role IS NULL) OR
+         (workspace_id IS NOT NULL AND workspace_role IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_invitation_token_hash_unique
+  ON saas_invitation(token_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_invitation_tenant_email_pending_unique
+  ON saas_invitation(tenant_id, email) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS saas_invitation_tenant_status_created_idx
+  ON saas_invitation(tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS saas_invitation_email_status_idx
+  ON saas_invitation(email, status);
+
+CREATE TABLE IF NOT EXISTS saas_module (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL DEFAULT '0.1.0',
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'disabled', 'retired')),
+  route_key TEXT NOT NULL,
+  route_path TEXT NOT NULL,
+  required_ability TEXT NOT NULL,
+  dependencies_json TEXT NOT NULL DEFAULT '[]',
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_module_code_active_unique
+  ON saas_module(code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS saas_module_route_key_active_unique
+  ON saas_module(route_key) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_module_status_created_idx
+  ON saas_module(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_tenant_entitlement (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  module_id INTEGER NOT NULL REFERENCES saas_module(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'trial' CHECK (status IN ('trial', 'active', 'suspended', 'expired')),
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'trial', 'plan')),
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  member_limit_override INTEGER CHECK (member_limit_override IS NULL OR member_limit_override >= 1),
+  monthly_task_limit_override INTEGER CHECK (monthly_task_limit_override IS NULL OR monthly_task_limit_override >= 0),
+  max_concurrent_task_override INTEGER CHECK (max_concurrent_task_override IS NULL OR max_concurrent_task_override >= 1),
+  export_profile_override TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_entitlement_tenant_module_active_unique
+  ON saas_tenant_entitlement(tenant_id, module_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_tenant_entitlement_tenant_status_idx
+  ON saas_tenant_entitlement(tenant_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS saas_tenant_entitlement_module_status_idx
+  ON saas_tenant_entitlement(module_id, status);
+
+DROP TRIGGER IF EXISTS trg_saas_invitation_updated_at ON saas_invitation;
+CREATE TRIGGER trg_saas_invitation_updated_at
+BEFORE UPDATE ON saas_invitation
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_module_updated_at ON saas_module;
+CREATE TRIGGER trg_saas_module_updated_at
+BEFORE UPDATE ON saas_module
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_tenant_entitlement_updated_at ON saas_tenant_entitlement;
+CREATE TRIGGER trg_saas_tenant_entitlement_updated_at
+BEFORE UPDATE ON saas_tenant_entitlement
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO saas_module
+  (code, name, version, description, status, route_key, route_path, required_ability,
+   dependencies_json, capabilities_json, is_system)
+VALUES
+  ('novel', '小说', '0.1.0', '长文本创作与版本化交付', 'draft', 'studio.novel', '/studio/novel', 'studio.novel.query', '[]', '["text","knowledge","export"]', true),
+  ('canvas', '无限画布', '0.1.0', '多模态创意组织画布', 'draft', 'studio.canvas', '/studio/canvas', 'studio.canvas.query', '[]', '["canvas","asset","version"]', true),
+  ('roundtable', 'AI 圆桌会议', '0.1.0', '受控多角色讨论与纪要', 'draft', 'studio.roundtable', '/studio/roundtable', 'studio.roundtable.query', '[]', '["agent","knowledge","citation"]', true),
+  ('image-story', '图片叙事', '0.1.0', '图文故事与静态视频生产', 'draft', 'studio.imageStory', '/studio/image-story', 'studio.imageStory.query', '["image","characters","assets"]', '["storyboard","image","render"]', true),
+  ('reading-video', '名著阅读视频', '0.1.0', '原著到图片 TTS 字幕视频', 'draft', 'studio.readingVideo', '/studio/reading-video', 'studio.readingVideo.query', '["image","characters","assets"]', '["storyboard","tts","subtitle","ffmpeg"]', true),
+  ('music-video', '歌曲 MV', '0.1.0', '歌曲与歌词驱动的 MV 生产', 'draft', 'studio.musicVideo', '/studio/music-video', 'studio.musicVideo.query', '["actors","assets"]', '["audio","timeline","video"]', true),
+  ('characters', '人物中心', '0.1.0', '跨项目人物 Canon 与版本', 'draft', 'studio.character', '/studio/characters', 'studio.character.query', '[]', '["character","version","license"]', true),
+  ('talk-show', 'AI 脱口秀', '0.1.0', '研究、脚本、演员和视频交付', 'draft', 'studio.talkShow', '/studio/talk-show', 'studio.talkShow.query', '["actors","assets"]', '["research","script","safety","render"]', true),
+  ('lecture', '百家讲坛', '0.1.0', '来源驱动的课程与讲解交付', 'draft', 'studio.lecture', '/studio/lecture', 'studio.lecture.query', '["actors","assets"]', '["knowledge","citation","slides","render"]', true),
+  ('science-explainer', '知识科普讲解', '0.1.0', 'Claim 与 Evidence 驱动的科普生产', 'draft', 'studio.science', '/studio/science-explainer', 'studio.science.query', '["actors","assets"]', '["knowledge","claim","review","render"]', true),
+  ('actors', '演员库', '0.1.0', '真人与数字演员许可治理', 'draft', 'studio.actor', '/studio/actors', 'studio.actor.query', '["assets"]', '["actor","consent","license"]', true),
+  ('assets', '素材/场景库', '0.1.0', '共享资产、场景、版权和血缘', 'draft', 'studio.asset', '/studio/assets', 'studio.asset.query', '[]', '["asset","scene","lineage","license"]', true),
+  ('image', '画图', '0.1.0', '文生图、图生图与受控编辑', 'draft', 'studio.image', '/studio/image', 'studio.image.query', '["assets"]', '["image-generate","image-edit","upscale"]', true)
+ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

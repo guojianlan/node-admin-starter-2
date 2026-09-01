@@ -13,6 +13,27 @@ import {
   updateTenant,
   updateWorkspace,
 } from "@/server/services/saas-control-plane-service";
+import {
+  createSaasModule,
+  createTenantEntitlement,
+  listSaasModules,
+  listTenantEntitlements,
+  resolveEffectiveSaasModules,
+  updateSaasModule,
+  updateTenantEntitlement,
+} from "@/server/services/saas-entitlement-service";
+import {
+  acceptInvitation,
+  createInvitation,
+  listInvitations,
+  listTenantMembers,
+  listWorkspaceMembers,
+  removeTenantMember,
+  removeWorkspaceMember,
+  revokeInvitation,
+  upsertTenantMember,
+  upsertWorkspaceMember,
+} from "@/server/services/saas-membership-service";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 
 const listSchema = z.object({
@@ -24,7 +45,10 @@ const listSchema = z.object({
 
 const tenantCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  code: z.string().trim().regex(/^[a-z][a-z0-9-]{1,49}$/),
+  code: z
+    .string()
+    .trim()
+    .regex(/^[a-z][a-z0-9-]{1,49}$/),
   region: z.string().trim().min(1).max(50).default("global"),
   retentionDays: z.coerce.number().int().min(1).max(3650).default(365),
 });
@@ -39,7 +63,10 @@ const tenantUpdateSchema = z.object({
 const workspaceCreateSchema = z.object({
   tenantId: z.coerce.number().int().positive(),
   name: z.string().trim().min(1).max(100),
-  code: z.string().trim().regex(/^[a-z][a-z0-9-]{1,49}$/),
+  code: z
+    .string()
+    .trim()
+    .regex(/^[a-z][a-z0-9-]{1,49}$/),
   description: z.string().trim().max(500).optional().nullable(),
 });
 
@@ -48,6 +75,111 @@ const workspaceUpdateSchema = z.object({
   description: z.string().trim().max(500).optional().nullable(),
   status: z.enum(["active", "archived"]).optional(),
 });
+
+const memberListSchema = listSchema.extend({
+  status: z.enum(["active", "suspended"]).optional(),
+});
+
+const tenantMemberSchema = z.object({
+  role: z.enum(["admin", "member", "viewer"]),
+  status: z.enum(["active", "suspended"]).default("active"),
+});
+
+const workspaceMemberSchema = z.object({
+  role: z.enum(["editor", "reviewer", "viewer"]),
+  status: z.enum(["active", "suspended"]).default("active"),
+});
+
+const invitationCreateSchema = z.object({
+  tenantId: z.coerce.number().int().positive(),
+  workspaceId: z.coerce.number().int().positive().optional().nullable(),
+  email: z.string().trim().email().max(255),
+  tenantRole: z.enum(["admin", "member", "viewer"]).default("member"),
+  workspaceRole: z.enum(["editor", "reviewer", "viewer"]).optional().nullable(),
+  expiresInDays: z.coerce.number().int().min(1).max(30).default(7),
+});
+
+const invitationAcceptSchema = z.object({
+  token: z.string().trim().min(20).max(500),
+});
+
+function csvValues(value: unknown) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string")
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [];
+}
+
+const moduleBaseSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  version: z
+    .string()
+    .trim()
+    .regex(/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i),
+  description: z.string().trim().max(500).optional().nullable(),
+  status: z.enum(["draft", "active", "disabled", "retired"]),
+  routeKey: z
+    .string()
+    .trim()
+    .regex(/^[a-z][A-Za-z0-9.]+$/)
+    .max(100),
+  routePath: z.string().trim().startsWith("/").max(200),
+  requiredAbility: z
+    .string()
+    .trim()
+    .regex(/^[a-z][A-Za-z0-9.]+$/)
+    .max(120),
+  dependencies: z.preprocess(csvValues, z.array(z.string().min(1).max(80)).max(50)).optional(),
+  capabilities: z.preprocess(csvValues, z.array(z.string().min(1).max(80)).max(100)).optional(),
+  dependenciesCsv: z.unknown().optional(),
+  capabilitiesCsv: z.unknown().optional(),
+});
+
+const moduleCreateSchema = moduleBaseSchema
+  .extend({
+    code: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9-]{1,49}$/),
+  })
+  .transform((value) => ({
+    ...value,
+    dependencies: value.dependencies ?? csvValues(value.dependenciesCsv),
+    capabilities: value.capabilities ?? csvValues(value.capabilitiesCsv),
+  }));
+
+const moduleUpdateSchema = moduleBaseSchema.partial().transform((value) => ({
+  ...value,
+  ...(value.dependencies !== undefined || value.dependenciesCsv !== undefined
+    ? { dependencies: value.dependencies ?? csvValues(value.dependenciesCsv) }
+    : {}),
+  ...(value.capabilities !== undefined || value.capabilitiesCsv !== undefined
+    ? { capabilities: value.capabilities ?? csvValues(value.capabilitiesCsv) }
+    : {}),
+}));
+
+const nullableDateTime = z.string().datetime({ offset: true }).optional().nullable();
+const entitlementValuesSchema = z.object({
+  status: z.enum(["trial", "active", "suspended", "expired"]),
+  source: z.enum(["manual", "trial", "plan"]),
+  startsAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: nullableDateTime,
+  memberLimitOverride: z.coerce.number().int().min(1).optional().nullable(),
+  monthlyTaskLimitOverride: z.coerce.number().int().min(0).optional().nullable(),
+  maxConcurrentTaskOverride: z.coerce.number().int().min(1).optional().nullable(),
+  exportProfileOverride: z.string().trim().max(100).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+const entitlementCreateSchema = entitlementValuesSchema.extend({
+  tenantId: z.coerce.number().int().positive(),
+  moduleId: z.coerce.number().int().positive(),
+});
+
+const entitlementUpdateSchema = entitlementValuesSchema.partial();
 
 export const saasRoutes = new Hono<{ Variables: HonoVariables }>();
 
@@ -95,7 +227,9 @@ saasRoutes.put("/tenants/:id", authRequired(), ability("saas.tenant.update"), as
 });
 
 saasRoutes.get("/workspaces", authRequired(), ability("saas.workspace.query"), async (c) => {
-  const query = listSchema.extend({ tenantId: z.coerce.number().int().positive().optional() }).parse(c.req.query());
+  const query = listSchema
+    .extend({ tenantId: z.coerce.number().int().positive().optional() })
+    .parse(c.req.query());
   return c.json(success(await listWorkspaces({ ...query, userId: c.get("user").id })));
 });
 
@@ -132,3 +266,305 @@ saasRoutes.put("/workspaces/:id", authRequired(), ability("saas.workspace.update
   );
   return c.json(success(result, "Workspace 更新成功"));
 });
+
+saasRoutes.get("/tenant-members", authRequired(), ability("saas.member.query"), async (c) => {
+  const query = memberListSchema
+    .extend({ tenantId: z.coerce.number().int().positive() })
+    .parse(c.req.query());
+  return c.json(success(await listTenantMembers({ ...query, userId: c.get("user").id })));
+});
+
+saasRoutes.put(
+  "/tenant-members/:tenantId/:userId",
+  authRequired(),
+  ability("saas.member.update"),
+  async (c) => {
+    const tenantId = z.coerce.number().int().positive().parse(c.req.param("tenantId"));
+    const targetUserId = z.coerce.number().int().positive().parse(c.req.param("userId"));
+    const payload = tenantMemberSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.member",
+        action: "updateTenantMember",
+        resource: "saas_tenant_member",
+        resourceId: `${tenantId}:${targetUserId}`,
+        riskLevel: "high",
+        details: { tenantId, targetUserId, role: payload.role, status: payload.status },
+      },
+      () =>
+        upsertTenantMember({
+          ...payload,
+          tenantId,
+          targetUserId,
+          userId: c.get("user").id,
+        }),
+    );
+    return c.json(success(result, "Tenant 成员已更新"));
+  },
+);
+
+saasRoutes.delete(
+  "/tenant-members/:tenantId/:userId",
+  authRequired(),
+  ability("saas.member.remove"),
+  async (c) => {
+    const tenantId = z.coerce.number().int().positive().parse(c.req.param("tenantId"));
+    const targetUserId = z.coerce.number().int().positive().parse(c.req.param("userId"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.member",
+        action: "removeTenantMember",
+        resource: "saas_tenant_member",
+        resourceId: `${tenantId}:${targetUserId}`,
+        riskLevel: "high",
+        details: { tenantId, targetUserId },
+      },
+      () => removeTenantMember({ tenantId, targetUserId, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Tenant 成员已移除"));
+  },
+);
+
+saasRoutes.get("/workspace-members", authRequired(), ability("saas.member.query"), async (c) => {
+  const query = memberListSchema
+    .extend({ workspaceId: z.coerce.number().int().positive() })
+    .parse(c.req.query());
+  return c.json(success(await listWorkspaceMembers({ ...query, userId: c.get("user").id })));
+});
+
+saasRoutes.put(
+  "/workspace-members/:workspaceId/:userId",
+  authRequired(),
+  ability("saas.member.update"),
+  async (c) => {
+    const workspaceId = z.coerce.number().int().positive().parse(c.req.param("workspaceId"));
+    const targetUserId = z.coerce.number().int().positive().parse(c.req.param("userId"));
+    const payload = workspaceMemberSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.member",
+        action: "updateWorkspaceMember",
+        resource: "saas_workspace_member",
+        resourceId: `${workspaceId}:${targetUserId}`,
+        riskLevel: "high",
+        details: { workspaceId, targetUserId, role: payload.role, status: payload.status },
+      },
+      () =>
+        upsertWorkspaceMember({
+          ...payload,
+          workspaceId,
+          targetUserId,
+          userId: c.get("user").id,
+        }),
+    );
+    return c.json(success(result, "Workspace 成员已更新"));
+  },
+);
+
+saasRoutes.delete(
+  "/workspace-members/:workspaceId/:userId",
+  authRequired(),
+  ability("saas.member.remove"),
+  async (c) => {
+    const workspaceId = z.coerce.number().int().positive().parse(c.req.param("workspaceId"));
+    const targetUserId = z.coerce.number().int().positive().parse(c.req.param("userId"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.member",
+        action: "removeWorkspaceMember",
+        resource: "saas_workspace_member",
+        resourceId: `${workspaceId}:${targetUserId}`,
+        riskLevel: "high",
+        details: { workspaceId, targetUserId },
+      },
+      () => removeWorkspaceMember({ workspaceId, targetUserId, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Workspace 成员已移除"));
+  },
+);
+
+saasRoutes.get("/invitations", authRequired(), ability("saas.member.query"), async (c) => {
+  const query = listSchema
+    .extend({ tenantId: z.coerce.number().int().positive() })
+    .parse(c.req.query());
+  return c.json(success(await listInvitations({ ...query, userId: c.get("user").id })));
+});
+
+saasRoutes.post("/invitations", authRequired(), ability("saas.member.invite"), async (c) => {
+  const payload = invitationCreateSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.invitation",
+      action: "create",
+      resource: "saas_invitation",
+      riskLevel: "high",
+      details: {
+        tenantId: payload.tenantId,
+        workspaceId: payload.workspaceId,
+        email: payload.email,
+        tenantRole: payload.tenantRole,
+        workspaceRole: payload.workspaceRole,
+      },
+    },
+    () => createInvitation({ ...payload, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "邀请已创建；Token 仅在本次响应返回"));
+});
+
+saasRoutes.post(
+  "/invitations/:id/revoke",
+  authRequired(),
+  ability("saas.member.revokeInvite"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.invitation",
+        action: "revoke",
+        resource: "saas_invitation",
+        resourceId: id,
+        riskLevel: "high",
+      },
+      () => revokeInvitation({ id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "邀请已撤销"));
+  },
+);
+
+saasRoutes.post("/invitations/accept", authRequired(), async (c) => {
+  const payload = invitationAcceptSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.invitation",
+      action: "accept",
+      resource: "saas_invitation",
+      riskLevel: "medium",
+      details: { userId: c.get("user").id },
+    },
+    () => acceptInvitation({ token: payload.token, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "邀请已接受"));
+});
+
+saasRoutes.get("/modules/effective", authRequired(), async (c) => {
+  const tenantId = z.coerce.number().int().positive().parse(c.req.query("tenantId"));
+  return c.json(
+    success(
+      await resolveEffectiveSaasModules({
+        tenantId,
+        userId: c.get("user").id,
+        abilities: c.get("abilities") ?? [],
+      }),
+    ),
+  );
+});
+
+saasRoutes.get("/modules", authRequired(), ability("saas.module.query"), async (c) => {
+  const query = listSchema.parse(c.req.query());
+  return c.json(success(await listSaasModules(query)));
+});
+
+saasRoutes.post("/modules", authRequired(), ability("saas.module.create"), async (c) => {
+  const payload = moduleCreateSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.module",
+      action: "create",
+      resource: "saas_module",
+      riskLevel: "high",
+      details: { code: payload.code, routeKey: payload.routeKey, status: payload.status },
+    },
+    () => createSaasModule({ ...payload, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "模块定义已创建"));
+});
+
+saasRoutes.put("/modules/:id", authRequired(), ability("saas.module.update"), async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+  const payload = moduleUpdateSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.module",
+      action: "update",
+      resource: "saas_module",
+      resourceId: id,
+      riskLevel: payload.status === "active" ? "high" : "medium",
+      details: { fields: Object.keys(payload), status: payload.status },
+    },
+    () => updateSaasModule({ ...payload, id, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "模块定义已更新"));
+});
+
+saasRoutes.get(
+  "/entitlements",
+  authRequired(),
+  ability("saas.module.entitlementQuery"),
+  async (c) => {
+    const query = listSchema
+      .extend({
+        tenantId: z.coerce.number().int().positive().optional(),
+        moduleId: z.coerce.number().int().positive().optional(),
+      })
+      .parse(c.req.query());
+    return c.json(success(await listTenantEntitlements({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/entitlements",
+  authRequired(),
+  ability("saas.module.entitlementCreate"),
+  async (c) => {
+    const payload = entitlementCreateSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.entitlement",
+        action: "create",
+        resource: "saas_tenant_entitlement",
+        riskLevel: "high",
+        details: {
+          tenantId: payload.tenantId,
+          moduleId: payload.moduleId,
+          status: payload.status,
+          source: payload.source,
+        },
+      },
+      () => createTenantEntitlement({ ...payload, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Tenant Entitlement 已开通"));
+  },
+);
+
+saasRoutes.put(
+  "/entitlements/:id",
+  authRequired(),
+  ability("saas.module.entitlementUpdate"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = entitlementUpdateSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.entitlement",
+        action: "update",
+        resource: "saas_tenant_entitlement",
+        resourceId: id,
+        riskLevel: "high",
+        details: { fields: Object.keys(payload), status: payload.status, source: payload.source },
+      },
+      () => updateTenantEntitlement({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Tenant Entitlement 已更新"));
+  },
+);

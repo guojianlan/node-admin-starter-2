@@ -1,5 +1,8 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { SaasInvitationAcceptPage } from "@/features/saas/invitation/SaasInvitationAcceptPage";
+import { SaasMemberPage } from "@/features/saas/member/SaasMemberPage";
+import { SaasModulePage } from "@/features/saas/module/SaasModulePage";
 import { SaasTenantPage } from "@/features/saas/tenant/SaasTenantPage";
 import { SaasWorkspacePage } from "@/features/saas/workspace/SaasWorkspacePage";
 import { AiChatPage } from "@/features/system/ai-chat/AiChatPage";
@@ -65,6 +68,27 @@ export const adminRoutes: AdminRouteRecord[] = [
     title: "Workspace 管理",
     auth: "saas.workspace.query",
     component: SaasWorkspacePage,
+  },
+  {
+    path: "/saas/members",
+    key: "saas.member",
+    title: "成员与邀请",
+    auth: "saas.member.query",
+    component: SaasMemberPage,
+  },
+  {
+    path: "/saas/modules",
+    key: "saas.module",
+    title: "模块与 Entitlement",
+    auth: "saas.module.query",
+    component: SaasModulePage,
+  },
+  {
+    path: "/saas/invitations/accept",
+    key: "saas.invitationAccept",
+    title: "接受 SaaS 邀请",
+    adminHidden: true,
+    component: SaasInvitationAcceptPage,
   },
   {
     path: "/system/user",

@@ -109,19 +109,19 @@ Shell 或插件执行。
 
 ## 4. 目标用户与角色
 
-| 角色 | 主要职责 | 默认产品视角 |
-| --- | --- | --- |
-| 平台超级管理员 | 租户、套餐、Provider、系统资源、风险和运维治理 | SaaS 控制面 |
-| 租户所有者 | 订阅、账单、品牌、域名、成员和模块授权 | Tenant 控制台 |
-| Workspace 管理员 | 团队、项目空间、业务配置、默认模型和额度 | Workspace 控制台 |
-| 内容策划 | 创建选题、导入来源、定义目标受众和内容结构 | 项目工作台 |
-| 编剧/作者 | 小说、脚本、对白、章节和分镜编辑 | 文本与结构编辑器 |
-| 美术/视觉设计 | 人物、场景、画面风格、图片和视频素材审阅 | 视觉资产工作台 |
-| 音频/视频制作 | TTS、配乐、字幕、时间线、渲染和导出 | 媒体生产工作台 |
-| 内容审核员 | 事实、版权、安全、品牌和发布审核 | 审核中心 |
-| 运营人员 | 批量项目、任务、发布、成本和效果追踪 | 运营工作台 |
-| 普通查看者 | 查看已授权项目和产物，不执行生成或修改 | 只读工作区 |
-| 开发者/API 客户 | 通过受限 API Key 和 Webhook 集成业务能力 | 开放平台 |
+| 角色             | 主要职责                                       | 默认产品视角     |
+| ---------------- | ---------------------------------------------- | ---------------- |
+| 平台超级管理员   | 租户、套餐、Provider、系统资源、风险和运维治理 | SaaS 控制面      |
+| 租户所有者       | 订阅、账单、品牌、域名、成员和模块授权         | Tenant 控制台    |
+| Workspace 管理员 | 团队、项目空间、业务配置、默认模型和额度       | Workspace 控制台 |
+| 内容策划         | 创建选题、导入来源、定义目标受众和内容结构     | 项目工作台       |
+| 编剧/作者        | 小说、脚本、对白、章节和分镜编辑               | 文本与结构编辑器 |
+| 美术/视觉设计    | 人物、场景、画面风格、图片和视频素材审阅       | 视觉资产工作台   |
+| 音频/视频制作    | TTS、配乐、字幕、时间线、渲染和导出            | 媒体生产工作台   |
+| 内容审核员       | 事实、版权、安全、品牌和发布审核               | 审核中心         |
+| 运营人员         | 批量项目、任务、发布、成本和效果追踪           | 运营工作台       |
+| 普通查看者       | 查看已授权项目和产物，不执行生成或修改         | 只读工作区       |
+| 开发者/API 客户  | 通过受限 API Key 和 Webhook 集成业务能力       | 开放平台         |
 
 角色只描述业务职责。真正授权仍由 `sys_rule` ability、tenant/workspace membership、资源 ACL 和业务 data scope
 共同决定，不能仅依赖前端角色名称。
@@ -172,15 +172,15 @@ flowchart TD
 
 目标对象：
 
-| 对象 | 职责 |
-| --- | --- |
-| `saas_tenant` | 客户组织、状态、区域、数据保留和账单主体 |
-| `saas_workspace` | 租户内项目空间、业务线或团队空间 |
-| `saas_tenant_member` | 用户与租户的成员关系、状态和加入来源 |
-| `saas_workspace_member` | Workspace 角色、加入时间和资源范围 |
-| `saas_team` / `saas_team_member` | 跨部门项目团队和资源分组 |
-| `saas_invitation` | 邀请、过期、接受、撤销和审计 |
-| `saas_service_account` | API/自动化主体，不模拟普通用户 |
+| 对象                             | 职责                                     |
+| -------------------------------- | ---------------------------------------- |
+| `saas_tenant`                    | 客户组织、状态、区域、数据保留和账单主体 |
+| `saas_workspace`                 | 租户内项目空间、业务线或团队空间         |
+| `saas_tenant_member`             | 用户与租户的成员关系、状态和加入来源     |
+| `saas_workspace_member`          | Workspace 角色、加入时间和资源范围       |
+| `saas_team` / `saas_team_member` | 跨部门项目团队和资源分组                 |
+| `saas_invitation`                | 邀请、过期、接受、撤销和审计             |
+| `saas_service_account`           | API/自动化主体，不模拟普通用户           |
 
 目标规则：
 
@@ -267,23 +267,23 @@ SaaS 白标能力包括：
 为了让 Admin Base 能作为其他 SaaS 产品的后台，除 Studio 业务页面外，还需要一套明确的控制面页面。平台运营
 后台和租户自助控制台复用同一数据事实，但权限、数据范围和可见字段不同。
 
-| 页面 | 建议路由 | 平台运营能力 | 租户自助能力 |
-| --- | --- | --- | --- |
-| Tenant 管理 | `/saas/tenants` | 创建、停复机、区域、保留策略、风险状态 | 查看本 Tenant 基本信息 |
-| Workspace 管理 | `/saas/workspaces` | 跨 Tenant 查询与受控运维 | 创建、归档、成员和默认设置 |
-| 成员与邀请 | `/saas/members` | 安全审计、异常成员处置 | 邀请、移除、角色和团队 |
-| 模块目录 | `/saas/modules` | 模块定义、版本、依赖和上架状态 | 查看已购、试用和申请开通 |
-| 套餐管理 | `/saas/plans` | 套餐版本、价格、额度和 Entitlement | 查看当前套餐和可升级项 |
-| 订阅管理 | `/saas/subscriptions` | 生命周期、宽限期、停复机和人工调整 | 升降级、续费、取消和付款方式 |
-| 用量与额度 | `/saas/usage` | 全局成本、异常、调整和 Provider 对账 | Workspace/产品/成员用量和余额 |
-| 账单与发票 | `/saas/billing` | 账期、Invoice、Payment、Refund 和税务状态 | 账单、发票抬头、付款和下载 |
-| 品牌与域名 | `/saas/branding` | 域名风险和证书运维 | Logo、主题、域名、邮件和水印 |
-| API Key | `/saas/api-keys` | 安全策略、异常调用和强制撤销 | 创建、轮换、Scope、过期和撤销 |
-| Webhook | `/saas/webhooks` | 全局失败、封禁和事件治理 | Endpoint、订阅、Secret 轮换和投递日志 |
-| Connector | `/saas/connections` | Definition、风险、版本和 Kill Switch | OAuth/Key 连接、状态、同步和撤销 |
-| 审批中心 | `/saas/approvals` | 跨租户合规监督，不默认读取业务正文 | 本 Tenant 待办、决策和历史 |
-| 告警中心 | `/saas/alerts` | 平台基础设施和全局 Provider 告警 | 本 Tenant 预算、任务、连接和配额告警 |
-| 审计中心 | `/saas/audit` | 受控跨租户调查和追加审计 | 本 Tenant 操作、登录、API 和外发审计 |
+| 页面           | 建议路由              | 平台运营能力                              | 租户自助能力                          |
+| -------------- | --------------------- | ----------------------------------------- | ------------------------------------- |
+| Tenant 管理    | `/saas/tenants`       | 创建、停复机、区域、保留策略、风险状态    | 查看本 Tenant 基本信息                |
+| Workspace 管理 | `/saas/workspaces`    | 跨 Tenant 查询与受控运维                  | 创建、归档、成员和默认设置            |
+| 成员与邀请     | `/saas/members`       | 安全审计、异常成员处置                    | 邀请、移除、角色和团队                |
+| 模块目录       | `/saas/modules`       | 模块定义、版本、依赖和上架状态            | 查看已购、试用和申请开通              |
+| 套餐管理       | `/saas/plans`         | 套餐版本、价格、额度和 Entitlement        | 查看当前套餐和可升级项                |
+| 订阅管理       | `/saas/subscriptions` | 生命周期、宽限期、停复机和人工调整        | 升降级、续费、取消和付款方式          |
+| 用量与额度     | `/saas/usage`         | 全局成本、异常、调整和 Provider 对账      | Workspace/产品/成员用量和余额         |
+| 账单与发票     | `/saas/billing`       | 账期、Invoice、Payment、Refund 和税务状态 | 账单、发票抬头、付款和下载            |
+| 品牌与域名     | `/saas/branding`      | 域名风险和证书运维                        | Logo、主题、域名、邮件和水印          |
+| API Key        | `/saas/api-keys`      | 安全策略、异常调用和强制撤销              | 创建、轮换、Scope、过期和撤销         |
+| Webhook        | `/saas/webhooks`      | 全局失败、封禁和事件治理                  | Endpoint、订阅、Secret 轮换和投递日志 |
+| Connector      | `/saas/connections`   | Definition、风险、版本和 Kill Switch      | OAuth/Key 连接、状态、同步和撤销      |
+| 审批中心       | `/saas/approvals`     | 跨租户合规监督，不默认读取业务正文        | 本 Tenant 待办、决策和历史            |
+| 告警中心       | `/saas/alerts`        | 平台基础设施和全局 Provider 告警          | 本 Tenant 预算、任务、连接和配额告警  |
+| 审计中心       | `/saas/audit`         | 受控跨租户调查和追加审计                  | 本 Tenant 操作、登录、API 和外发审计  |
 
 这些页面继续使用 `PageScaffold`。普通资源使用 `AdminDataTable`；Tenant 详情、订阅、用量、账单、域名和告警属于
 主从或运营工作台，使用显式 Service，不把停机、退款、Secret 轮换或跨租户运维塞进普通 CRUD Hook。
@@ -292,21 +292,21 @@ SaaS 白标能力包括：
 
 ### 7.1 通用对象
 
-| 对象 | 核心职责 | 实现边界 |
-| --- | --- | --- |
-| `studio_project` | 所有生产项目的统一身份、产品类型、阶段、归属、封面和当前版本 | CRUD + 状态机命令 |
-| `studio_project_member` | 项目内 owner/editor/reviewer/viewer | 自定义资源 ACL |
-| `studio_source` | 原著、文档、音频、歌词、URL 和知识来源快照 | 显式导入/解析服务 |
-| `studio_character` | 跨项目人物 Canon、形象、声音、关系和使用策略 | 关系 CRUD + 版本 |
-| `studio_actor` | 真人/数字演员、形象权、音色、Avatar 和许可 | 高敏资源治理 |
-| `studio_scene_profile` | 地点、时代、光线、镜头风格和参考素材 | CRUD + 版本 |
-| `studio_asset` | 图片、音频、视频、文本、字幕、工程文件和生成血缘 | Metadata CRUD + Storage Service |
-| `studio_asset_version` | 同一资产的不可变版本、父版本和生成参数 | 显式服务 |
-| `studio_task` | 产品级任务、父子关系、进度、Provider Task 和 Job 关联 | 状态机 + Worker |
-| `studio_timeline_version` | 不可变时间线和 Track/Clip 快照 | 显式发布服务 |
-| `studio_export` | 导出规格、结果文件、版本、状态和外发记录 | Worker + 审批 |
-| `studio_template` | 项目、Prompt、镜头、字幕、渲染和品牌模板 | 版本化配置 |
-| `studio_feedback` | 用户评分、问题类型、修订和 Eval 关联 | 普通写入 + 分析 |
+| 对象                      | 核心职责                                                     | 实现边界                        |
+| ------------------------- | ------------------------------------------------------------ | ------------------------------- |
+| `studio_project`          | 所有生产项目的统一身份、产品类型、阶段、归属、封面和当前版本 | CRUD + 状态机命令               |
+| `studio_project_member`   | 项目内 owner/editor/reviewer/viewer                          | 自定义资源 ACL                  |
+| `studio_source`           | 原著、文档、音频、歌词、URL 和知识来源快照                   | 显式导入/解析服务               |
+| `studio_character`        | 跨项目人物 Canon、形象、声音、关系和使用策略                 | 关系 CRUD + 版本                |
+| `studio_actor`            | 真人/数字演员、形象权、音色、Avatar 和许可                   | 高敏资源治理                    |
+| `studio_scene_profile`    | 地点、时代、光线、镜头风格和参考素材                         | CRUD + 版本                     |
+| `studio_asset`            | 图片、音频、视频、文本、字幕、工程文件和生成血缘             | Metadata CRUD + Storage Service |
+| `studio_asset_version`    | 同一资产的不可变版本、父版本和生成参数                       | 显式服务                        |
+| `studio_task`             | 产品级任务、父子关系、进度、Provider Task 和 Job 关联        | 状态机 + Worker                 |
+| `studio_timeline_version` | 不可变时间线和 Track/Clip 快照                               | 显式发布服务                    |
+| `studio_export`           | 导出规格、结果文件、版本、状态和外发记录                     | Worker + 审批                   |
+| `studio_template`         | 项目、Prompt、镜头、字幕、渲染和品牌模板                     | 版本化配置                      |
+| `studio_feedback`         | 用户评分、问题类型、修订和 Eval 关联                         | 普通写入 + 分析                 |
 
 `studio_project` 只保存跨产品公共字段。小说章节、画布节点、圆桌发言、歌词节拍等必须进入各自的 typed extension
 表，不能使用一个无限扩张的 `project_json` 或 EAV 表代替业务模型。
@@ -358,21 +358,21 @@ queued -> claimed -> running -> waiting_provider -> processing -> completed
 
 ## 8. 全部业务 Tab 总览
 
-| Tab | 建议路由 | 产品类型 | 核心产物 | 主要复用基础 |
-| --- | --- | --- | --- | --- |
-| 小说 | `/studio/novel` | `novel` | 章节、全文、DOCX/EPUB | 人物、来源、版本、Knowledge、LLM |
-| 无限画布 | `/studio/canvas` | `canvas` | Board、节点图、创意方案 | 资产、人物、场景、任务、XYFlow |
-| AI 圆桌会议 | `/studio/roundtable` | `roundtable` | 对话记录、纪要、决策、行动项 | Agent、Knowledge、引用、TTS |
-| 图片叙事 | `/studio/image-story` | `image_story` | 图文故事、长图、轮播、短视频 | 分镜、人物、场景、图片、字幕 |
-| 名著阅读视频 | `/studio/reading-video` | `reading_video` | 有声阅读视频、MP4、SRT | 原著、分镜、图片、TTS、FFmpeg |
-| 歌曲 MV | `/studio/music-video` | `music_video` | MV、歌词字幕、封面 | 音频、节拍、分镜、视频、渲染 |
-| 人物中心 | `/studio/characters` | 共享资源 | 人物 Canon 与版本 | 图片、音色、关系、许可 |
-| AI 脱口秀 | `/studio/talk-show` | `talk_show` | 脱口秀脚本、音视频、字幕 | Research、人物/演员、TTS、视频 |
-| 百家讲坛 | `/studio/lecture` | `lecture` | 系列课程、讲稿、课件、视频 | Knowledge、引用、讲师、PPT、TTS |
-| 知识科普讲解 | `/studio/science-explainer` | `science_explainer` | 证据化科普稿、图解、视频 | RAG、引用、图表、审核、Eval |
-| 演员库 | `/studio/actors` | 共享资源 | 真人/数字演员与许可档案 | 文件、音色、Avatar、合规 |
-| 素材/场景库 | `/studio/assets` | 共享资源 | 资产、场景模板和授权档案 | Storage、标签、血缘、搜索 |
-| 画图 | `/studio/image` | `image` | 生成图、编辑图和模板 | Image Provider、资产、任务、费用 |
+| Tab          | 建议路由                    | 产品类型            | 核心产物                     | 主要复用基础                     |
+| ------------ | --------------------------- | ------------------- | ---------------------------- | -------------------------------- |
+| 小说         | `/studio/novel`             | `novel`             | 章节、全文、DOCX/EPUB        | 人物、来源、版本、Knowledge、LLM |
+| 无限画布     | `/studio/canvas`            | `canvas`            | Board、节点图、创意方案      | 资产、人物、场景、任务、XYFlow   |
+| AI 圆桌会议  | `/studio/roundtable`        | `roundtable`        | 对话记录、纪要、决策、行动项 | Agent、Knowledge、引用、TTS      |
+| 图片叙事     | `/studio/image-story`       | `image_story`       | 图文故事、长图、轮播、短视频 | 分镜、人物、场景、图片、字幕     |
+| 名著阅读视频 | `/studio/reading-video`     | `reading_video`     | 有声阅读视频、MP4、SRT       | 原著、分镜、图片、TTS、FFmpeg    |
+| 歌曲 MV      | `/studio/music-video`       | `music_video`       | MV、歌词字幕、封面           | 音频、节拍、分镜、视频、渲染     |
+| 人物中心     | `/studio/characters`        | 共享资源            | 人物 Canon 与版本            | 图片、音色、关系、许可           |
+| AI 脱口秀    | `/studio/talk-show`         | `talk_show`         | 脱口秀脚本、音视频、字幕     | Research、人物/演员、TTS、视频   |
+| 百家讲坛     | `/studio/lecture`           | `lecture`           | 系列课程、讲稿、课件、视频   | Knowledge、引用、讲师、PPT、TTS  |
+| 知识科普讲解 | `/studio/science-explainer` | `science_explainer` | 证据化科普稿、图解、视频     | RAG、引用、图表、审核、Eval      |
+| 演员库       | `/studio/actors`            | 共享资源            | 真人/数字演员与许可档案      | 文件、音色、Avatar、合规         |
+| 素材/场景库  | `/studio/assets`            | 共享资源            | 资产、场景模板和授权档案     | Storage、标签、血缘、搜索        |
+| 画图         | `/studio/image`             | `image`             | 生成图、编辑图和模板         | Image Provider、资产、任务、费用 |
 
 ## 9. Tab 1：小说
 
@@ -996,16 +996,16 @@ Prompt、比例、风格和可选参考图，生成结果默认进入个人临�
 
 ### 23.2 共用页面模式
 
-| 页面模式 | 适用范围 | 规则 |
-| --- | --- | --- |
-| 项目 Gallery | 小说、图片叙事、阅读视频、MV、脱口秀 | 搜索/筛选/分页进 URL，卡片高度稳定 |
-| 主从编辑工作台 | 小说、讲坛、科普、人物、演员 | 左侧导航，中间编辑，右侧检查器，局部滚动 |
-| Storyboard | 图片叙事、阅读视频、MV、脱口秀 | 场景顺序、画面、文本和状态可扫描 |
-| Timeline | 阅读视频、MV、脱口秀、讲坛、科普 | Track/Clip/播放头/版本，独立媒体模型 |
-| 无限画布 | Canvas | 专用画布，不套普通表格 |
-| 运行工作台 | 圆桌、生成、渲染 | 输入、进度、Run/Step、停止和错误恢复 |
-| 资源 Gallery/Table | 人物、演员、素材、画图 | 预览与元数据并重，支持批量筛选 |
-| 普通 CRUD | 模板、标签、配置、套餐 | 使用共享 AdminDataTable/AdminEntityForm |
+| 页面模式           | 适用范围                             | 规则                                     |
+| ------------------ | ------------------------------------ | ---------------------------------------- |
+| 项目 Gallery       | 小说、图片叙事、阅读视频、MV、脱口秀 | 搜索/筛选/分页进 URL，卡片高度稳定       |
+| 主从编辑工作台     | 小说、讲坛、科普、人物、演员         | 左侧导航，中间编辑，右侧检查器，局部滚动 |
+| Storyboard         | 图片叙事、阅读视频、MV、脱口秀       | 场景顺序、画面、文本和状态可扫描         |
+| Timeline           | 阅读视频、MV、脱口秀、讲坛、科普     | Track/Clip/播放头/版本，独立媒体模型     |
+| 无限画布           | Canvas                               | 专用画布，不套普通表格                   |
+| 运行工作台         | 圆桌、生成、渲染                     | 输入、进度、Run/Step、停止和错误恢复     |
+| 资源 Gallery/Table | 人物、演员、素材、画图               | 预览与元数据并重，支持批量筛选           |
+| 普通 CRUD          | 模板、标签、配置、套餐               | 使用共享 AdminDataTable/AdminEntityForm  |
 
 所有页面必须定义 loading、empty、error、retry、permission denied、disabled、narrow、light 和 dark 状态。
 
@@ -1096,11 +1096,11 @@ retry、cancel 和 publish 必须使用同一范围解析器。
 
 风险级别建议：
 
-| 动作 | 风险 |
-| --- | --- |
-| 查询、预览、普通草稿保存 | low |
-| 创建、编辑、上传、单项生成 | medium |
-| 批量生成、重试、取消、导出、成员分配 | high |
+| 动作                                               | 风险                     |
+| -------------------------------------------------- | ------------------------ |
+| 查询、预览、普通草稿保存                           | low                      |
+| 创建、编辑、上传、单项生成                         | medium                   |
+| 批量生成、重试、取消、导出、成员分配               | high                     |
 | 发布、外发、物理删除、跨 Tenant 运维、演员许可变更 | high/critical + Approval |
 
 ## 26. Provider 与媒体运行时
@@ -1277,8 +1277,17 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 
 第一切片（2026-09-01，`implemented-unverified`）：已加入 `saas_tenant`、`saas_workspace`、Tenant/Workspace
 成员表、默认单组织上下文、`/api/saas/context|tenants|workspaces`、权限/审计、Tenant 与 Workspace 后台页面和
-跨 Tenant 直接写入测试。邀请、团队、Entitlement、Studio Kernel、文件前缀、用量和全链路两 Tenant 攻击矩阵
-仍待后续切片，不能据此宣称整个 Phase 1 完成。
+跨 Tenant 直接写入测试。
+
+第二切片（2026-09-01，`implemented-unverified`）：已加入 Tenant/Workspace 成员管理、`saas_invitation` 邀请
+状态机、`saas_module` 模块目录、`saas_tenant_entitlement` 试用/开通/覆盖/过期、有效模块服务端解析合同、
+`/saas/members`、`/saas/modules` 和邀请自服务页。邀请 Token 只保存 Hash；接受时只绑定邮箱一致的现有
+`sys_user`；owner 变更被隔离到未来独立转移流程；模块上架前强制核对真实 route/path/ability 和依赖；成员、
+邀请与 Entitlement 的直接跨 Tenant 攻击由自动化测试阻断。详细合同见
+[`saas-phase-1b-membership-entitlement.md`](./saas-phase-1b-membership-entitlement.md)。
+
+团队、Studio Kernel、文件前缀、用量和项目/文件/任务/Tool/导出/审计的两 Tenant 全链路攻击矩阵仍待后续
+切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。
 
@@ -1355,18 +1364,18 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 
 ## 32. 关键风险与依赖
 
-| 风险 | 影响 | 缓解方向 |
-| --- | --- | --- |
-| 一次建设 13 个产品 | 范围失控、重复底座、没有可交付闭环 | 先 Kernel，再共享资源，再 1-2 个垂直 |
-| 多租户后补 | 数据、文件、索引和任务迁移成本高 | 新 Studio 记录从第一版设计 Tenant/Workspace |
-| Provider 能力差异 | UI 假能力、失败率高、成本不可控 | Capability + Adapter + 环境验收 |
-| 每镜头 AI 视频 | 成本、时延和稳定性不可控 | 首个视频 MVP 使用静态图/TTS/FFmpeg |
-| 画布/Workflow/Timeline 混用 | 数据模型和交互失真 | 三者独立事实，使用受控引用连接 |
-| 版权和肖像权 | 无法发布、法律风险 | 来源、许可、到期、地域和发布 Guard |
-| 模型幻觉 | 讲坛/科普失实 | Claim/Evidence、引用、专业审核、Eval |
-| 长任务不可恢复 | 重复费用、结果覆盖 | Job lease/fencing/idempotency/cancel |
-| 正式账单与 AI 估算混淆 | 对账和客户争议 | 价格版本、Usage Event、Invoice 独立事实 |
-| 工作区现有未提交修改 | 新文档/实现误覆盖用户工作 | 每阶段先检查 Git 状态，保持窄范围 |
+| 风险                        | 影响                               | 缓解方向                                    |
+| --------------------------- | ---------------------------------- | ------------------------------------------- |
+| 一次建设 13 个产品          | 范围失控、重复底座、没有可交付闭环 | 先 Kernel，再共享资源，再 1-2 个垂直        |
+| 多租户后补                  | 数据、文件、索引和任务迁移成本高   | 新 Studio 记录从第一版设计 Tenant/Workspace |
+| Provider 能力差异           | UI 假能力、失败率高、成本不可控    | Capability + Adapter + 环境验收             |
+| 每镜头 AI 视频              | 成本、时延和稳定性不可控           | 首个视频 MVP 使用静态图/TTS/FFmpeg          |
+| 画布/Workflow/Timeline 混用 | 数据模型和交互失真                 | 三者独立事实，使用受控引用连接              |
+| 版权和肖像权                | 无法发布、法律风险                 | 来源、许可、到期、地域和发布 Guard          |
+| 模型幻觉                    | 讲坛/科普失实                      | Claim/Evidence、引用、专业审核、Eval        |
+| 长任务不可恢复              | 重复费用、结果覆盖                 | Job lease/fencing/idempotency/cancel        |
+| 正式账单与 AI 估算混淆      | 对账和客户争议                     | 价格版本、Usage Event、Invoice 独立事实     |
+| 工作区现有未提交修改        | 新文档/实现误覆盖用户工作          | 每阶段先检查 Git 状态，保持窄范围           |
 
 ## 33. 待决策问题
 

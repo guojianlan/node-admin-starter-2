@@ -94,6 +94,43 @@ export const pageTestCases: PageTestCase[] = [
     coverage: "automated",
   }),
   pageCase({
+    path: "/saas/members",
+    area: "SaaS 成员与邀请控制面",
+    content: "Tenant 成员、Workspace 成员、角色、状态、邀请邮箱、过期时间和邀请生命周期",
+    primaryAction: "切换 Tenant/Workspace、调整非 owner 成员角色、移除成员、创建或撤销邀请",
+    desktop:
+      "三个 Tab 共用稳定高度的内部滚动表格；用户身份和操作列固定，Tenant/Workspace 选择器保持可见，Token 仅在创建成功后显示一次",
+    empty: "无成员或邀请时保留 Tenant/Workspace 选择和创建邀请入口，不伪造默认成员",
+    permission:
+      "页面和列表受 saas.member.query 控制；角色分配、移除、创建邀请和撤销邀请分别受服务端 ability 与 Tenant/Workspace owner/admin 范围校验",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/saas/modules",
+    area: "SaaS 模块与 Entitlement 控制面",
+    content: "模块 code、版本、状态、依赖、入口、能力声明以及 Tenant 试用、开通、覆盖和过期",
+    primaryAction:
+      "维护模块定义、在真实 route/ability 就绪后上架，并为可管理 Tenant 开通或调整 Entitlement",
+    desktop:
+      "模块目录使用共享数据表；Entitlement 表在 Tab 内局部滚动，Tenant 选择、有效模块选项和额度覆盖表单保持结构化",
+    empty: "没有已上架模块时明确禁用开通动作；无 Entitlement 时仍可查看模块目录和 Tenant 范围",
+    permission:
+      "模块 query/create/update 与 Entitlement query/create/update 分开校验；普通用户只能管理其 owner/admin Tenant，跨 Tenant ID 写入返回不可见",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/saas/invitations/accept",
+    area: "SaaS 邀请自服务",
+    content: "当前登录账号、一次性邀请 Token、邮箱绑定要求和接受结果",
+    primaryAction: "校验并接受未过期、未撤销且邮箱一致的邀请",
+    desktop:
+      "窄表单保持可读宽度，Token 文本区、校验说明和确认动作清楚，不显示邀请 Hash 或其他账号信息",
+    empty: "没有 URL Token 时保留手工粘贴入口，Token 长度不足时确认按钮禁用",
+    permission:
+      "页面面向已登录用户自服务；API 使用 authRequired 并绑定当前 sys_user 邮箱，不授予跨 Tenant 管理 ability",
+    coverage: "automated",
+  }),
+  pageCase({
     path: "/profile",
     area: "个人中心",
     content: "个人资料、头像、密码、登录记录和 OAuth 绑定",
@@ -385,11 +422,14 @@ export const pageTestCases: PageTestCase[] = [
     path: "/system/ai/workflow",
     area: "AI Workflow",
     content: "Workflow 列表、草稿、版本、全屏无限画布、节点配置、Builder 预检和发布状态",
-    primaryAction: "从列表打开或新建，拖放节点，切换平移/框选，多选、复制粘贴、复制一份、删除、撤销重做、连接并配置节点，然后保存草稿、发布版本、测试运行并返回列表",
+    primaryAction:
+      "从列表打开或新建，拖放节点，切换平移/框选，多选、复制粘贴、复制一份、删除、撤销重做、连接并配置节点，然后保存草稿、发布版本、测试运行并返回列表",
     desktop:
       "列表与编辑器分离；编辑器使用整块可用高度，节点面板、无限画布、画布操作条、右侧配置面板和底部运行抽屉各自承担单一职责；操作条支持横向滚动且不遮挡节点，名称、编码、草稿状态、版本和发布动作在稳定顶栏内，画布不被运行记录挤压",
-    empty: "没有 Workflow 时显示新建入口；没有选中节点时右侧显示节点配置空状态；没有已发布版本时禁用测试运行",
-    permission: "使用 system.aiAgent.query 访问 Workflow 控制面，保存、发布和执行继续分别由后端 Agent Workflow abilities 与审计规则保护",
+    empty:
+      "没有 Workflow 时显示新建入口；没有选中节点时右侧显示节点配置空状态；没有已发布版本时禁用测试运行",
+    permission:
+      "使用 system.aiAgent.query 访问 Workflow 控制面，保存、发布和执行继续分别由后端 Agent Workflow abilities 与审计规则保护",
     coverage: "mixed",
   }),
   pageCase({

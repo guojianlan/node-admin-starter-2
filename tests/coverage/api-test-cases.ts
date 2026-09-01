@@ -3,6 +3,8 @@ import { generatedModuleApiOperations } from "./generated-module-test-cases";
 
 const operationsByMethod = {
   DELETE: [
+    "/api/saas/tenant-members/{tenantId}/{userId}",
+    "/api/saas/workspace-members/{workspaceId}/{userId}",
     "/api/system/ai/agent/{id}",
     "/api/system/ai/eval/cases/{id}",
     "/api/system/ai/eval/datasets/{id}",
@@ -58,6 +60,12 @@ const operationsByMethod = {
     "/api/saas/context",
     "/api/saas/tenants",
     "/api/saas/workspaces",
+    "/api/saas/tenant-members",
+    "/api/saas/workspace-members",
+    "/api/saas/invitations",
+    "/api/saas/modules",
+    "/api/saas/modules/effective",
+    "/api/saas/entitlements",
     "/api/system/ai/agent",
     "/api/system/ai/agent/options",
     "/api/system/ai/agent/runs",
@@ -186,6 +194,11 @@ const operationsByMethod = {
     "/api/system/user/role",
   ],
   POST: [
+    "/api/saas/invitations",
+    "/api/saas/invitations/{id}/revoke",
+    "/api/saas/invitations/accept",
+    "/api/saas/modules",
+    "/api/saas/entitlements",
     "/api/saas/tenants",
     "/api/saas/workspaces",
     "/api/system/ai/agent",
@@ -315,6 +328,10 @@ const operationsByMethod = {
     "/api/system/user/batch-delete",
   ],
   PUT: [
+    "/api/saas/tenant-members/{tenantId}/{userId}",
+    "/api/saas/workspace-members/{workspaceId}/{userId}",
+    "/api/saas/modules/{id}",
+    "/api/saas/entitlements/{id}",
     "/api/saas/tenants/{id}",
     "/api/saas/workspaces/{id}",
     "/api/system/ai/eval/cases/{id}",

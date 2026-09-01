@@ -1,6 +1,6 @@
 # Admin Base 当前技术栈与架构
 
-> 当前核对：2026-08-24
+> 当前核对：2026-09-01
 > 目标：记录当前项目真实技术栈、模块边界、运行链路和架构约束。后续新增能力时，先更新本文，再改实现。
 
 业务与 AI 的长期阶段、技术预研和业务产品合同统一从
@@ -212,7 +212,7 @@ CRUD factory 当前能力：
 | `sys_ai_web_search_provider`                                          | Tavily、Brave、SearXNG 搜索连接、密钥和调用优先级                                |
 | `sys_ai_workflow_run`                                                 | 可信 AI Workflow 运行、状态、输入输出和 Request ID                               |
 | `sys_ai_workflow_run_step`                                            | Workflow 确定性步骤、耗时、输入输出和错误                                        |
-| `sys_ai_workflow_wait`                                                | Workflow 审批、业务事件和定时等待，以及恢复关联键、超时和处理结果                 |
+| `sys_ai_workflow_wait`                                                | Workflow 审批、业务事件和定时等待，以及恢复关联键、超时和处理结果                |
 | `sys_ai_purpose_route` / `sys_ai_purpose_model`                       | Chat、Agent、RAG、Eval 等用途的主模型和有序候选模型                              |
 | `sys_ai_invocation` / `sys_ai_invocation_attempt`                     | 逻辑调用、Provider/Model 尝试、Token、费用、延迟和脱敏错误                       |
 | `sys_ai_knowledge_base` / `sys_ai_document` / `sys_ai_document_chunk` | 带全局、部门、个人可见范围的知识库、文件/网站快照来源版本、文本分块和 Embedding  |
@@ -221,17 +221,19 @@ CRUD factory 当前能力：
 | `sys_ai_eval_dataset` / `sys_ai_eval_case`                            | 带可见范围的 Eval 数据集、固定输入、期望和确定性断言                             |
 | `sys_ai_eval_run` / `sys_ai_eval_result`                              | 不可覆盖的同步评测批次、结果、指标及 Agent Run Trace 关联                        |
 | `sys_ai_notebook_artifact`                                            | 带来源版本、引用、RAG Run 和模型 Invocation 快照的生成产物                       |
-| `sys_ai_notebook_research_candidate`                                 | Notebook 联网研究候选 URL 的查询、接受、解析、就绪/失败状态和导入关联               |
+| `sys_ai_notebook_research_candidate`                                  | Notebook 联网研究候选 URL 的查询、接受、解析、就绪/失败状态和导入关联            |
 | `sys_ai_memory`                                                       | 用户显式保存的跨会话 User/Agent Memory、状态和过期策略                           |
 | `sys_ai_runtime_skill` / `sys_ai_agent_skill`                         | Runtime Skill 指令、Agent 绑定及允许 Tool 关系                                   |
 | `sys_ai_mcp_server` / `sys_ai_mcp_connection` / `sys_ai_mcp_tool`     | MCP Server、加密 OAuth 连接、远端 Tool 生命周期和 allowlist                      |
 | `sys_ai_provider_circuit`                                             | Provider/用途持久熔断、half-open 探针租约和失败计数                              |
 | `sys_ai_job`                                                          | PostgreSQL Worker Job、幂等键、优先级、重试和领取租约                            |
-| `sys_ai_tool_execution`                                               | Agent Tool 按 Run/Attempt/ToolCall 的副作用幂等记录、结果缓存和失败证据             |
+| `sys_ai_tool_execution`                                               | Agent Tool 按 Run/Attempt/ToolCall 的副作用幂等记录、结果缓存和失败证据          |
 | `sys_ai_quota_policy` / `sys_ai_billing_ledger`                       | system/department/user 配额和估算/调整/结算账本                                  |
 | `sys_ai_notebook_member`                                              | Notebook viewer/editor 协作成员                                                  |
-| `saas_tenant` / `saas_workspace`                                     | SaaS 客户组织、工作空间、生命周期和历史单组织默认上下文                          |
-| `saas_tenant_member` / `saas_workspace_member`                       | Tenant/Workspace 自定义成员范围和角色                                            |
+| `saas_tenant` / `saas_workspace`                                      | SaaS 客户组织、工作空间、生命周期和历史单组织默认上下文                          |
+| `saas_tenant_member` / `saas_workspace_member`                        | Tenant/Workspace 自定义成员范围和角色                                            |
+| `saas_invitation`                                                     | 邀请 Token Hash、邮箱绑定、过期、接受与撤销状态                                  |
+| `saas_module` / `saas_tenant_entitlement`                             | 全局模块目录、依赖、能力声明及 Tenant 试用/开通/覆盖/过期                        |
 
 数据库策略：
 
@@ -257,8 +259,10 @@ CRUD factory 当前能力：
 - AI Worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期、幂等键、重试和取消。Workflow 的长 Sleep、Sleep Until、审批超时和事件超时通过 `workflow_resume` Job 到期恢复；Parser 通过 `knowledge_parser` Job 常驻执行。它是 PostgreSQL Queue/Outbox 基础，不等于外部 Broker 或任务调度中心。
 - AI 配额目前按 system/department/user 汇总调用与同币种账本；usage 为模型价格估算，可由管理员确认或作废，但不是 Provider 官方发票。
 - `/system/ai/setup` 是普通接入入口，只编排现有 Provider/Model 契约：发现阶段不落库，完成阶段使用单事务创建连接、批量模型和默认用途；高级管理页面继续保留全部配置能力。
-- SaaS 初始隔离采用共享数据库 + 强制 Tenant/Workspace 业务列；第一切片通过 `/api/saas/*` 管理 Tenant、
-  Workspace 和成员上下文。历史系统资源保持原语义，按域迁移；详细边界见
+- SaaS 初始隔离采用共享数据库 + 强制 Tenant/Workspace 业务列；当前控制面已管理 Tenant、Workspace、
+  成员、邀请、模块目录和 Tenant Entitlement。邀请明文 Token 只在创建响应出现，数据库只保存 SHA-256；模块只有在
+  route、path、required ability 和依赖均真实就绪后才能上架，有效模块解析同时校验 Tenant 成员、Entitlement、
+  用户 ability、有效期和依赖。历史系统资源保持原语义，按域迁移；详细边界见
   [`docs/adr/0001-saas-tenancy-and-legacy-boundary.md`](./adr/0001-saas-tenancy-and-legacy-boundary.md)。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。

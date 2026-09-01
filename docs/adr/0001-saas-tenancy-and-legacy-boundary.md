@@ -83,6 +83,11 @@ Request ID 和追加审计的 break-glass 命令；没有该命令前，不提�
 本 ADR 的第一切片完成条件：默认上下文幂等创建、Tenant 创建原子生成默认 Workspace、普通成员列表隔离、直接
 跨 Tenant 写入拒绝、权限种子、操作日志、API/page 清单和页面路由通过自动化验证。
 
+第二切片追加：邀请只保存 Token Hash 并绑定现有用户邮箱；Tenant/Workspace owner 不能通过普通成员接口被
+降级或移除；成员、邀请和 Entitlement 继续使用同一 Tenant/Workspace 成员范围；模块只有在真实 route、path、
+required ability 和依赖就绪后才能上架；有效模块解析同时要求模块启用、有效 Entitlement、用户 ability 和依赖
+闭包。模块目录是全局平台元数据，Entitlement 是 Tenant custom business scope。
+
 整个 Phase 1 仍需继续交付邀请、团队、模块 Entitlement、Studio Project/Asset/Task/Template/Timeline/Export、
 Tenant 文件前缀、用量聚合及两个测试 Tenant 的项目/文件/任务/Tool/导出/审计攻击矩阵。在这些完成前，只能称为
 “Tenant/Workspace 控制面基础已实现”，不能称为完整多租户 SaaS。
