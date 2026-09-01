@@ -551,6 +551,38 @@ const moduleRules = [
       ["test", "测试短信模板"],
     ],
   },
+  {
+    route: {
+      id: 410,
+      parentId: 400,
+      key: "saas.tenant",
+      name: "Tenant 管理",
+      path: "/saas/tenants",
+      icon: "organization",
+      order: 10,
+    },
+    actions: [
+      ["query", "查询 Tenant"],
+      ["create", "创建 Tenant"],
+      ["update", "编辑 Tenant"],
+    ],
+  },
+  {
+    route: {
+      id: 420,
+      parentId: 400,
+      key: "saas.workspace",
+      name: "Workspace 管理",
+      path: "/saas/workspaces",
+      icon: "appstore",
+      order: 20,
+    },
+    actions: [
+      ["query", "查询 Workspace"],
+      ["create", "创建 Workspace"],
+      ["update", "编辑 Workspace"],
+    ],
+  },
 ] as const;
 
 export const seedRules: SeedRule[] = [
@@ -635,6 +667,15 @@ export const seedRules: SeedRule[] = [
     name: "审计与会话",
     icon: "operationLog",
     order: 50,
+  },
+  {
+    id: 400,
+    parentId: 0,
+    type: "menu",
+    key: "saas",
+    name: "SaaS 控制面",
+    icon: "appstore",
+    order: 20,
   },
   {
     id: 140,

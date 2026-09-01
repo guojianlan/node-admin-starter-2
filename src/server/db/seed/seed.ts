@@ -248,6 +248,8 @@ async function syncSequences(dbClient: DbClient) {
     "sys_ai_eval_run",
     "sys_ai_eval_result",
     "sys_notice",
+    "saas_tenant",
+    "saas_workspace",
   ];
 
   for (const table of tables) {
@@ -426,6 +428,7 @@ FROM sys_role_rule srr
 INNER JOIN sys_rule rule ON rule.id = srr.rule_id
 WHERE rule.parent_id = 2 OR rule.id IN (170, 180, 190)
 ON CONFLICT DO NOTHING;
+
 `);
 
   const insertDict = dbClient.prepare(
@@ -977,6 +980,32 @@ ON CONFLICT DO NOTHING;
     .run(now, now, now, now);
 
   await seedDefaultWebsiteFiles(dbClient, now);
+
+  await dbClient
+    .prepare(
+      `INSERT INTO saas_tenant_member (tenant_id, user_id, role, status, created_by)
+       SELECT tenant.id, app_user.id,
+              CASE WHEN app_user.id = 1 THEN 'owner' ELSE 'member' END,
+              'active', 1
+       FROM saas_tenant tenant CROSS JOIN sys_user app_user
+       WHERE tenant.code = 'default' AND tenant.deleted_at IS NULL AND app_user.deleted_at IS NULL
+       ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+    )
+    .run();
+  await dbClient
+    .prepare(
+      `INSERT INTO saas_workspace_member (workspace_id, user_id, role, status, created_by)
+       SELECT workspace.id, app_user.id,
+              CASE WHEN app_user.id = 1 THEN 'owner' ELSE 'viewer' END,
+              'active', 1
+       FROM saas_workspace workspace
+       INNER JOIN saas_tenant tenant ON tenant.id = workspace.tenant_id AND tenant.code = 'default'
+       CROSS JOIN sys_user app_user
+       WHERE workspace.code = 'default' AND workspace.deleted_at IS NULL
+         AND app_user.deleted_at IS NULL
+       ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+    )
+    .run();
 
   await syncSequences(dbClient);
 }

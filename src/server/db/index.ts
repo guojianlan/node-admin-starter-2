@@ -116,6 +116,7 @@ const aliasMap: Record<string, string> = {
   sourcetype: "sourceType",
   sourceurl: "sourceUrl",
   risklevel: "riskLevel",
+  ruleid: "ruleId",
   roleids: "roleIds",
   rolenames: "roleNames",
   rootpath: "rootPath",

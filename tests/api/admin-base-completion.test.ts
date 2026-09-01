@@ -136,7 +136,8 @@ describe("admin base completion scope", () => {
         copyDataScope: true,
       }),
     });
-    expect(copy.status).toBe(200);
+    const copyBody = await readJson(copy.clone());
+    expect(copy.status, copyBody.msg).toBe(200);
 
     const source = (await sqlite
       .prepare("SELECT data_scope AS dataScope FROM sys_role WHERE id = 2")

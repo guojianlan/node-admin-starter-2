@@ -345,6 +345,16 @@ Admin Base 产品/治理层
 
 ## 5. P1：建议在基础框架下一轮完成
 
+### P1-0 SaaS Tenant/Workspace 控制面基础
+
+- 2026-09-01 已接受共享数据库 + 强制 Tenant/Workspace 业务列的 ADR，创建系统默认 Tenant/Workspace，
+  并为现有单组织用户建立幂等兼容成员关系。
+- 已实现 `/api/saas/context`、Tenant/Workspace 查询/创建/更新、成员自定义范围、权限种子、操作日志以及
+  `/saas/tenants`、`/saas/workspaces` 页面。
+- 自动化覆盖默认上下文、Tenant + 默认 Workspace 原子创建、审计和跨 Tenant 列表/直接 ID 写入阻断。
+- 尚未完成邀请、团队、Entitlement、Studio Kernel、历史文件/Knowledge/Job/Tool/导出/审计迁移和两个 Tenant
+  全链路攻击矩阵；本项状态为 `implemented-unverified`，不是完整多租户交付。
+
 ### P1-1 Notebook 来源版本与研究候选状态
 
 当前进度：来源版本、研究候选生命周期和 Knowledge 可见范围的跨 Notebook 失效通知已落地；常驻

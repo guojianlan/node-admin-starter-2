@@ -252,6 +252,102 @@ export const sysPasswordResetToken = pgTable(
   ],
 );
 
+export const saasTenant = pgTable(
+  "saas_tenant",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    region: text("region").notNull().default("global"),
+    status: text("status", { enum: ["active", "suspended", "archived"] })
+      .notNull()
+      .default("active"),
+    retentionDays: integer("retention_days").notNull().default(365),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_tenant_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_tenant_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const saasWorkspace = pgTable(
+  "saas_workspace",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    code: text("code").notNull(),
+    description: text("description"),
+    status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_workspace_tenant_code_active_unique")
+      .on(table.tenantId, table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_workspace_tenant_status_idx").on(table.tenantId, table.status, table.createdAt),
+  ],
+);
+
+export const saasTenantMember = pgTable(
+  "saas_tenant_member",
+  {
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "admin", "member", "viewer"] })
+      .notNull()
+      .default("member"),
+    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.userId] }),
+    index("saas_tenant_member_user_status_idx").on(table.userId, table.status, table.tenantId),
+  ],
+);
+
+export const saasWorkspaceMember = pgTable(
+  "saas_workspace_member",
+  {
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "editor", "reviewer", "viewer"] })
+      .notNull()
+      .default("viewer"),
+    status: text("status", { enum: ["active", "suspended"] }).notNull().default("active"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.userId] }),
+    index("saas_workspace_member_user_status_idx").on(
+      table.userId,
+      table.status,
+      table.workspaceId,
+    ),
+  ],
+);
+
 export const sysOauthState = pgTable(
   "sys_oauth_state",
   {

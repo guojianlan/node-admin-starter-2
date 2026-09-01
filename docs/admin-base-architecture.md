@@ -55,7 +55,8 @@ Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
 当前没有引入：
 
 - Redis、Kafka、RabbitMQ 和独立任务调度中心；AI 长任务使用 PostgreSQL Queue/Outbox Worker。
-- 完整多租户；当前 AI 配额只支持 system/department/user 主体，不提供 tenant 隔离。
+- 完整多租户；当前已增加 Tenant/Workspace 控制面基础和默认单组织兼容上下文，但历史文件、Knowledge、
+  AI Job、Tool、导出和审计尚未全部迁移到 Tenant 资源边界，不能宣称 Phase 1 多租户闭环。
 
 静态 OpenAPI、GitHub Actions CI、验收依赖 Compose 和受治理模块生成器已经存在；它们不改变
 Next.js + Hono 单应用和 PostgreSQL-first 的源码启动主路径。
@@ -229,6 +230,8 @@ CRUD factory 当前能力：
 | `sys_ai_tool_execution`                                               | Agent Tool 按 Run/Attempt/ToolCall 的副作用幂等记录、结果缓存和失败证据             |
 | `sys_ai_quota_policy` / `sys_ai_billing_ledger`                       | system/department/user 配额和估算/调整/结算账本                                  |
 | `sys_ai_notebook_member`                                              | Notebook viewer/editor 协作成员                                                  |
+| `saas_tenant` / `saas_workspace`                                     | SaaS 客户组织、工作空间、生命周期和历史单组织默认上下文                          |
+| `saas_tenant_member` / `saas_workspace_member`                       | Tenant/Workspace 自定义成员范围和角色                                            |
 
 数据库策略：
 
@@ -254,6 +257,9 @@ CRUD factory 当前能力：
 - AI Worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期、幂等键、重试和取消。Workflow 的长 Sleep、Sleep Until、审批超时和事件超时通过 `workflow_resume` Job 到期恢复；Parser 通过 `knowledge_parser` Job 常驻执行。它是 PostgreSQL Queue/Outbox 基础，不等于外部 Broker 或任务调度中心。
 - AI 配额目前按 system/department/user 汇总调用与同币种账本；usage 为模型价格估算，可由管理员确认或作废，但不是 Provider 官方发票。
 - `/system/ai/setup` 是普通接入入口，只编排现有 Provider/Model 契约：发现阶段不落库，完成阶段使用单事务创建连接、批量模型和默认用途；高级管理页面继续保留全部配置能力。
+- SaaS 初始隔离采用共享数据库 + 强制 Tenant/Workspace 业务列；第一切片通过 `/api/saas/*` 管理 Tenant、
+  Workspace 和成员上下文。历史系统资源保持原语义，按域迁移；详细边界见
+  [`docs/adr/0001-saas-tenancy-and-legacy-boundary.md`](./adr/0001-saas-tenancy-and-legacy-boundary.md)。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。
 

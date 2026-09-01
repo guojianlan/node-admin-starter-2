@@ -1,5 +1,7 @@
 import type { ComponentType } from "react";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { SaasTenantPage } from "@/features/saas/tenant/SaasTenantPage";
+import { SaasWorkspacePage } from "@/features/saas/workspace/SaasWorkspacePage";
 import { AiChatPage } from "@/features/system/ai-chat/AiChatPage";
 import { AiAgentPage } from "@/features/system/ai-agent/AiAgentPage";
 import { AiWorkflowPage } from "@/features/system/ai-workflow/AiWorkflowPage";
@@ -49,6 +51,20 @@ export const adminRoutes: AdminRouteRecord[] = [
     key: "dashboard",
     title: "仪表盘",
     component: DashboardPage,
+  },
+  {
+    path: "/saas/tenants",
+    key: "saas.tenant",
+    title: "Tenant 管理",
+    auth: "saas.tenant.query",
+    component: SaasTenantPage,
+  },
+  {
+    path: "/saas/workspaces",
+    key: "saas.workspace",
+    title: "Workspace 管理",
+    auth: "saas.workspace.query",
+    component: SaasWorkspacePage,
   },
   {
     path: "/system/user",

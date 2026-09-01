@@ -3810,6 +3810,108 @@ CREATE UNIQUE INDEX IF NOT EXISTS sys_ai_workflow_wait_child_pending_unique
   WHERE child_run_id IS NOT NULL AND status = 'pending';
 `,
   },
+  {
+    id: "0063_saas_tenant_workspace_foundation",
+    sql: `
+CREATE TABLE IF NOT EXISTS saas_tenant (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  region TEXT NOT NULL DEFAULT 'global',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'archived')),
+  retention_days INTEGER NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 1 AND 3650),
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_code_active_unique
+  ON saas_tenant(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_tenant_status_created_idx
+  ON saas_tenant(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_workspace (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_workspace_tenant_code_active_unique
+  ON saas_workspace(tenant_id, code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_workspace_tenant_status_idx
+  ON saas_workspace(tenant_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_tenant_member (
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  PRIMARY KEY (tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS saas_tenant_member_user_status_idx
+  ON saas_tenant_member(user_id, status, tenant_id);
+
+CREATE TABLE IF NOT EXISTS saas_workspace_member (
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('owner', 'editor', 'reviewer', 'viewer')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  PRIMARY KEY (workspace_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS saas_workspace_member_user_status_idx
+  ON saas_workspace_member(user_id, status, workspace_id);
+
+DROP TRIGGER IF EXISTS trg_saas_tenant_updated_at ON saas_tenant;
+CREATE TRIGGER trg_saas_tenant_updated_at
+BEFORE UPDATE ON saas_tenant
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_workspace_updated_at ON saas_workspace;
+CREATE TRIGGER trg_saas_workspace_updated_at
+BEFORE UPDATE ON saas_workspace
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO saas_tenant (name, code, region, status, retention_days, is_system)
+VALUES ('默认租户', 'default', 'global', 'active', 365, true)
+ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING;
+
+INSERT INTO saas_workspace (tenant_id, name, code, description, status, is_system)
+SELECT id, '默认工作区', 'default', '现有单组织数据的兼容工作区', 'active', true
+FROM saas_tenant WHERE code = 'default' AND deleted_at IS NULL
+ON CONFLICT (tenant_id, code) WHERE deleted_at IS NULL DO NOTHING;
+
+INSERT INTO saas_tenant_member (tenant_id, user_id, role, status, created_by)
+SELECT tenant.id, app_user.id, CASE WHEN app_user.id = 1 THEN 'owner' ELSE 'member' END,
+       'active', 1
+FROM saas_tenant tenant CROSS JOIN sys_user app_user
+WHERE tenant.code = 'default' AND tenant.deleted_at IS NULL AND app_user.deleted_at IS NULL
+ON CONFLICT (tenant_id, user_id) DO NOTHING;
+
+INSERT INTO saas_workspace_member (workspace_id, user_id, role, status, created_by)
+SELECT workspace.id, app_user.id, CASE WHEN app_user.id = 1 THEN 'owner' ELSE 'viewer' END,
+       'active', 1
+FROM saas_workspace workspace
+INNER JOIN saas_tenant tenant ON tenant.id = workspace.tenant_id AND tenant.code = 'default'
+CROSS JOIN sys_user app_user
+WHERE workspace.code = 'default' AND workspace.deleted_at IS NULL AND app_user.deleted_at IS NULL
+ON CONFLICT (workspace_id, user_id) DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

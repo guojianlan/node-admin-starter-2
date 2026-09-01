@@ -6,6 +6,7 @@ import { runMigrations } from "@/server/db/migrations";
 import { errorMiddleware } from "@/server/middleware/error";
 import { requestLogMiddleware } from "@/server/middleware/request-log";
 import { authRoutes } from "@/server/routes/auth";
+import { saasRoutes } from "@/server/routes/saas";
 import { systemRoutes } from "@/server/routes/system";
 import { runReadinessChecks } from "@/server/services/readiness-service";
 
@@ -35,3 +36,4 @@ app.get("/ready", async (c) => {
 
 app.route("/system", authRoutes);
 app.route("/system", systemRoutes);
+app.route("/saas", saasRoutes);

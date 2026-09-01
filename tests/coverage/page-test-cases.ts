@@ -70,6 +70,30 @@ export const pageTestCases: PageTestCase[] = [
     coverage: "mixed",
   }),
   pageCase({
+    path: "/saas/tenants",
+    area: "SaaS Tenant 控制面",
+    content: "Tenant 名称、不可变编码、区域、生命周期、数据保留策略和当前成员角色",
+    primaryAction: "创建 Tenant 并自动建立默认 Workspace，编辑区域、保留策略或受控停复机状态",
+    desktop:
+      "Tenant 身份列固定，状态、区域、保留天数、系统默认标记和成员角色可扫描；系统默认 Tenant 的危险状态变更被阻断",
+    empty: "无可见 Tenant 时保留创建入口；非平台用户只看其有效成员关系内的 Tenant",
+    permission:
+      "页面、创建和更新分别受 saas.tenant 权限控制；非超级管理员还必须是目标 Tenant owner/admin，直接 ID 越权返回不可见",
+    coverage: "automated",
+  }),
+  pageCase({
+    path: "/saas/workspaces",
+    area: "SaaS Workspace 控制面",
+    content: "Tenant 内 Workspace 名称、不可变编码、说明、生命周期和当前成员角色",
+    primaryAction: "按 Tenant 筛选、新建 Workspace、编辑说明或归档非系统 Workspace",
+    desktop:
+      "Tenant 和 Workspace 主要身份列固定，动态 Tenant 选项只包含当前用户可见范围；说明在表单维护而不撑高列表行",
+    empty: "无可见 Workspace 时保留创建入口；没有可管理 Tenant 时创建表单不能越权提交",
+    permission:
+      "页面、创建和更新分别受 saas.workspace 权限控制；列表叠加 Tenant 与 Workspace 活跃成员关系，跨 Tenant 直接 ID 写入返回不可见",
+    coverage: "automated",
+  }),
+  pageCase({
     path: "/profile",
     area: "个人中心",
     content: "个人资料、头像、密码、登录记录和 OAuth 绑定",

@@ -50,14 +50,25 @@ function collectExplicitOperations() {
   const appFile = path.join(root, "src/server/app.ts");
   const authFile = path.join(root, "src/server/routes/auth.ts");
   const systemDirectory = path.join(root, "src/server/routes/system");
-  const files = [appFile, authFile, ...listTypeScriptFiles(systemDirectory)];
+  const saasDirectory = path.join(root, "src/server/routes/saas");
+  const files = [
+    { filePath: appFile, prefix: "/api" },
+    { filePath: authFile, prefix: "/api/system" },
+    ...listTypeScriptFiles(systemDirectory).map((filePath) => ({
+      filePath,
+      prefix: "/api/system",
+    })),
+    ...listTypeScriptFiles(saasDirectory).map((filePath) => ({
+      filePath,
+      prefix: "/api/saas",
+    })),
+  ];
   const operations: ApiOperation[] = [];
 
-  for (const filePath of files) {
+  for (const { filePath, prefix } of files) {
     const sourceText = fs.readFileSync(filePath, "utf8");
     const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true);
     const relativeFile = path.relative(root, filePath);
-    const prefix = filePath === appFile ? "/api" : "/api/system";
     const routeReceivers = new Set<string>();
 
     sourceFile.statements.forEach((statement) => {

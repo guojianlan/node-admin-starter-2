@@ -151,38 +151,45 @@ function routePathFromArg(arg: ts.Expression | undefined) {
 }
 
 function collectExplicitMutationRouteIssues() {
-  const routeDir = path.join(process.cwd(), "src/server/routes/system");
+  const routeDirectories = [
+    { directory: path.join(process.cwd(), "src/server/routes/system"), prefix: "" },
+    { directory: path.join(process.cwd(), "src/server/routes/saas"), prefix: "saas" },
+  ];
   const issues: MutationRouteIssue[] = [];
-  for (const filePath of listRouteFiles(routeDir)) {
-    const sourceText = fs.readFileSync(filePath, "utf8");
-    const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true);
-    const file = path.relative(routeDir, filePath);
+  for (const { directory, prefix } of routeDirectories) {
+    for (const filePath of listRouteFiles(directory)) {
+      const sourceText = fs.readFileSync(filePath, "utf8");
+      const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true);
+      const relativeFile = path.relative(directory, filePath);
+      const file = prefix ? `${prefix}/${relativeFile}` : relativeFile;
 
-    const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const method = node.expression.name.text;
-        if (mutationMethods.has(method)) {
-          const routePath = routePathFromArg(node.arguments[0]);
-          const key = `${file}:${method.toUpperCase()} ${routePath}`;
-          const allow = explicitRouteAllowlist.get(key);
-          const callText = node.getText(sourceFile);
-          const missing: MutationRouteIssue["missing"] = [];
-          if (!/\bability\s*\(/.test(callText) && !allow?.allowMissingAbility) {
-            missing.push("ability");
-          }
-          if (!/\brunWithOperationLog\s*\(/.test(callText) && !allow?.allowMissingOperationLog) {
-            missing.push("operationLog");
-          }
-          if (missing.length) {
-            const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-            issues.push({ file, method: method.toUpperCase(), path: routePath, line, missing });
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+          const method = node.expression.name.text;
+          if (mutationMethods.has(method)) {
+            const routePath = routePathFromArg(node.arguments[0]);
+            const allowlistFile = prefix ? file : relativeFile;
+            const key = `${allowlistFile}:${method.toUpperCase()} ${routePath}`;
+            const allow = explicitRouteAllowlist.get(key);
+            const callText = node.getText(sourceFile);
+            const missing: MutationRouteIssue["missing"] = [];
+            if (!/\bability\s*\(/.test(callText) && !allow?.allowMissingAbility) {
+              missing.push("ability");
+            }
+            if (!/\brunWithOperationLog\s*\(/.test(callText) && !allow?.allowMissingOperationLog) {
+              missing.push("operationLog");
+            }
+            if (missing.length) {
+              const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+              issues.push({ file, method: method.toUpperCase(), path: routePath, line, missing });
+            }
           }
         }
-      }
-      ts.forEachChild(node, visit);
-    };
+        ts.forEachChild(node, visit);
+      };
 
-    visit(sourceFile);
+      visit(sourceFile);
+    }
   }
   return issues;
 }

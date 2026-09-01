@@ -55,6 +55,9 @@ const operationsByMethod = {
     "/api/health",
     "/api/ready",
     "/uploads/{path}",
+    "/api/saas/context",
+    "/api/saas/tenants",
+    "/api/saas/workspaces",
     "/api/system/ai/agent",
     "/api/system/ai/agent/options",
     "/api/system/ai/agent/runs",
@@ -183,6 +186,8 @@ const operationsByMethod = {
     "/api/system/user/role",
   ],
   POST: [
+    "/api/saas/tenants",
+    "/api/saas/workspaces",
     "/api/system/ai/agent",
     "/api/system/ai/eval/cases/from-run/{runId}",
     "/api/system/ai/eval/datasets",
@@ -310,6 +315,8 @@ const operationsByMethod = {
     "/api/system/user/batch-delete",
   ],
   PUT: [
+    "/api/saas/tenants/{id}",
+    "/api/saas/workspaces/{id}",
     "/api/system/ai/eval/cases/{id}",
     "/api/system/ai/eval/datasets/{id}",
     "/api/system/ai/knowledge/{id}",
@@ -400,6 +407,7 @@ function areaFor(path: string) {
     path.includes("/oauth/")
   )
     return "认证安全";
+  if (path.startsWith("/api/saas/")) return "SaaS 控制面";
   const match = path.match(/^\/api\/system\/([^/]+)(?:\/([^/{]+))?/);
   return [match?.[1], match?.[2]].filter(Boolean).join(" / ") || "系统接口";
 }
@@ -407,7 +415,7 @@ function areaFor(path: string) {
 function coverageFor(path: string): CoverageMode {
   if (/\/(test|callback|redirect|download|stream)\b/.test(path)) return "environment";
   if (
-    /\/(health|ready|login|profile|notice|file|config|dict|role|user|operation|sms|ai|module)\b/.test(
+    /\/(health|ready|login|profile|notice|file|config|dict|role|user|operation|sms|ai|module|saas)\b/.test(
       path,
     )
   )

@@ -4,7 +4,7 @@
 
 ## 1. 范围与判定
 
-- 当前登记 App Router 页面：**36** 个。
+- 当前登记 App Router 页面：**38** 个。
 - 数据验收覆盖成功、加载、空数据和错误四种状态。
 - 交互验收覆盖成功、表单/网络/业务失败以及页面和动作权限。
 - 视觉验收覆盖桌面、窄屏、浅色和暗色；视觉成功要求无重叠、无意外溢出、可读层级清楚、固定区域稳定。
@@ -18,39 +18,41 @@
 | PAGE-001 | `/` | 入口路由 | `automated` |
 | PAGE-002 | `/login` | 认证 | `mixed` |
 | PAGE-003 | `/dashboard` | 系统状态 | `mixed` |
-| PAGE-004 | `/profile` | 个人中心 | `mixed` |
-| PAGE-005 | `/system/user` | 用户管理 | `mixed` |
-| PAGE-006 | `/system/role` | 角色权限 | `mixed` |
-| PAGE-007 | `/system/rule` | 菜单权限 | `mixed` |
-| PAGE-008 | `/system/dept` | 组织架构 | `mixed` |
-| PAGE-009 | `/system/dict` | 字典管理 | `mixed` |
-| PAGE-010 | `/system/dict/item` | 字典管理 | `mixed` |
-| PAGE-011 | `/system/config` | 配置项维护 | `mixed` |
-| PAGE-012 | `/system/settings` | 系统设置 | `mixed` |
-| PAGE-013 | `/system/file` | 文件管理 | `mixed` |
-| PAGE-014 | `/system/storage` | 存储配置 | `mixed` |
-| PAGE-015 | `/system/mail/account` | 邮件配置 | `mixed` |
-| PAGE-016 | `/system/oauth/provider` | 第三方登录 | `mixed` |
-| PAGE-017 | `/system/sms/provider` | 短信配置 | `mixed` |
-| PAGE-018 | `/system/sms/template` | 短信模板 | `mixed` |
-| PAGE-019 | `/system/notice` | 通知公告 | `mixed` |
-| PAGE-020 | `/system/login/log` | 登录审计 | `mixed` |
-| PAGE-021 | `/system/online/user` | 在线会话 | `mixed` |
-| PAGE-022 | `/system/operation/log` | 操作审计 | `mixed` |
-| PAGE-023 | `/system/ai/setup` | AI 接入 | `mixed` |
-| PAGE-024 | `/system/ai/provider` | AI 服务商 | `mixed` |
-| PAGE-025 | `/system/ai/model` | 模型管理 | `mixed` |
-| PAGE-026 | `/system/ai/playground` | AI Playground | `mixed` |
-| PAGE-027 | `/system/ai/runtime` | AI 运行治理 | `automated` |
-| PAGE-028 | `/system/ai/knowledge` | Knowledge/RAG | `automated` |
-| PAGE-029 | `/system/ai/notebook` | AI Notebook | `automated` |
-| PAGE-030 | `/system/ai/eval` | AI Eval / Trace | `automated` |
-| PAGE-031 | `/system/ai/governance` | AI 治理 | `automated` |
-| PAGE-032 | `/system/ai/chat` | AI Chat | `mixed` |
-| PAGE-033 | `/system/ai/agent` | AI Agent | `mixed` |
-| PAGE-034 | `/system/ai/workflow` | AI Workflow | `mixed` |
-| PAGE-035 | `/system/ai/web-search` | 联网搜索 | `mixed` |
-| PAGE-036 | `/system/module/generator` | 模块生成器 | `mixed` |
+| PAGE-004 | `/saas/tenants` | SaaS Tenant 控制面 | `automated` |
+| PAGE-005 | `/saas/workspaces` | SaaS Workspace 控制面 | `automated` |
+| PAGE-006 | `/profile` | 个人中心 | `mixed` |
+| PAGE-007 | `/system/user` | 用户管理 | `mixed` |
+| PAGE-008 | `/system/role` | 角色权限 | `mixed` |
+| PAGE-009 | `/system/rule` | 菜单权限 | `mixed` |
+| PAGE-010 | `/system/dept` | 组织架构 | `mixed` |
+| PAGE-011 | `/system/dict` | 字典管理 | `mixed` |
+| PAGE-012 | `/system/dict/item` | 字典管理 | `mixed` |
+| PAGE-013 | `/system/config` | 配置项维护 | `mixed` |
+| PAGE-014 | `/system/settings` | 系统设置 | `mixed` |
+| PAGE-015 | `/system/file` | 文件管理 | `mixed` |
+| PAGE-016 | `/system/storage` | 存储配置 | `mixed` |
+| PAGE-017 | `/system/mail/account` | 邮件配置 | `mixed` |
+| PAGE-018 | `/system/oauth/provider` | 第三方登录 | `mixed` |
+| PAGE-019 | `/system/sms/provider` | 短信配置 | `mixed` |
+| PAGE-020 | `/system/sms/template` | 短信模板 | `mixed` |
+| PAGE-021 | `/system/notice` | 通知公告 | `mixed` |
+| PAGE-022 | `/system/login/log` | 登录审计 | `mixed` |
+| PAGE-023 | `/system/online/user` | 在线会话 | `mixed` |
+| PAGE-024 | `/system/operation/log` | 操作审计 | `mixed` |
+| PAGE-025 | `/system/ai/setup` | AI 接入 | `mixed` |
+| PAGE-026 | `/system/ai/provider` | AI 服务商 | `mixed` |
+| PAGE-027 | `/system/ai/model` | 模型管理 | `mixed` |
+| PAGE-028 | `/system/ai/playground` | AI Playground | `mixed` |
+| PAGE-029 | `/system/ai/runtime` | AI 运行治理 | `automated` |
+| PAGE-030 | `/system/ai/knowledge` | Knowledge/RAG | `automated` |
+| PAGE-031 | `/system/ai/notebook` | AI Notebook | `automated` |
+| PAGE-032 | `/system/ai/eval` | AI Eval / Trace | `automated` |
+| PAGE-033 | `/system/ai/governance` | AI 治理 | `automated` |
+| PAGE-034 | `/system/ai/chat` | AI Chat | `mixed` |
+| PAGE-035 | `/system/ai/agent` | AI Agent | `mixed` |
+| PAGE-036 | `/system/ai/workflow` | AI Workflow | `mixed` |
+| PAGE-037 | `/system/ai/web-search` | 联网搜索 | `mixed` |
+| PAGE-038 | `/system/module/generator` | 模块生成器 | `mixed` |
 
 ## 3. 逐页面验收标准
 
@@ -102,7 +104,39 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-004 `/profile`
+### PAGE-004 `/saas/tenants`
+
+- 模块：SaaS Tenant 控制面
+- 数据成功：Tenant 名称、不可变编码、区域、生命周期、数据保留策略和当前成员角色使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
+- Loading：首次加载和刷新期间显示稳定 loading，不闪现旧数据、不改变主布局尺寸
+- Empty：无可见 Tenant 时保留创建入口；非平台用户只看其有效成员关系内的 Tenant
+- Error：接口失败时显示可读错误和重试入口；旧数据不伪装成最新成功结果
+- 交互成功：创建 Tenant 并自动建立默认 Workspace，编辑区域、保留策略或受控停复机状态完成后给出明确反馈，列表、详情、URL 和缓存状态同步
+- 交互失败：表单校验、业务约束或网络失败时保留用户输入，关闭重复提交并显示准确原因
+- 权限：页面、创建和更新分别受 saas.tenant 权限控制；非超级管理员还必须是目标 Tenant owner/admin，直接 ID 越权返回不可见
+- Desktop：Tenant 身份列固定，状态、区域、保留天数、系统默认标记和成员角色可扫描；系统默认 Tenant 的危险状态变更被阻断；主工作区填满 Shell 分配的可用高度，页面头部保持稳定，表格、Tabs、树或专用画布在内容区内部滚动，底部不出现因自然高度收缩造成的无意义空白
+- Narrow：窄屏下无控件重叠和横向页面溢出；复杂表格允许容器内横向滚动，关键操作仍可触达
+- Light：浅色主题下背景、边框、正文、次要文字、选中态和危险操作达到清晰层级与可读对比
+- Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
+- 当前覆盖：`automated`
+
+### PAGE-005 `/saas/workspaces`
+
+- 模块：SaaS Workspace 控制面
+- 数据成功：Tenant 内 Workspace 名称、不可变编码、说明、生命周期和当前成员角色使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
+- Loading：首次加载和刷新期间显示稳定 loading，不闪现旧数据、不改变主布局尺寸
+- Empty：无可见 Workspace 时保留创建入口；没有可管理 Tenant 时创建表单不能越权提交
+- Error：接口失败时显示可读错误和重试入口；旧数据不伪装成最新成功结果
+- 交互成功：按 Tenant 筛选、新建 Workspace、编辑说明或归档非系统 Workspace完成后给出明确反馈，列表、详情、URL 和缓存状态同步
+- 交互失败：表单校验、业务约束或网络失败时保留用户输入，关闭重复提交并显示准确原因
+- 权限：页面、创建和更新分别受 saas.workspace 权限控制；列表叠加 Tenant 与 Workspace 活跃成员关系，跨 Tenant 直接 ID 写入返回不可见
+- Desktop：Tenant 和 Workspace 主要身份列固定，动态 Tenant 选项只包含当前用户可见范围；说明在表单维护而不撑高列表行；主工作区填满 Shell 分配的可用高度，页面头部保持稳定，表格、Tabs、树或专用画布在内容区内部滚动，底部不出现因自然高度收缩造成的无意义空白
+- Narrow：窄屏下无控件重叠和横向页面溢出；复杂表格允许容器内横向滚动，关键操作仍可触达
+- Light：浅色主题下背景、边框、正文、次要文字、选中态和危险操作达到清晰层级与可读对比
+- Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
+- 当前覆盖：`automated`
+
+### PAGE-006 `/profile`
 
 - 模块：个人中心
 - 数据成功：个人资料、头像、密码、登录记录和 OAuth 绑定使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -118,7 +152,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-005 `/system/user`
+### PAGE-007 `/system/user`
 
 - 模块：用户管理
 - 数据成功：用户分页、部门树、角色、状态和搜索条件使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -134,7 +168,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-006 `/system/role`
+### PAGE-008 `/system/role`
 
 - 模块：角色权限
 - 数据成功：角色列表、成员、菜单权限和数据范围使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -150,7 +184,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-007 `/system/rule`
+### PAGE-009 `/system/rule`
 
 - 模块：菜单权限
 - 数据成功：菜单、路由、目录和动作权限树使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -166,7 +200,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-008 `/system/dept`
+### PAGE-010 `/system/dept`
 
 - 模块：组织架构
 - 数据成功：部门树、负责人、状态和部门用户使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -182,7 +216,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-009 `/system/dict`
+### PAGE-011 `/system/dict`
 
 - 模块：字典管理
 - 数据成功：字典类型、编码、状态和关联字典项使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -198,7 +232,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-010 `/system/dict/item`
+### PAGE-012 `/system/dict/item`
 
 - 模块：字典管理
 - 数据成功：当前字典的字典项、值、排序、颜色和状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -214,7 +248,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-011 `/system/config`
+### PAGE-013 `/system/config`
 
 - 模块：配置项维护
 - 数据成功：配置分组、键、值、类型、敏感标记和状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -230,7 +264,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-012 `/system/settings`
+### PAGE-014 `/system/settings`
 
 - 模块：系统设置
 - 数据成功：基础、安全、登录、Token、上传、存储、邮件和登录方式设置使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -246,7 +280,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-013 `/system/file`
+### PAGE-015 `/system/file`
 
 - 模块：文件管理
 - 数据成功：文件夹、文件列表、上传进度、回收站和文件引用使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -262,7 +296,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-014 `/system/storage`
+### PAGE-016 `/system/storage`
 
 - 模块：存储配置
 - 数据成功：本地/S3 存储、默认状态、启停和连接状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -278,7 +312,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-015 `/system/mail/account`
+### PAGE-017 `/system/mail/account`
 
 - 模块：邮件配置
 - 数据成功：SMTP 账号、默认状态、启停和连接参数使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -294,7 +328,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-016 `/system/oauth/provider`
+### PAGE-018 `/system/oauth/provider`
 
 - 模块：第三方登录
 - 数据成功：OAuth Provider、端点、Client ID、Scope、映射和自动创建策略使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -310,7 +344,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-017 `/system/sms/provider`
+### PAGE-019 `/system/sms/provider`
 
 - 模块：短信配置
 - 数据成功：SMS Provider、默认状态、Webhook、签名和密钥状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -326,7 +360,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-018 `/system/sms/template`
+### PAGE-020 `/system/sms/template`
 
 - 模块：短信模板
 - 数据成功：模板编码、Provider、内容、变量、状态和测试结果使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -342,7 +376,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-019 `/system/notice`
+### PAGE-021 `/system/notice`
 
 - 模块：通知公告
 - 数据成功：公告内容、范围、发布时间、有效期、置顶、优先级和阅读统计使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -358,7 +392,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-020 `/system/login/log`
+### PAGE-022 `/system/login/log`
 
 - 模块：登录审计
 - 数据成功：登录用户、方式、IP、UA、成功状态、原因和时间使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -374,7 +408,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-021 `/system/online/user`
+### PAGE-023 `/system/online/user`
 
 - 模块：在线会话
 - 数据成功：在线 token、用户、来源、IP、UA、最近活跃和过期时间使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -390,7 +424,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-022 `/system/operation/log`
+### PAGE-024 `/system/operation/log`
 
 - 模块：操作审计
 - 数据成功：用户、模块、动作、风险、requestId、IP、状态、耗时和详情使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -406,7 +440,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-023 `/system/ai/setup`
+### PAGE-025 `/system/ai/setup`
 
 - 模块：AI 接入
 - 数据成功：可用连接、可用模型、默认用途和分步接入状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -422,7 +456,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-024 `/system/ai/provider`
+### PAGE-026 `/system/ai/provider`
 
 - 模块：AI 服务商
 - 数据成功：服务商类型、连接名称、Base URL、API Key 状态、连接级请求超时、默认和启停状态；内部编码由系统维护使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -438,7 +472,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-025 `/system/ai/model`
+### PAGE-027 `/system/ai/model`
 
 - 模块：模型管理
 - 数据成功：服务商连接实例、模型 ID、用途、默认和状态；能力、上下文、输出和价格位于高级配置使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -454,7 +488,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-026 `/system/ai/playground`
+### PAGE-028 `/system/ai/playground`
 
 - 模块：AI Playground
 - 数据成功：已配置模型、Prompt、System Prompt、输出限制和临时流式结果，不产生正式会话使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -470,7 +504,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-027 `/system/ai/runtime`
+### PAGE-029 `/system/ai/runtime`
 
 - 模块：AI 运行治理
 - 数据成功：Chat、Agent、RAG 和 Eval 用途模型路由、Provider 健康、费用账本与调用 Trace使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -486,7 +520,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`automated`
 
-### PAGE-028 `/system/ai/knowledge`
+### PAGE-030 `/system/ai/knowledge`
 
 - 模块：Knowledge/RAG
 - 数据成功：按全局、部门或个人范围管理知识库、结构化分块模板、来源文件、索引状态、混合检索、RAG Run 和可追溯引用使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -502,7 +536,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`automated`
 
-### PAGE-029 `/system/ai/notebook`
+### PAGE-031 `/system/ai/notebook`
 
 - 模块：AI Notebook
 - 数据成功：带全局、部门或个人范围的 Notebook、知识库/文档/公开网站来源、联网搜索发现与选择导入、异步深度研究、限定来源问答、引用快照和摘要/提纲/FAQ/结构化简报 Artifact使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -518,7 +552,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`automated`
 
-### PAGE-030 `/system/ai/eval`
+### PAGE-032 `/system/ai/eval`
 
 - 模块：AI Eval / Trace
 - 数据成功：带全局、部门或个人范围的 Dataset、固定输入 Case、不可覆盖的同步 Run/Result 历史、确定性断言和 Agent Run/Step/Invocation Trace使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -534,7 +568,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`automated`
 
-### PAGE-031 `/system/ai/governance`
+### PAGE-033 `/system/ai/governance`
 
 - 模块：AI 治理
 - 数据成功：显式长期 Memory、Runtime Skills、MCP Server/OAuth/Tool allowlist、持久化熔断、共享配额、任务队列和计费账本使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -550,7 +584,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`automated`
 
-### PAGE-032 `/system/ai/chat`
+### PAGE-034 `/system/ai/chat`
 
 - 模块：AI Chat
 - 数据成功：会话、消息、模型、Agent、System Prompt、Run/Step、审批和使用量使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -566,7 +600,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-033 `/system/ai/agent`
+### PAGE-035 `/system/ai/agent`
 
 - 模块：AI Agent
 - 数据成功：可复用 Agent 定义、受控 Tool、模型、System Prompt、审批证据、调试 Run/Step/Approval 和可信 Workflow Run使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -582,7 +616,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-034 `/system/ai/workflow`
+### PAGE-036 `/system/ai/workflow`
 
 - 模块：AI Workflow
 - 数据成功：Workflow 列表、草稿、版本、全屏无限画布、节点配置、Builder 预检和发布状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -598,7 +632,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-035 `/system/ai/web-search`
+### PAGE-037 `/system/ai/web-search`
 
 - 模块：联网搜索
 - 数据成功：Tavily、Brave、SearXNG 搜索连接、密钥状态、超时、结果上限、优先级和测试结果使用真实接口数据，字段、总数、排序、筛选和刷新结果一致
@@ -614,7 +648,7 @@
 - Dark：暗色主题不出现硬编码白底/黑字；表格、弹窗、抽屉、编辑器、图表和 hover 状态均可辨识
 - 当前覆盖：`mixed`
 
-### PAGE-036 `/system/module/generator`
+### PAGE-038 `/system/module/generator`
 
 - 模块：模块生成器
 - 数据成功：共享模块契约、字段、草稿、发布差异、隔离预检、发布记录和源码回滚状态使用真实接口数据，字段、总数、排序、筛选和刷新结果一致

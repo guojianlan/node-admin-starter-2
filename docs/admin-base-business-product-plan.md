@@ -1260,6 +1260,11 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 - 决定 Tenant/Workspace 数据模型 ADR、默认 Tenant 迁移和历史资源边界。
 - 明确 FFmpeg、TTS、视频 Provider 的隔离 PoC 和许可证。
 
+2026-09-01 当前收口：共享数据库 + 强制 Tenant/Workspace 业务列、默认 Tenant 兼容迁移和历史资源边界已经在
+[`ADR-0001`](./adr/0001-saas-tenancy-and-legacy-boundary.md) 决策。完整自动门禁和生产 build 已通过；smoke、
+全站浏览器、成功真实 Provider、外部 S3/SMTP/OAuth/SMS、FFmpeg/TTS/视频 Provider 仍是环境门禁，不能标为
+`delivered`。
+
 完成闸门：基础运行时有可复查的源码、迁移、测试、Worker、Provider 和浏览器证据。
 
 ### Phase 1：SaaS 最小控制面与 Studio Kernel
@@ -1269,6 +1274,11 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 - Tenant/Workspace data scope、对象存储前缀、审计和用量基础。
 - `/api/saas/*`、`/api/studio/*` 域注册。
 - 项目中心、任务中心和资产选择器。
+
+第一切片（2026-09-01，`implemented-unverified`）：已加入 `saas_tenant`、`saas_workspace`、Tenant/Workspace
+成员表、默认单组织上下文、`/api/saas/context|tenants|workspaces`、权限/审计、Tenant 与 Workspace 后台页面和
+跨 Tenant 直接写入测试。邀请、团队、Entitlement、Studio Kernel、文件前缀、用量和全链路两 Tenant 攻击矩阵
+仍待后续切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。
 
