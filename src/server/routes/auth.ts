@@ -4,7 +4,13 @@ import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
 import { nowIso, sqlite } from "@/server/db";
 import { authRequired } from "@/server/middleware/auth";
-import { getUserAccess, getUserMenus, login, logout } from "@/server/services/auth-service";
+import {
+  filterUserMenusByEntitlements,
+  getUserAccess,
+  getUserMenus,
+  login,
+  logout,
+} from "@/server/services/auth-service";
 import { resolveDataScopeForUser } from "@/server/services/data-scope";
 import {
   confirmPasswordReset,
@@ -16,6 +22,10 @@ import {
   verifyLoginCaptcha,
 } from "@/server/services/login-security-service";
 import { recordOperationLog } from "@/server/services/operation-log-service";
+import {
+  getEntitlementGatedModuleRouteKeys,
+  resolveEffectiveSaasModules,
+} from "@/server/services/saas-entitlement-service";
 import { getSecurityPolicy } from "@/server/services/security-policy-service";
 
 const loginSchema = z.object({
@@ -165,7 +175,8 @@ authRoutes.post("/login", async (c) => {
     }
     const result = await login({
       ...payload,
-      ip: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || null,
+      ip:
+        c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || null,
       userAgent: c.req.header("user-agent") ?? null,
     });
     await recordOperationLog(c, {
@@ -270,5 +281,26 @@ authRoutes.get("/info", authRequired(), async (c) => {
 
 authRoutes.get("/menu", authRequired(), async (c) => {
   const user = c.get("user");
-  return c.json(success(await getUserMenus(user.id)));
+  const menus = await getUserMenus(user.id);
+  const gatedRouteKeys = await getEntitlementGatedModuleRouteKeys();
+  if (!gatedRouteKeys.size) return c.json(success(menus));
+
+  const tenantIdHeader = c.req.header("x-saas-tenant-id");
+  const tenantId = tenantIdHeader ? z.coerce.number().int().positive().parse(tenantIdHeader) : null;
+  const effectiveModules = tenantId
+    ? await resolveEffectiveSaasModules({
+        userId: user.id,
+        abilities: c.get("abilities"),
+        tenantId,
+      })
+    : [];
+  return c.json(
+    success(
+      filterUserMenusByEntitlements({
+        menus,
+        gatedRouteKeys,
+        effectiveRouteKeys: new Set(effectiveModules.map((item) => String(item.routeKey))),
+      }),
+    ),
+  );
 });

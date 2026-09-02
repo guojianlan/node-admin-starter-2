@@ -10,6 +10,7 @@ import {
   getSaasContext,
   listTenants,
   listWorkspaces,
+  setSaasContext,
   updateTenant,
   updateWorkspace,
 } from "@/server/services/saas-control-plane-service";
@@ -180,12 +181,59 @@ const entitlementCreateSchema = entitlementValuesSchema.extend({
 });
 
 const entitlementUpdateSchema = entitlementValuesSchema.partial();
+const contextSelectionSchema = z.object({
+  tenantId: z.coerce.number().int().positive(),
+  workspaceId: z.coerce.number().int().positive().optional().nullable(),
+});
 
 export const saasRoutes = new Hono<{ Variables: HonoVariables }>();
 
-saasRoutes.get("/context", authRequired(), async (c) =>
-  c.json(success(await getSaasContext(c.get("user").id))),
-);
+saasRoutes.get("/context", authRequired(), async (c) => {
+  const query = contextSelectionSchema.partial().parse(c.req.query());
+  const headerTenantId = c.req.header("x-saas-tenant-id");
+  const headerWorkspaceId = c.req.header("x-saas-workspace-id");
+  const tenantId =
+    query.tenantId ??
+    (headerTenantId ? z.coerce.number().int().positive().parse(headerTenantId) : undefined);
+  const workspaceId =
+    query.workspaceId ??
+    (query.tenantId == null && headerWorkspaceId
+      ? z.coerce.number().int().positive().parse(headerWorkspaceId)
+      : undefined);
+  const context = await getSaasContext(c.get("user").id, { tenantId, workspaceId });
+  const effectiveModules = context.currentTenantId
+    ? await resolveEffectiveSaasModules({
+        tenantId: context.currentTenantId,
+        userId: c.get("user").id,
+        abilities: c.get("abilities") ?? [],
+      })
+    : [];
+  return c.json(success({ ...context, effectiveModules }));
+});
+
+saasRoutes.put("/context", authRequired(), async (c) => {
+  const payload = contextSelectionSchema.parse(await c.req.json());
+  const context = await runWithOperationLog(
+    c,
+    {
+      module: "saas.context",
+      action: "switch",
+      resource: "saas_user_context",
+      resourceId: c.get("user").id,
+      riskLevel: "low",
+      details: { tenantId: payload.tenantId, workspaceId: payload.workspaceId ?? null },
+    },
+    () => setSaasContext({ ...payload, userId: c.get("user").id }),
+  );
+  const effectiveModules = context.currentTenantId
+    ? await resolveEffectiveSaasModules({
+        tenantId: context.currentTenantId,
+        userId: c.get("user").id,
+        abilities: c.get("abilities") ?? [],
+      })
+    : [];
+  return c.json(success({ ...context, effectiveModules }, "当前工作上下文已切换"));
+});
 
 saasRoutes.get("/tenants", authRequired(), ability("saas.tenant.query"), async (c) => {
   const query = listSchema.parse(c.req.query());

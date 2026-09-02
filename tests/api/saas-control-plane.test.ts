@@ -110,7 +110,18 @@ async function createScopedSaasUser(input: {
        VALUES (?, ?, ?, 'active', 1)`,
     )
     .run(input.workspaceId, userId, input.workspaceRole ?? "viewer");
-  return { password, userId, username };
+  return { password, roleId, userId, username };
+}
+
+function collectMenuKeys(
+  nodes: Array<{ key: string; children?: Array<{ key: string }> }>,
+): string[] {
+  return nodes.flatMap((node) => [
+    node.key,
+    ...collectMenuKeys(
+      (node.children ?? []) as Array<{ key: string; children?: Array<{ key: string }> }>,
+    ),
+  ]);
 }
 
 describe("SaaS tenant and workspace control plane", () => {
@@ -174,6 +185,66 @@ describe("SaaS tenant and workspace control plane", () => {
     expect(audit).toMatchObject({ module: "saas.tenant", action: "create", riskLevel: "medium" });
     expect(audit.detailsJson).toContain("tenant-a");
     expect(audit.detailsJson.toLowerCase()).not.toContain("password");
+  });
+
+  it("persists a validated current context and rejects cross-tenant context selection", async () => {
+    const adminToken = await login();
+    const tenantA = await createTenantThroughApi(adminToken, "context-a");
+    const tenantB = await createTenantThroughApi(adminToken, "context-b");
+    const scoped = await createScopedSaasUser({
+      tenantId: tenantA.id,
+      workspaceId: tenantA.defaultWorkspaceId,
+      username: "context_member",
+    });
+    const token = await login(scoped.username, scoped.password);
+
+    const selectResponse = await app.request("/api/saas/context", {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ tenantId: tenantA.id, workspaceId: tenantA.defaultWorkspaceId }),
+    });
+    const selected = await readJson<{
+      currentTenantId: number;
+      currentWorkspaceId: number;
+    }>(selectResponse);
+    expect(selectResponse.status).toBe(200);
+    expect(selected.data).toMatchObject({
+      currentTenantId: tenantA.id,
+      currentWorkspaceId: tenantA.defaultWorkspaceId,
+    });
+    expect(
+      await sqlite
+        .prepare(
+          `SELECT tenant_id AS "tenantId", workspace_id AS "workspaceId"
+           FROM saas_user_context WHERE user_id = ?`,
+        )
+        .get(scoped.userId),
+    ).toMatchObject({ tenantId: tenantA.id, workspaceId: tenantA.defaultWorkspaceId });
+    expect(
+      await sqlite
+        .prepare(
+          `SELECT action, risk_level AS "riskLevel"
+           FROM sys_operation_log
+           WHERE module = 'saas.context' AND resource_id = ? AND success = true
+           ORDER BY id DESC LIMIT 1`,
+        )
+        .get(String(scoped.userId)),
+    ).toMatchObject({ action: "switch", riskLevel: "low" });
+
+    const attack = await app.request("/api/saas/context", {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({ tenantId: tenantB.id, workspaceId: tenantB.defaultWorkspaceId }),
+    });
+    expect(attack.status).toBe(404);
+    expect(
+      await sqlite
+        .prepare(
+          `SELECT tenant_id AS "tenantId", workspace_id AS "workspaceId"
+           FROM saas_user_context WHERE user_id = ?`,
+        )
+        .get(scoped.userId),
+    ).toMatchObject({ tenantId: tenantA.id, workspaceId: tenantA.defaultWorkspaceId });
   });
 
   it("isolates Tenant and Workspace lists and rejects direct cross-tenant writes", async () => {
@@ -433,5 +504,123 @@ describe("SaaS tenant and workspace control plane", () => {
       }),
     });
     expect(crossEntitlement.status).toBe(404);
+  });
+
+  it("shows entitlement-gated product menus only in the selected entitled Tenant", async () => {
+    const adminToken = await login();
+    const tenantA = await createTenantThroughApi(adminToken, "menu-a");
+    const tenantB = await createTenantThroughApi(adminToken, "menu-b");
+    const member = await createScopedSaasUser({
+      tenantId: tenantA.id,
+      workspaceId: tenantA.defaultWorkspaceId,
+      username: "menu_member",
+    });
+    await sqlite
+      .prepare(
+        `INSERT INTO saas_tenant_member (tenant_id, user_id, role, status, created_by)
+         VALUES (?, ?, 'member', 'active', 1)`,
+      )
+      .run(tenantB.id, member.userId);
+    await sqlite
+      .prepare(
+        `INSERT INTO saas_workspace_member (workspace_id, user_id, role, status, created_by)
+         VALUES (?, ?, 'viewer', 'active', 1)`,
+      )
+      .run(tenantB.defaultWorkspaceId, member.userId);
+
+    const now = nowIso();
+    const route = await sqlite
+      .prepare(
+        `INSERT INTO sys_rule
+          (parent_id, type, key, name, path, icon, "order", status, hidden, link,
+           created_at, updated_at)
+         VALUES (400, 'route', 'studio.testApp', '测试业务应用', '/studio/test-app',
+           'appstore', 900, 1, 1, 0, ?, ?)
+         RETURNING id`,
+      )
+      .run(now, now);
+    const routeId = Number(route.lastInsertRowid);
+    const action = await sqlite
+      .prepare(
+        `INSERT INTO sys_rule
+          (parent_id, type, key, name, "order", status, hidden, link, created_at, updated_at)
+         VALUES (?, 'action', 'studio.testApp.query', '查询测试业务应用', 1, 1, 1, 0, ?, ?)
+         RETURNING id`,
+      )
+      .run(routeId, now, now);
+    await sqlite
+      .prepare(
+        `INSERT INTO sys_role_rule (role_id, rule_id) VALUES (?, ?), (?, ?)
+         ON CONFLICT DO NOTHING`,
+      )
+      .run(member.roleId, routeId, member.roleId, Number(action.lastInsertRowid));
+
+    const moduleResponse = await app.request("/api/saas/modules", {
+      method: "POST",
+      headers: authHeaders(adminToken),
+      body: JSON.stringify({
+        code: "test-app",
+        name: "Test App",
+        version: "1.0.0",
+        status: "active",
+        routeKey: "studio.testApp",
+        routePath: "/studio/test-app",
+        requiredAbility: "studio.testApp.query",
+        dependencies: [],
+        capabilities: ["tenant-menu"],
+      }),
+    });
+    const moduleBody = await readJson<{ id: number }>(moduleResponse);
+    expect(moduleResponse.status).toBe(200);
+    const entitlementResponse = await app.request("/api/saas/entitlements", {
+      method: "POST",
+      headers: authHeaders(adminToken),
+      body: JSON.stringify({
+        tenantId: tenantA.id,
+        moduleId: moduleBody.data?.id,
+        status: "active",
+        source: "manual",
+      }),
+    });
+    expect(entitlementResponse.status).toBe(200);
+
+    const token = await login(member.username, member.password);
+    const noContextMenuResponse = await app.request("/api/system/menu", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const noContextMenus =
+      await readJson<Array<{ key: string; children?: Array<{ key: string }> }>>(
+        noContextMenuResponse,
+      );
+    expect(noContextMenuResponse.status).toBe(200);
+    expect(collectMenuKeys(noContextMenus.data ?? [])).not.toContain("studio.testApp");
+
+    const entitledMenuResponse = await app.request("/api/system/menu", {
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-saas-tenant-id": String(tenantA.id),
+        "x-saas-workspace-id": String(tenantA.defaultWorkspaceId),
+      },
+    });
+    const entitledMenus =
+      await readJson<Array<{ key: string; children?: Array<{ key: string }> }>>(
+        entitledMenuResponse,
+      );
+    expect(entitledMenuResponse.status).toBe(200);
+    expect(collectMenuKeys(entitledMenus.data ?? [])).toContain("studio.testApp");
+
+    const unentitledMenuResponse = await app.request("/api/system/menu", {
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-saas-tenant-id": String(tenantB.id),
+        "x-saas-workspace-id": String(tenantB.defaultWorkspaceId),
+      },
+    });
+    const unentitledMenus =
+      await readJson<Array<{ key: string; children?: Array<{ key: string }> }>>(
+        unentitledMenuResponse,
+      );
+    expect(unentitledMenuResponse.status).toBe(200);
+    expect(collectMenuKeys(unentitledMenus.data ?? [])).not.toContain("studio.testApp");
   });
 });

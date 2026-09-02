@@ -1,11 +1,14 @@
 # Admin Base 当前技术栈与架构
 
-> 当前核对：2026-09-01
+> 当前核对：2026-09-02
 > 目标：记录当前项目真实技术栈、模块边界、运行链路和架构约束。后续新增能力时，先更新本文，再改实现。
 
 业务与 AI 的长期阶段、技术预研和业务产品合同统一从
 [`docs/admin-base-business-ai-roadmap.md`](./admin-base-business-ai-roadmap.md) 进入。该路线图描述目标和完成闸门，
 不替代本文的当前架构，也不表示规划能力已经实现。
+
+通用后台基座、通用 SaaS 基座、Studio 共享内核和垂直产品的依赖边界见
+[`docs/admin-base-saas-foundation-boundary.md`](./admin-base-saas-foundation-boundary.md)。
 
 AI 服务商连接、模型、Playground、Chat 和 Agent 的详细职责见
 [`docs/ai-module-boundaries.md`](./ai-module-boundaries.md)。
@@ -232,6 +235,7 @@ CRUD factory 当前能力：
 | `sys_ai_notebook_member`                                              | Notebook viewer/editor 协作成员                                                  |
 | `saas_tenant` / `saas_workspace`                                      | SaaS 客户组织、工作空间、生命周期和历史单组织默认上下文                          |
 | `saas_tenant_member` / `saas_workspace_member`                        | Tenant/Workspace 自定义成员范围和角色                                            |
+| `saas_user_context`                                                   | 当前用户最后一次经服务端校验的 Tenant/Workspace 工作上下文                       |
 | `saas_invitation`                                                     | 邀请 Token Hash、邮箱绑定、过期、接受与撤销状态                                  |
 | `saas_module` / `saas_tenant_entitlement`                             | 全局模块目录、依赖、能力声明及 Tenant 试用/开通/覆盖/过期                        |
 
@@ -262,7 +266,9 @@ CRUD factory 当前能力：
 - SaaS 初始隔离采用共享数据库 + 强制 Tenant/Workspace 业务列；当前控制面已管理 Tenant、Workspace、
   成员、邀请、模块目录和 Tenant Entitlement。邀请明文 Token 只在创建响应出现，数据库只保存 SHA-256；模块只有在
   route、path、required ability 和依赖均真实就绪后才能上架，有效模块解析同时校验 Tenant 成员、Entitlement、
-  用户 ability、有效期和依赖。历史系统资源保持原语义，按域迁移；详细边界见
+  用户 ability、有效期和依赖。当前上下文保存在 `saas_user_context`，客户端通过 Tenant/Workspace Header 传递
+  选择，但 Header 不是授权证据；新 SaaS 业务 Service 必须再次解析成员关系和资源归属。已上架产品模块入口按
+  当前 Tenant 有效 Entitlement fail closed，Tenant/Workspace 管理等控制面 route 不登记为产品模块。历史系统资源保持原语义，按域迁移；详细边界见
   [`docs/adr/0001-saas-tenancy-and-legacy-boundary.md`](./adr/0001-saas-tenancy-and-legacy-boundary.md)。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。

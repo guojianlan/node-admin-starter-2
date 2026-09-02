@@ -88,11 +88,12 @@ Shell 或插件执行。
 - AI Provider、Model、用途路由、调用记录、费用估算、配额、熔断和健康证据。
 - Chat、Agent、Tool、Approval、Run、Step、Knowledge/RAG、Notebook、Eval、Memory 和 MCP 基础。
 - PostgreSQL Worker/Outbox 的领取、租约、续期、重试、取消、幂等和监控基础。
+- Tenant/Workspace、成员、邀请、当前工作上下文、模块目录和 Tenant Entitlement 控制面基础。
 - 可视化 Workflow 与图片编辑处于当前工作区开发/收口阶段，必须以具体分支和验证证据判断状态。
 
 ### 3.2 当前不应宣称已经具备
 
-- 完整多租户、Workspace、资源 ACL、白标域名和 SaaS 商业结算。
+- 完整多租户资源闭环、Project ACL、白标域名和 SaaS 商业结算。
 - Studio 通用项目、素材血缘、人物/演员/场景、媒体时间线和跨产品复用。
 - 小说、图片叙事、阅读视频、歌曲 MV、脱口秀、讲坛、科普等业务事实表和工作台。
 - TTS、STT、异步视频 Provider、字幕对齐、FFmpeg 渲染和可恢复媒体任务。
@@ -1286,7 +1287,13 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 邀请与 Entitlement 的直接跨 Tenant 攻击由自动化测试阻断。详细合同见
 [`saas-phase-1b-membership-entitlement.md`](./saas-phase-1b-membership-entitlement.md)。
 
-团队、Studio Kernel、文件前缀、用量和项目/文件/任务/Tool/导出/审计的两 Tenant 全链路攻击矩阵仍待后续
+基座第三切片（2026-09-02，`implemented-unverified`）：已加入 `saas_user_context`、服务端成员/状态校验、
+`GET/PUT /api/saas/context`、普通/文本流/SSE 请求的 Tenant/Workspace Header、后台 Header 切换器，以及
+已上架产品入口按当前 Tenant 有效 Entitlement 的菜单裁剪。Header 只表达选择，不替代业务 API 的资源
+ACL。通用后台、SaaS 基座、Studio Kernel 和垂直产品的边界及后续基座顺序见
+[`admin-base-saas-foundation-boundary.md`](./admin-base-saas-foundation-boundary.md)。
+
+Team、Studio Kernel、Tenant 文件前缀、用量和项目/文件/任务/Tool/导出/审计的两 Tenant 全链路攻击矩阵仍待后续
 切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。

@@ -1346,6 +1346,22 @@ a {
   gap: 6px;
 }
 
+.saas-context-trigger {
+  max-width: min(280px, 24vw);
+  color: var(--admin-text-secondary);
+}
+
+.saas-context-trigger-copy {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saas-context-panel {
+  width: min(320px, calc(100vw - 48px));
+}
+
 .xin-header-icon {
   width: 32px;
   height: 32px;
@@ -9377,6 +9393,16 @@ a {
 
   .xin-header-main {
     padding-right: 12px;
+  }
+
+  .saas-context-trigger {
+    width: 32px;
+    min-width: 32px;
+    padding-inline: 0;
+  }
+
+  .saas-context-trigger-copy {
+    display: none;
   }
 
   .xin-brand {

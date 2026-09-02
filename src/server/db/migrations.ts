@@ -4031,6 +4031,29 @@ VALUES
 ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING;
 `,
   },
+  {
+    id: "0065_saas_current_context",
+    sql: `
+CREATE TABLE IF NOT EXISTS saas_user_context (
+  user_id INTEGER PRIMARY KEY REFERENCES sys_user(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS saas_user_context_tenant_workspace_idx
+  ON saas_user_context(tenant_id, workspace_id);
+
+INSERT INTO saas_user_context (user_id, tenant_id, workspace_id)
+SELECT tenant_member.user_id, tenant.id, workspace.id
+FROM saas_tenant tenant
+INNER JOIN saas_workspace workspace
+  ON workspace.tenant_id = tenant.id AND workspace.code = 'default' AND workspace.deleted_at IS NULL
+INNER JOIN saas_tenant_member tenant_member
+  ON tenant_member.tenant_id = tenant.id AND tenant_member.status = 'active'
+WHERE tenant.code = 'default' AND tenant.status = 'active' AND tenant.deleted_at IS NULL
+ON CONFLICT (user_id) DO NOTHING;
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

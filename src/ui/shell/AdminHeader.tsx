@@ -50,6 +50,7 @@ import { useNavigationAdapter } from "@/platform/navigation";
 import { useAuthStore } from "@/stores/auth";
 import { useAdminPreferences, type AdminLayoutMode } from "@/ui/preferences";
 import { BreadcrumbBar } from "./BreadcrumbBar";
+import { SaasContextSwitcher } from "./SaasContextSwitcher";
 
 type AdminHeaderProps = {
   collapsed: boolean;
@@ -149,7 +150,8 @@ export function AdminHeader({
   });
   const unreadQuery = useQuery({
     queryKey: ["notice", "unread-count"],
-    queryFn: () => request<{ total: number }>("/api/system/notice/my/unread-count", { silent: true }),
+    queryFn: () =>
+      request<{ total: number }>("/api/system/notice/my/unread-count", { silent: true }),
     enabled: Boolean(user),
     refetchInterval: 60_000,
   });
@@ -279,6 +281,7 @@ export function AdminHeader({
             )}
           </div>
           <div className="xin-header-right">
+            <SaasContextSwitcher />
             <Tooltip title={t("home")}>
               <Button
                 className="xin-header-icon"
@@ -591,9 +594,7 @@ export function AdminHeader({
               aria-label={t("light")}
               aria-pressed={themeMode === "light"}
               className={
-                themeMode === "light"
-                  ? "xin-theme-card xin-theme-card-active"
-                  : "xin-theme-card"
+                themeMode === "light" ? "xin-theme-card xin-theme-card-active" : "xin-theme-card"
               }
               onClick={() => setThemeMode("light")}
             >
@@ -606,9 +607,7 @@ export function AdminHeader({
               aria-label={t("dark")}
               aria-pressed={themeMode === "dark"}
               className={
-                themeMode === "dark"
-                  ? "xin-theme-card xin-theme-card-active"
-                  : "xin-theme-card"
+                themeMode === "dark" ? "xin-theme-card xin-theme-card-active" : "xin-theme-card"
               }
               onClick={() => setThemeMode("dark")}
             >

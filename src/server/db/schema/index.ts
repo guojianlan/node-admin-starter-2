@@ -354,6 +354,25 @@ export const saasWorkspaceMember = pgTable(
   ],
 );
 
+export const saasUserContext = pgTable(
+  "saas_user_context",
+  {
+    userId: integer("user_id")
+      .primaryKey()
+      .references(() => sysUser.id, { onDelete: "cascade" }),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "cascade" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("saas_user_context_tenant_workspace_idx").on(table.tenantId, table.workspaceId),
+  ],
+);
+
 export const saasInvitation = pgTable(
   "saas_invitation",
   {

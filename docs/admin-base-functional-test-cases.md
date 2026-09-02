@@ -96,6 +96,8 @@
 | SHELL-010 | P1 | tabs 非缓存模式 | 设置 `ADMIN_PAGE_PERSISTENCE_MODE=tabs` 重复上一步 | 保留页签但页面重新挂载，状态不保证保持 | 手工 |
 | SHELL-011 | P1 | disabled 模式 | 设置 persistence 为 disabled | 不显示多页签，不保留页面缓存 | 手工 |
 | SHELL-012 | P2 | 窄屏适配 | 1280、1024、移动宽度查看 Shell | 无重叠、横向溢出和不可点击控件 | 手工 |
+| SHELL-013 | P0 | Tenant/Workspace 上下文 | 使用同时属于两个 Tenant 的账号切换 Tenant 和 Workspace | 服务端保存合法选择；后续普通/流式请求携带上下文；跨 Tenant Workspace ID 被拒绝 | 自动/手工 |
+| SHELL-014 | P0 | Entitlement 菜单裁剪 | 同一账号在已开通和未开通 Tenant 间切换 | 已上架产品入口只在有效 Tenant、Entitlement、ability 和依赖同时满足时出现；业务 API 仍独立校验 | 自动/手工 |
 
 ## 6. Dashboard
 

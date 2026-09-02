@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { clearAuthToken, getAuthToken, setAuthToken } from "@/lib/auth-token";
 import { request } from "@/lib/request";
+import { useSaasContextStore } from "@/stores/saas-context";
 
 export type AdminUser = {
   id: number;
@@ -87,6 +88,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         access: result.access,
         initialized: true,
       });
+      await useSaasContextStore
+        .getState()
+        .initialize(result.user.id)
+        .catch(() => null);
       await get().initMenus();
     } finally {
       set({ loading: false });
@@ -103,6 +108,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         });
       }
     } finally {
+      useSaasContextStore.getState().reset();
       clearAuthToken();
       set({
         token: null,
@@ -120,6 +126,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   async initSession(force = false) {
     const token = getAuthToken();
     if (!token) {
+      useSaasContextStore.getState().reset();
       set({ token: null, user: null, access: [], menus: [], initialized: false, loading: false });
       return;
     }
@@ -135,8 +142,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         access: result.access,
         initialized: true,
       });
+      await useSaasContextStore
+        .getState()
+        .initialize(result.user.id)
+        .catch(() => null);
       await get().initMenus();
     } catch (error) {
+      useSaasContextStore.getState().reset();
       clearAuthToken();
       set({
         token: null,

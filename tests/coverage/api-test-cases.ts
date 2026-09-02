@@ -328,6 +328,7 @@ const operationsByMethod = {
     "/api/system/user/batch-delete",
   ],
   PUT: [
+    "/api/saas/context",
     "/api/saas/tenant-members/{tenantId}/{userId}",
     "/api/saas/workspace-members/{workspaceId}/{userId}",
     "/api/saas/modules/{id}",
@@ -442,6 +443,33 @@ function coverageFor(path: string): CoverageMode {
 
 function createCase(method: string, path: string): ApiTestCase {
   const operation = `${method} ${path}`;
+  if (operation === "PUT /api/saas/context") {
+    return {
+      operation,
+      area: "SaaS 控制面",
+      success: [
+        "登录用户选择其有效成员范围内的 Tenant 和 Workspace，服务端保存当前偏好并返回完整上下文",
+        "只切换 Tenant 时从该 Tenant 的可访问 Workspace 中解析默认值，不能沿用其他 Tenant 的 Workspace",
+      ],
+      failures: [
+        "未登录返回 401；Tenant/Workspace 不存在、停用、归属不一致或用户不是有效成员时返回 404/409",
+        "失败不能覆盖上一次合法 saas_user_context，不能把请求 Header 或前端隐藏字段当作授权证据",
+      ],
+      dataAssertions: [
+        "saas_user_context 的 userId、tenantId、workspaceId 与响应 currentTenant/currentWorkspace 一致",
+        "返回的 effectiveModules 继续满足 active Tenant、成员、Entitlement、ability、有效期和依赖闭包",
+      ],
+      security: [
+        "接口是当前用户自服务动作，只要求有效 token；服务端重新校验成员关系，不要求平台管理 ability",
+        "跨 Tenant Workspace 组合、伪造 Header 和直接 ID 攻击均不能改变上下文或扩大资源范围",
+      ],
+      sideEffects: [
+        "成功切换以 low 风险写入 saas.context/switch 操作日志，不记录 token、cookie 或其他秘密",
+        "失败保持原偏好；客户端切换成功后刷新菜单和 Tenant-scoped 查询缓存",
+      ],
+      coverage: "automated",
+    };
+  }
   if (operation === "POST /api/system/ai/governance/mcp/internal/oauth/token") {
     return {
       operation,

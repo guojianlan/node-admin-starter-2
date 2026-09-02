@@ -118,13 +118,22 @@ export async function assertWorkspaceAccess(input: {
   if (!workspace.memberRole && !tenantCanManage) {
     throw new HTTPException(404, { message: "Workspace 不存在" });
   }
-  if (input.roles?.length && !tenantCanManage && !input.roles.includes(workspace.memberRole as WorkspaceRole)) {
+  if (
+    input.roles?.length &&
+    !tenantCanManage &&
+    !input.roles.includes(workspace.memberRole as WorkspaceRole)
+  ) {
     throw new HTTPException(403, { message: "没有管理该 Workspace 的成员权限" });
   }
   return workspace;
 }
 
-export async function getSaasContext(userId: number) {
+export type SaasContextSelection = {
+  tenantId?: number | null;
+  workspaceId?: number | null;
+};
+
+export async function getSaasContext(userId: number, selection: SaasContextSelection = {}) {
   const tenants = (await sqlite
     .prepare(
       `SELECT tenant.id, tenant.name, tenant.code, tenant.status, member.role
@@ -143,26 +152,103 @@ export async function getSaasContext(userId: number) {
   const workspaces = (await sqlite
     .prepare(
       `SELECT workspace.id, workspace.tenant_id AS "tenantId", workspace.name,
-        workspace.code, workspace.status, member.role
-       FROM saas_workspace_member member
-       INNER JOIN saas_workspace workspace ON workspace.id = member.workspace_id
-       WHERE member.user_id = ? AND member.status = 'active' AND workspace.deleted_at IS NULL
+        workspace.code, workspace.status, workspace_member.role,
+        tenant_member.role AS "tenantRole"
+       FROM saas_tenant_member tenant_member
+       INNER JOIN saas_tenant tenant ON tenant.id = tenant_member.tenant_id
+       INNER JOIN saas_workspace workspace ON workspace.tenant_id = tenant.id
+       LEFT JOIN saas_workspace_member workspace_member
+         ON workspace_member.workspace_id = workspace.id AND workspace_member.user_id = ?
+        AND workspace_member.status = 'active'
+       WHERE tenant_member.user_id = ? AND tenant_member.status = 'active'
+         AND tenant.deleted_at IS NULL AND workspace.deleted_at IS NULL
+         AND (workspace_member.user_id IS NOT NULL OR tenant_member.role IN ('owner', 'admin'))
        ORDER BY workspace.is_system DESC, workspace.id ASC`,
     )
-    .all(userId)) as Array<{
+    .all(userId, userId)) as Array<{
     id: number;
     tenantId: number;
     name: string;
     code: string;
     status: string;
-    role: WorkspaceRole;
+    role: WorkspaceRole | null;
+    tenantRole: TenantRole;
   }>;
+
+  const saved = (await sqlite
+    .prepare(
+      `SELECT tenant_id AS "tenantId", workspace_id AS "workspaceId"
+       FROM saas_user_context WHERE user_id = ? LIMIT 1`,
+    )
+    .get(userId)) as { tenantId: number; workspaceId: number } | undefined;
+  const requestedTenantId = selection.tenantId ?? null;
+  const requestedWorkspaceId = selection.workspaceId ?? null;
+  const activeTenants = tenants.filter((item) => item.status === "active");
+  const currentTenant = requestedTenantId
+    ? activeTenants.find((item) => item.id === requestedTenantId)
+    : (activeTenants.find((item) => item.id === saved?.tenantId) ?? activeTenants[0]);
+  if (requestedTenantId && !currentTenant) {
+    throw new HTTPException(404, { message: "Tenant 当前上下文不可用" });
+  }
+
+  const tenantWorkspaces = currentTenant
+    ? workspaces.filter((item) => item.tenantId === currentTenant.id && item.status === "active")
+    : [];
+  const useSavedWorkspace = !requestedTenantId || requestedTenantId === saved?.tenantId;
+  const currentWorkspace = requestedWorkspaceId
+    ? tenantWorkspaces.find((item) => item.id === requestedWorkspaceId)
+    : (tenantWorkspaces.find((item) => useSavedWorkspace && item.id === saved?.workspaceId) ??
+      tenantWorkspaces[0]);
+  if (requestedWorkspaceId && !currentWorkspace) {
+    throw new HTTPException(404, { message: "Workspace 当前上下文不可用" });
+  }
+
   return {
     tenants,
     workspaces,
-    defaultTenantId: tenants.find((item) => item.status === "active")?.id ?? null,
-    defaultWorkspaceId: workspaces.find((item) => item.status === "active")?.id ?? null,
+    currentTenantId: currentTenant?.id ?? null,
+    currentWorkspaceId: currentWorkspace?.id ?? null,
+    currentTenant: currentTenant ?? null,
+    currentWorkspace: currentWorkspace ?? null,
+    defaultTenantId: currentTenant?.id ?? null,
+    defaultWorkspaceId: currentWorkspace?.id ?? null,
   };
+}
+
+export async function requireSaasContext(userId: number, selection: SaasContextSelection = {}) {
+  const context = await getSaasContext(userId, selection);
+  if (!context.currentTenant || !context.currentWorkspace) {
+    throw new HTTPException(409, { message: "当前账号没有可用的 Tenant / Workspace 上下文" });
+  }
+  return {
+    ...context,
+    currentTenantId: context.currentTenant.id,
+    currentWorkspaceId: context.currentWorkspace.id,
+    currentTenant: context.currentTenant,
+    currentWorkspace: context.currentWorkspace,
+  };
+}
+
+export async function setSaasContext(input: {
+  userId: number;
+  tenantId: number;
+  workspaceId?: number | null;
+}) {
+  const context = await requireSaasContext(input.userId, {
+    tenantId: input.tenantId,
+    workspaceId: input.workspaceId,
+  });
+  await sqlite
+    .prepare(
+      `INSERT INTO saas_user_context (user_id, tenant_id, workspace_id, updated_at)
+       VALUES (?, ?, ?, now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         tenant_id = EXCLUDED.tenant_id,
+         workspace_id = EXCLUDED.workspace_id,
+         updated_at = now()`,
+    )
+    .run(input.userId, context.currentTenantId, context.currentWorkspaceId);
+  return context;
 }
 
 export async function listTenants(input: ListInput) {
@@ -284,10 +370,10 @@ export async function updateTenant(input: {
 export async function listWorkspaces(input: ListInput & { tenantId?: number }) {
   const params: Array<string | number> = [];
   const where = ["workspace.deleted_at IS NULL", "tenant.deleted_at IS NULL"];
-  let memberSelect = "NULL::text AS \"memberRole\"";
+  let memberSelect = 'NULL::text AS "memberRole"';
   let memberJoin = "";
   if (input.userId !== 1) {
-    memberSelect = "workspace_member.role AS \"memberRole\"";
+    memberSelect = 'workspace_member.role AS "memberRole"';
     memberJoin = `INNER JOIN saas_tenant_member tenant_member
       ON tenant_member.tenant_id = workspace.tenant_id AND tenant_member.user_id = ?
      AND tenant_member.status = 'active'
@@ -295,7 +381,9 @@ export async function listWorkspaces(input: ListInput & { tenantId?: number }) {
       ON workspace_member.workspace_id = workspace.id AND workspace_member.user_id = ?
      AND workspace_member.status = 'active'`;
     params.push(input.userId, input.userId);
-    where.push("(workspace_member.user_id IS NOT NULL OR tenant_member.role IN ('owner', 'admin'))");
+    where.push(
+      "(workspace_member.user_id IS NOT NULL OR tenant_member.role IN ('owner', 'admin'))",
+    );
   }
   if (input.tenantId) {
     where.push("workspace.tenant_id = ?");

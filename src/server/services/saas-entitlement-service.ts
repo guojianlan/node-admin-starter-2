@@ -35,11 +35,18 @@ function serializeStringArray(values: string[]) {
   return JSON.stringify(normalizeCodes(values));
 }
 
-function mapModuleRecord(record: Record<string, unknown>) {
+type MappedSaasModuleRecord = Record<string, unknown> & {
+  routeKey: string;
+  dependencies: string[];
+  capabilities: string[];
+};
+
+function mapModuleRecord(record: Record<string, unknown>): MappedSaasModuleRecord {
   const dependencies = parseStringArray(record.dependenciesJson);
   const capabilities = parseStringArray(record.capabilitiesJson);
   return {
     ...record,
+    routeKey: String(record.routeKey),
     dependencies,
     capabilities,
     dependenciesCsv: dependencies.join(", "),
@@ -558,4 +565,15 @@ export async function resolveEffectiveSaasModules(input: {
     }
   }
   return abilityFiltered.filter((row) => effectiveCodes.has(String(row.code))).map(mapModuleRecord);
+}
+
+export async function getEntitlementGatedModuleRouteKeys() {
+  const rows = (await sqlite
+    .prepare(
+      `SELECT route_key AS "routeKey"
+       FROM saas_module
+       WHERE status = 'active' AND deleted_at IS NULL`,
+    )
+    .all()) as Array<{ routeKey: string }>;
+  return new Set(rows.map((row) => row.routeKey));
 }

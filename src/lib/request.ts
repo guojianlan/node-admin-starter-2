@@ -1,6 +1,7 @@
 "use client";
 
 import { clearAuthToken, getAuthToken } from "@/lib/auth-token";
+import { getActiveSaasContextHeaders } from "@/lib/saas-context";
 import type { ApiResponse } from "@/lib/response";
 import { feedback } from "@/ui/feedback/feedback";
 
@@ -53,14 +54,21 @@ function normalizeBody(body: RequestOptions["body"]) {
   return JSON.stringify(body);
 }
 
+function applyAuthAndContextHeaders(headers: Headers, token: string | null) {
+  if (!token) return;
+  headers.set("Authorization", `Bearer ${token}`);
+  const saasContextHeaders = getActiveSaasContextHeaders();
+  if (saasContextHeaders) {
+    Object.entries(saasContextHeaders).forEach(([key, value]) => headers.set(key, value));
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = getAuthToken();
   const headers = new Headers(options.headers);
   const body = normalizeBody(options.body);
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  applyAuthAndContextHeaders(headers, token);
   if (body && !(body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -109,9 +117,7 @@ export async function requestTextStream(
   const headers = new Headers(options.headers);
   const body = normalizeBody(options.body);
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  applyAuthAndContextHeaders(headers, token);
   if (body && !(body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -213,9 +219,7 @@ export async function requestEventStream(
   const headers = new Headers(options.headers);
   const body = normalizeBody(options.body);
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  applyAuthAndContextHeaders(headers, token);
   if (body && !(body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }

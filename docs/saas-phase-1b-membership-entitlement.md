@@ -79,9 +79,9 @@ Tenant active
 + 依赖模块也在有效集合
 ```
 
-这是菜单可见条件的第一版服务端合同。当前 Admin Shell 尚未提供 Tenant/Workspace 切换状态，因此 `/api/system/menu`
-暂不猜测当前 Tenant；后续上下文切换器必须以该有效模块接口过滤 Studio 产品入口。前端隐藏仍不能替代 Studio
-API 的 Tenant/Workspace/ACL 校验。
+这是菜单可见条件的第一版服务端合同。2026-09-02 后续基座切片已经加入 Tenant/Workspace 当前上下文和
+`tenant-menu` 入口过滤，详见 [`admin-base-saas-foundation-boundary.md`](./admin-base-saas-foundation-boundary.md)。
+前端隐藏仍不能替代 Studio API 的 Tenant/Workspace/ACL 校验。
 
 ## 6. API 与页面
 
@@ -134,5 +134,5 @@ API 的 Tenant/Workspace/ACL 校验。
   `/saas/invitations/accept`。
 
 本切片没有安全运行环境和凭据，因此没有运行 smoke；也没有把 production build 当作浏览器明暗主题、窄屏和实际
-交互验收。状态保持 `implemented-unverified`。真实邀请邮件、Tenant 上下文切换、菜单消费、Team、套餐继承、
+交互验收。状态保持 `implemented-unverified`。真实邀请邮件、Team、套餐继承、
 用量、Studio Kernel 和两 Tenant 全链路资源攻击矩阵进入后续切片。

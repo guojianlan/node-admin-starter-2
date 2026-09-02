@@ -45,6 +45,8 @@ type RuleRow = {
   link: number;
 };
 
+export type RuleMenuNode = RuleRow & { children?: RuleMenuNode[] };
+
 export type LoginInput = {
   username: string;
   password: string;
@@ -64,8 +66,7 @@ function isPasswordExpired(
   return (
     policy.passwordExpireDays > 0 &&
     (!row.passwordUpdatedAt ||
-      new Date(row.passwordUpdatedAt).getTime() +
-        policy.passwordExpireDays * 24 * 60 * 60 * 1000 <=
+      new Date(row.passwordUpdatedAt).getTime() + policy.passwordExpireDays * 24 * 60 * 60 * 1000 <=
         Date.now())
   );
 }
@@ -258,7 +259,22 @@ export async function getUserMenus(userId: number) {
       ? ((await sqlite.prepare(sql).all()) as RuleRow[])
       : ((await sqlite.prepare(sql).all(userId)) as RuleRow[]);
 
-  return buildTree(rows);
+  return buildTree(rows) as RuleMenuNode[];
+}
+
+export function filterUserMenusByEntitlements(input: {
+  menus: RuleMenuNode[];
+  gatedRouteKeys: Set<string>;
+  effectiveRouteKeys: Set<string>;
+}) {
+  const filterNodes = (nodes: RuleMenuNode[]): RuleMenuNode[] =>
+    nodes.flatMap((node) => {
+      if (input.gatedRouteKeys.has(node.key) && !input.effectiveRouteKeys.has(node.key)) return [];
+      const children = node.children ? filterNodes(node.children) : undefined;
+      if (!node.path && node.children?.length && !children?.length) return [];
+      return [{ ...node, ...(children ? { children } : {}) }];
+    });
+  return filterNodes(input.menus);
 }
 
 export async function login(input: LoginInput) {

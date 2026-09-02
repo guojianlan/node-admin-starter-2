@@ -356,6 +356,8 @@ Admin Base 产品/治理层
   模块目录、模块上架前 route/ability/依赖检查、Tenant Entitlement 和有效模块解析合同。
 - 已增加 `/saas/members`、`/saas/modules` 和邀请自服务页；成员、邀请和 Entitlement 的跨 Tenant 直接 ID
   攻击、owner 保护、Token 重放以及未交付模块提前开通由自动化测试阻断。
+- 2026-09-02 基座切片已增加 `saas_user_context`、服务端校验的 Tenant/Workspace 当前上下文、后台 Header
+  切换器、请求 Header 传递和已上架产品的有效 Entitlement 菜单裁剪；上下文 Header 不作为授权证据。
 - 尚未完成 Team、Studio Kernel、历史文件/Knowledge/Job/Tool/导出/审计迁移和两个 Tenant 全链路攻击矩阵；
   本项状态为 `implemented-unverified`，不是完整多租户交付。
 

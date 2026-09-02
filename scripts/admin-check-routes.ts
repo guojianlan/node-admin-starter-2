@@ -114,6 +114,13 @@ const explicitRouteAllowlist = new Map(
         "current-user invitation acceptance is bound to auth, one-time token hash, expiry and matching account email",
     },
     {
+      key: "saas/index.ts:PUT /context",
+      allowMissingAbility: true,
+      allowMissingOperationLog: false,
+      reason:
+        "current-user Tenant and Workspace selection validates active membership and writes an operation log",
+    },
+    {
       key: "file.ts:POST /file/chunk/init",
       allowMissingAbility: false,
       allowMissingOperationLog: true,
