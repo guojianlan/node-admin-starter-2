@@ -17,6 +17,7 @@ export type OperationLogInput = {
   durationMs?: number | null;
   details?: Record<string, unknown> | null;
   requestId?: string | null;
+  saasScope?: { tenantId: number; workspaceId: number } | null;
 };
 
 export async function recordBackgroundOperationLog(
@@ -31,8 +32,9 @@ export async function recordBackgroundOperationLog(
       .prepare(
         `INSERT INTO sys_operation_log
           (user_id, username, module, action, resource, resource_id, method, path, ip, user_agent,
-           request_id, status, success, risk_level, message, duration_ms, details_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+           request_id, status, success, risk_level, message, duration_ms, details_json,
+           tenant_id, workspace_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.userId ?? null,
@@ -50,6 +52,8 @@ export async function recordBackgroundOperationLog(
         input.message ?? null,
         input.durationMs == null ? null : Math.round(input.durationMs),
         detailsJson,
+        input.saasScope?.tenantId ?? null,
+        input.saasScope?.workspaceId ?? null,
       );
   } catch (error) {
     logger.warn(
@@ -161,9 +165,10 @@ export async function recordOperationLog(
       .prepare(
         `INSERT INTO sys_operation_log
           (user_id, username, module, action, resource, resource_id, method, path, ip, user_agent,
-           request_id, status, success, risk_level, message, duration_ms, details_json)
+           request_id, status, success, risk_level, message, duration_ms, details_json,
+           tenant_id, workspace_id)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.userId ?? user?.id ?? null,
@@ -183,6 +188,8 @@ export async function recordOperationLog(
         input.message ?? null,
         input.durationMs == null ? null : Math.round(input.durationMs),
         detailsJson,
+        input.saasScope?.tenantId ?? null,
+        input.saasScope?.workspaceId ?? null,
       );
   } catch (error) {
     logger.warn(

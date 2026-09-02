@@ -4054,6 +4054,113 @@ WHERE tenant.code = 'default' AND tenant.status = 'active' AND tenant.deleted_at
 ON CONFLICT (user_id) DO NOTHING;
 `,
   },
+  {
+    id: "0066_saas_resource_scope",
+    sql: `
+ALTER TABLE sys_operation_log
+  ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES saas_tenant(id) ON DELETE SET NULL;
+ALTER TABLE sys_operation_log
+  ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL;
+ALTER TABLE sys_operation_log
+  DROP CONSTRAINT IF EXISTS sys_operation_log_saas_scope_pair_check;
+ALTER TABLE sys_operation_log
+  ADD CONSTRAINT sys_operation_log_saas_scope_pair_check
+  CHECK ((tenant_id IS NULL AND workspace_id IS NULL) OR
+         (tenant_id IS NOT NULL AND workspace_id IS NOT NULL));
+CREATE INDEX IF NOT EXISTS sys_operation_log_tenant_workspace_created_idx
+  ON sys_operation_log(tenant_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_file_binding (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE RESTRICT,
+  file_id INTEGER NOT NULL REFERENCES sys_file(id) ON DELETE CASCADE,
+  object_key TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  purpose TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CONSTRAINT saas_file_binding_resource_pair_check
+    CHECK ((resource_type IS NULL AND resource_id IS NULL) OR
+           (resource_type IS NOT NULL AND resource_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_file_binding_file_unique
+  ON saas_file_binding(file_id);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_file_binding_object_key_unique
+  ON saas_file_binding(object_key);
+CREATE INDEX IF NOT EXISTS saas_file_binding_scope_created_idx
+  ON saas_file_binding(tenant_id, workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS saas_file_binding_resource_idx
+  ON saas_file_binding(tenant_id, workspace_id, resource_type, resource_id);
+
+CREATE TABLE IF NOT EXISTS saas_async_operation (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE RESTRICT,
+  kind TEXT NOT NULL CHECK (kind IN ('job', 'tool', 'export')),
+  operation_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  payload_json TEXT NOT NULL,
+  result_json TEXT,
+  error_message TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  result_file_id INTEGER REFERENCES sys_file(id) ON DELETE SET NULL,
+  requested_by INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE RESTRICT,
+  request_id TEXT,
+  idempotency_key TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 100,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_by TEXT,
+  lease_until TIMESTAMPTZ,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT saas_async_operation_resource_pair_check
+    CHECK ((resource_type IS NULL AND resource_id IS NULL) OR
+           (resource_type IS NOT NULL AND resource_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_async_operation_scope_idempotency_unique
+  ON saas_async_operation(tenant_id, workspace_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS saas_async_operation_claim_idx
+  ON saas_async_operation(status, available_at, priority, id);
+CREATE INDEX IF NOT EXISTS saas_async_operation_scope_created_idx
+  ON saas_async_operation(tenant_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_callback_event (
+  id SERIAL PRIMARY KEY,
+  operation_id INTEGER NOT NULL REFERENCES saas_async_operation(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE RESTRICT,
+  callback_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted', 'applied', 'rejected')),
+  error_message TEXT,
+  processed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_callback_event_operation_key_unique
+  ON saas_callback_event(operation_id, callback_key);
+CREATE INDEX IF NOT EXISTS saas_callback_event_scope_created_idx
+  ON saas_callback_event(tenant_id, workspace_id, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_saas_file_binding_updated_at ON saas_file_binding;
+CREATE TRIGGER trg_saas_file_binding_updated_at
+BEFORE UPDATE ON saas_file_binding
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_async_operation_updated_at ON saas_async_operation;
+CREATE TRIGGER trg_saas_async_operation_updated_at
+BEFORE UPDATE ON saas_async_operation
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

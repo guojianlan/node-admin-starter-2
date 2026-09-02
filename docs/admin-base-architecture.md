@@ -58,8 +58,8 @@ Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
 当前没有引入：
 
 - Redis、Kafka、RabbitMQ 和独立任务调度中心；AI 长任务使用 PostgreSQL Queue/Outbox Worker。
-- 完整多租户；当前已增加 Tenant/Workspace 控制面基础和默认单组织兼容上下文，但历史文件、Knowledge、
-  AI Job、Tool、导出和审计尚未全部迁移到 Tenant 资源边界，不能宣称 Phase 1 多租户闭环。
+- 完整多租户；当前已增加 Tenant/Workspace 控制面、可信上下文以及 F2 新 SaaS 文件/异步操作 Scope 基座，但
+  历史文件、Knowledge、Notebook、AI Job/Tool 仍保持原域，Studio Project/Task 也尚未实现，不能宣称 Phase 1 闭环。
 
 静态 OpenAPI、GitHub Actions CI、验收依赖 Compose 和受治理模块生成器已经存在；它们不改变
 Next.js + Hono 单应用和 PostgreSQL-first 的源码启动主路径。
@@ -238,6 +238,8 @@ CRUD factory 当前能力：
 | `saas_user_context`                                                   | 当前用户最后一次经服务端校验的 Tenant/Workspace 工作上下文                       |
 | `saas_invitation`                                                     | 邀请 Token Hash、邮箱绑定、过期、接受与撤销状态                                  |
 | `saas_module` / `saas_tenant_entitlement`                             | 全局模块目录、依赖、能力声明及 Tenant 试用/开通/覆盖/过期                        |
+| `saas_file_binding`                                                   | 新 SaaS 文件的非空 Tenant/Workspace 归属、服务端对象键和业务主绑定               |
+| `saas_async_operation` / `saas_callback_event`                        | 新 SaaS Job/Tool/Export 的 Scope、租约、幂等和从数据库恢复的 Callback 事实       |
 
 数据库策略：
 
@@ -268,7 +270,10 @@ CRUD factory 当前能力：
   route、path、required ability 和依赖均真实就绪后才能上架，有效模块解析同时校验 Tenant 成员、Entitlement、
   用户 ability、有效期和依赖。当前上下文保存在 `saas_user_context`，客户端通过 Tenant/Workspace Header 传递
   选择，但 Header 不是授权证据；新 SaaS 业务 Service 必须再次解析成员关系和资源归属。已上架产品模块入口按
-  当前 Tenant 有效 Entitlement fail closed，Tenant/Workspace 管理等控制面 route 不登记为产品模块。历史系统资源保持原语义，按域迁移；详细边界见
+  当前 Tenant 有效 Entitlement fail closed，Tenant/Workspace 管理等控制面 route 不登记为产品模块。F2 新增
+  `SaaSResourceScope`、`saas_file_binding` 和 `saas_async_operation`：对象键由服务端生成
+  `tenants/<tenant-code>/workspaces/<workspace-code>/...`，Worker/Tool/Export/Callback 在副作用前重新校验数据库
+  Scope，SaaS 操作日志使用结构化 `tenant_id/workspace_id` 查询。历史系统资源保持原语义，按域迁移；详细边界见
   [`docs/adr/0001-saas-tenancy-and-legacy-boundary.md`](./adr/0001-saas-tenancy-and-legacy-boundary.md)。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。

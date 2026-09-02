@@ -358,7 +358,9 @@ Admin Base 产品/治理层
   攻击、owner 保护、Token 重放以及未交付模块提前开通由自动化测试阻断。
 - 2026-09-02 基座切片已增加 `saas_user_context`、服务端校验的 Tenant/Workspace 当前上下文、后台 Header
   切换器、请求 Header 传递和已上架产品的有效 Entitlement 菜单裁剪；上下文 Header 不作为授权证据。
-- 尚未完成 Team、Studio Kernel、历史文件/Knowledge/Job/Tool/导出/审计迁移和两个 Tenant 全链路攻击矩阵；
+- 2026-09-02 Foundation F2 已增加统一 `SaaSResourceScope`、新 SaaS 文件对象前缀与 `saas_file_binding`、
+  Job/Tool/Export/Callback 的 `saas_async_operation` 运行封套、结构化 Tenant 审计和两个 Tenant 攻击矩阵。
+- 尚未完成 Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、用量和真实 S3/Worker/Provider 验收；
   本项状态为 `implemented-unverified`，不是完整多租户交付。
 
 ### P1-1 Notebook 来源版本与研究候选状态

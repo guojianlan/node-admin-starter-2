@@ -211,6 +211,21 @@
 | STORAGE-004 | P1 | S3 连接和上传 | 配置真实 S3-compatible 资源并测试/上传/下载 | 连接、对象写入、读取、删除完整成功 | 环境 |
 | STORAGE-005 | P0 | S3 密钥脱敏 | 保存 secret 后列表和详情查询 | 不返回明文/密文，只返回 `hasSecretKey` | 自动 |
 
+### 11.1 SaaS Resource Scope、文件与异步运行基座
+
+| ID | P | 用例 | 前置条件与步骤 | 预期 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| SAAS-F2-001 | P0 | 统一资源 Scope | A/B 两个 Tenant 各有 Workspace 和成员，分别解析 Header 上下文 | 只从有效成员、active Tenant/Workspace 解析；Workspace 属于 Tenant；无隐式超级管理员正文访问 | 自动 |
+| SAAS-F2-002 | P0 | 服务端文件前缀 | A/B 分别上传同名文件并尝试传伪造 Tenant 信息 | 实际对象键分别为服务端生成的 `tenants/<tenant>/workspaces/<workspace>/...`；请求不能覆盖 | 自动；真实 S3 环境待验收 |
+| SAAS-F2-003 | P0 | 文件 metadata/下载隔离 | A 猜测 B fileId 查询详情和下载 | 均返回 404；不泄漏文件存在性、名称、URL 或字节 | 自动 |
+| SAAS-F2-004 | P0 | 文件绑定隔离 | A 把 B fileId 绑定/解绑到 A 资源 | 拒绝；`saas_file_binding` 的 Tenant/Workspace 和 objectKey 不变 | 自动 |
+| SAAS-F2-005 | P0 | Job payload 篡改 | A 创建 payload 指向 B 的异步任务 | 数据库 operation Scope 始终为 A；处理器只能使用数据库 Scope | 自动 |
+| SAAS-F2-006 | P0 | Worker 执行前重校验 | Job 入队后停用成员、Tenant 或归档 Workspace，再 claim/执行 | fail closed 并记录失败；外部副作用处理器不执行 | 自动；常驻 Worker 长跑待验收 |
+| SAAS-F2-007 | P0 | Tool 资源隔离 | A 的 Tool operation 读取或产出 B 文件 | 资源 Scope 校验返回 404；租约有效也不能越权 | 自动 |
+| SAAS-F2-008 | P0 | Export 结果隔离 | A Export 尝试登记 B 文件为 resultFileId | 完成被拒绝；同 Scope 文件可以完成 | 自动 |
+| SAAS-F2-009 | P0 | Callback 恢复 Scope | Callback payload 填 B Tenant ID，operation 属于 A；重复发送相同 callbackKey | 从 operation 数据库事实恢复 A；payload 不能覆盖；同事件只应用一次 | 自动；公网签名/重放窗口属 F4 |
+| SAAS-F2-010 | P0 | Tenant 审计隔离 | A/B 分别产生文件和异步操作日志，A 查询 `/api/saas/audit` | 只返回 A Workspace 结构化审计维度，不返回 B 事件或业务 payload | 自动 |
+
 ## 12. 邮件、短信和 OAuth
 
 | ID | P | 用例 | 前置条件与步骤 | 预期 | 状态 |

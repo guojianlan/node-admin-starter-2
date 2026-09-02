@@ -587,6 +587,10 @@ export const sysOperationLog = pgTable(
     message: text("message"),
     durationMs: integer("duration_ms"),
     detailsJson: text("details_json"),
+    tenantId: integer("tenant_id").references(() => saasTenant.id, { onDelete: "set null" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -596,6 +600,11 @@ export const sysOperationLog = pgTable(
     index("sys_operation_log_success_created_at_idx").on(table.success, table.createdAt),
     index("sys_operation_log_request_id_idx").on(table.requestId),
     index("sys_operation_log_risk_level_created_at_idx").on(table.riskLevel, table.createdAt),
+    index("sys_operation_log_tenant_workspace_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
   ],
 );
 
@@ -845,6 +854,44 @@ export const sysFileReference = pgTable(
     index("sys_file_reference_file_id_idx").on(table.fileId),
     index("sys_file_reference_module_resource_idx").on(table.module, table.resourceId),
     index("sys_file_reference_resource_type_idx").on(table.resourceType),
+  ],
+);
+
+export const saasFileBinding = pgTable(
+  "saas_file_binding",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    fileId: integer("file_id")
+      .notNull()
+      .references(() => sysFile.id, { onDelete: "cascade" }),
+    objectKey: text("object_key").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    purpose: text("purpose"),
+    ...timestamps,
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    updatedBy: integer("updated_by").references(() => sysUser.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("saas_file_binding_file_unique").on(table.fileId),
+    uniqueIndex("saas_file_binding_object_key_unique").on(table.objectKey),
+    index("saas_file_binding_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
+    index("saas_file_binding_resource_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.resourceType,
+      table.resourceId,
+    ),
   ],
 );
 
@@ -2554,6 +2601,97 @@ export const sysAiJob = pgTable(
       .where(sql`${table.idempotencyKey} IS NOT NULL`),
     index("sys_ai_job_claim_idx").on(table.status, table.availableAt, table.priority, table.id),
     index("sys_ai_job_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const saasAsyncOperation = pgTable(
+  "saas_async_operation",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    kind: text("kind", { enum: ["job", "tool", "export"] }).notNull(),
+    operationType: text("operation_type").notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] })
+      .notNull()
+      .default("queued"),
+    payloadJson: text("payload_json").notNull(),
+    resultJson: text("result_json"),
+    errorMessage: text("error_message"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    resultFileId: integer("result_file_id").references(() => sysFile.id, { onDelete: "set null" }),
+    requestedBy: integer("requested_by")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "restrict" }),
+    requestId: text("request_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    priority: integer("priority").notNull().default(100),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedBy: text("locked_by"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("saas_async_operation_scope_idempotency_unique").on(
+      table.tenantId,
+      table.workspaceId,
+      table.idempotencyKey,
+    ),
+    index("saas_async_operation_claim_idx").on(
+      table.status,
+      table.availableAt,
+      table.priority,
+      table.id,
+    ),
+    index("saas_async_operation_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const saasCallbackEvent = pgTable(
+  "saas_callback_event",
+  {
+    id: serial("id").primaryKey(),
+    operationId: integer("operation_id")
+      .notNull()
+      .references(() => saasAsyncOperation.id, { onDelete: "cascade" }),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    callbackKey: text("callback_key").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    status: text("status", { enum: ["accepted", "applied", "rejected"] })
+      .notNull()
+      .default("accepted"),
+    errorMessage: text("error_message"),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("saas_callback_event_operation_key_unique").on(
+      table.operationId,
+      table.callbackKey,
+    ),
+    index("saas_callback_event_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
   ],
 );
 

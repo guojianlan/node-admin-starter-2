@@ -3,6 +3,7 @@ import { generatedModuleApiOperations } from "./generated-module-test-cases";
 
 const operationsByMethod = {
   DELETE: [
+    "/api/saas/files/{id}/binding",
     "/api/saas/tenant-members/{tenantId}/{userId}",
     "/api/saas/workspace-members/{workspaceId}/{userId}",
     "/api/system/ai/agent/{id}",
@@ -66,6 +67,10 @@ const operationsByMethod = {
     "/api/saas/modules",
     "/api/saas/modules/effective",
     "/api/saas/entitlements",
+    "/api/saas/files",
+    "/api/saas/files/{id}",
+    "/api/saas/files/{id}/download",
+    "/api/saas/audit",
     "/api/system/ai/agent",
     "/api/system/ai/agent/options",
     "/api/system/ai/agent/runs",
@@ -194,6 +199,7 @@ const operationsByMethod = {
     "/api/system/user/role",
   ],
   POST: [
+    "/api/saas/files/upload",
     "/api/saas/invitations",
     "/api/saas/invitations/{id}/revoke",
     "/api/saas/invitations/accept",
@@ -329,6 +335,7 @@ const operationsByMethod = {
   ],
   PUT: [
     "/api/saas/context",
+    "/api/saas/files/{id}/binding",
     "/api/saas/tenant-members/{tenantId}/{userId}",
     "/api/saas/workspace-members/{workspaceId}/{userId}",
     "/api/saas/modules/{id}",
@@ -443,6 +450,51 @@ function coverageFor(path: string): CoverageMode {
 
 function createCase(method: string, path: string): ApiTestCase {
   const operation = `${method} ${path}`;
+  if (path.startsWith("/api/saas/files")) {
+    return {
+      operation,
+      area: "SaaS 资源基座 / Tenant 文件",
+      success: [
+        "从已认证用户和 X-SaaS-Tenant-Id/X-SaaS-Workspace-Id 解析统一 SaaSResourceScope 后执行文件操作",
+        "上传由服务端生成 tenants/<tenant-code>/workspaces/<workspace-code>/ 对象键，查询、下载和业务绑定只命中当前 Workspace",
+      ],
+      failures: [
+        "未登录返回 401；缺少 Workspace query/update ability 返回 403；上下文失效或文件不属于当前 Scope 返回 404",
+        "resourceType/resourceId 不成对、非法 Header 或非法文件策略输入返回 4xx，失败不创建跨 Tenant 绑定",
+      ],
+      dataAssertions: [
+        "saas_file_binding 的 tenantId/workspaceId/fileId/objectKey 与 sys_file.path 一致，objectKey 只能由服务端前缀生成",
+        "解绑仅移除业务 resourceType/resourceId/purpose，不把历史 sys_file 或其他 Tenant 文件改成全局文件",
+      ],
+      security: [
+        "Tenant A 不能按 fileId 查询、下载、绑定或解绑 Tenant B 文件；平台管理员没有有效成员上下文时也没有隐式正文读取权",
+        "createdBy/uploaderId 和客户端对象路径不是授权依据，每次操作都重新校验成员、Tenant、Workspace 和资源行 Scope",
+      ],
+      sideEffects: [
+        "上传或绑定写入带 tenantId/workspaceId 的 saas.file 操作日志，失败日志不记录文件正文或秘密",
+        "对象存储写入后若 Scope 二次校验或绑定事务失败，清理未引用对象，避免遗留未归属 SaaS 文件",
+      ],
+      coverage: path.endsWith("/download") ? "environment" : "automated",
+    };
+  }
+  if (operation === "GET /api/saas/audit") {
+    return {
+      operation,
+      area: "SaaS 资源基座 / Tenant 审计",
+      success: ["当前 Workspace 成员分页读取仅属于当前 tenantId/workspaceId 的结构化操作日志"],
+      failures: ["未登录、无 Workspace query ability 或当前成员/Tenant/Workspace 已失效时拒绝查询"],
+      dataAssertions: [
+        "返回 userId、module、action、resource、requestId、riskLevel、状态和时间，不返回其他 Tenant 行",
+      ],
+      security: [
+        "Tenant A 的查询条件不能覆盖服务端 Scope，不能通过猜测 ID、Header 组合或超级管理员隐式分支读取 Tenant B 审计",
+      ],
+      sideEffects: [
+        "只读查询不修改审计事实；SaaS mutation/background operation 负责写入结构化 Scope 维度",
+      ],
+      coverage: "automated",
+    };
+  }
   if (operation === "PUT /api/saas/context") {
     return {
       operation,

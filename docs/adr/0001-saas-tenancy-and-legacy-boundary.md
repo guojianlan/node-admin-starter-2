@@ -88,6 +88,13 @@ Request ID 和追加审计的 break-glass 命令；没有该命令前，不提�
 required ability 和依赖就绪后才能上架；有效模块解析同时要求模块启用、有效 Entitlement、用户 ability 和依赖
 闭包。模块目录是全局平台元数据，Entitlement 是 Tenant custom business scope。
 
-整个 Phase 1 仍需继续交付邀请、团队、模块 Entitlement、Studio Project/Asset/Task/Template/Timeline/Export、
-Tenant 文件前缀、用量聚合及两个测试 Tenant 的项目/文件/任务/Tool/导出/审计攻击矩阵。在这些完成前，只能称为
+Foundation F2（2026-09-02）追加：新 SaaS 文件通过 `saas_file_binding` 绑定非空 Tenant/Workspace，实际
+`sys_file.path` 使用服务端生成的 `tenants/<tenant-code>/workspaces/<workspace-code>/...`；新业务 Job、Tool、
+Export 统一使用 `saas_async_operation`，Callback 通过 operation 数据库事实恢复 Scope，操作日志增加结构化
+`tenant_id/workspace_id`。历史 `sys_file`、Knowledge、`sys_ai_job` 和 `sys_ai_tool_execution` 不自动回填，仍需
+逐域迁移。详细合同和攻击矩阵见
+[`../saas-foundation-f2-resource-scope.md`](../saas-foundation-f2-resource-scope.md)。
+
+整个 Phase 1 仍需继续交付团队、Studio Project/Asset/Task/Template/Timeline/Export、历史资源逐域迁移、
+用量聚合及两个测试 Tenant 的项目/业务任务完整攻击矩阵。在这些完成前，只能称为
 “Tenant/Workspace 控制面基础已实现”，不能称为完整多租户 SaaS。

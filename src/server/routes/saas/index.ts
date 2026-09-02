@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { success } from "@/lib/response";
 import type { HonoVariables } from "@/server/context";
@@ -35,6 +35,18 @@ import {
   upsertTenantMember,
   upsertWorkspaceMember,
 } from "@/server/services/saas-membership-service";
+import {
+  getSaaSFile,
+  listSaaSFiles,
+  readSaaSFile,
+  updateSaaSFileBinding,
+  uploadSaaSFile,
+} from "@/server/services/saas-file-service";
+import {
+  readSaaSContextSelection,
+  resolveSaaSResourceScope,
+} from "@/server/services/saas-resource-scope-service";
+import { sqlite } from "@/server/db";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
 
 const listSchema = z.object({
@@ -185,6 +197,23 @@ const contextSelectionSchema = z.object({
   tenantId: z.coerce.number().int().positive(),
   workspaceId: z.coerce.number().int().positive().optional().nullable(),
 });
+
+const saasFileBindingSchema = z.object({
+  resourceType: z.string().trim().min(1).max(100).optional().nullable(),
+  resourceId: z
+    .union([z.string().trim().min(1).max(200), z.coerce.number()])
+    .optional()
+    .nullable(),
+  purpose: z.string().trim().max(100).optional().nullable(),
+});
+
+async function currentResourceScope(c: Context<{ Variables: HonoVariables }>) {
+  const selection = readSaaSContextSelection({
+    tenantId: c.req.header("x-saas-tenant-id"),
+    workspaceId: c.req.header("x-saas-workspace-id"),
+  });
+  return resolveSaaSResourceScope({ userId: c.get("user").id, ...selection });
+}
 
 export const saasRoutes = new Hono<{ Variables: HonoVariables }>();
 
@@ -351,6 +380,145 @@ saasRoutes.put(
     return c.json(success(result, "Tenant 成员已更新"));
   },
 );
+
+saasRoutes.get("/files", authRequired(), ability("saas.workspace.query"), async (c) => {
+  const query = listSchema.parse(c.req.query());
+  const scope = await currentResourceScope(c);
+  return c.json(success(await listSaaSFiles({ ...query, scope })));
+});
+
+saasRoutes.post("/files/upload", authRequired(), ability("saas.workspace.update"), async (c) => {
+  const user = c.get("user");
+  const scope = await currentResourceScope(c);
+  const body = await c.req.parseBody();
+  const file = body.file;
+  if (!(file instanceof File)) throw new Error("请选择文件");
+  const binding = saasFileBindingSchema.parse({
+    resourceType: body.resourceType || null,
+    resourceId: body.resourceId || null,
+    purpose: body.purpose || null,
+  });
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.file",
+      action: "upload",
+      resource: "saas_file_binding",
+      riskLevel: "medium",
+      saasScope: scope,
+      details: {
+        originalName: file.name,
+        resourceType: binding.resourceType,
+        purpose: binding.purpose,
+      },
+    },
+    () => uploadSaaSFile({ userId: user.id, scope, file, ...binding }),
+  );
+  return c.json(success(result, "SaaS 文件上传成功"));
+});
+
+saasRoutes.get("/files/:id", authRequired(), ability("saas.workspace.query"), async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+  const scope = await currentResourceScope(c);
+  return c.json(success(await getSaaSFile(scope, id)));
+});
+
+saasRoutes.get(
+  "/files/:id/download",
+  authRequired(),
+  ability("saas.workspace.query"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const scope = await currentResourceScope(c);
+    const { row, buffer } = await readSaaSFile(scope, id);
+    return new Response(buffer, {
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(row.originalName)}"`,
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  },
+);
+
+saasRoutes.put(
+  "/files/:id/binding",
+  authRequired(),
+  ability("saas.workspace.update"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = saasFileBindingSchema.parse(await c.req.json());
+    const scope = await currentResourceScope(c);
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.file",
+        action: "bind",
+        resource: "saas_file_binding",
+        resourceId: id,
+        riskLevel: "medium",
+        saasScope: scope,
+        details: { resourceType: payload.resourceType, purpose: payload.purpose },
+      },
+      () => updateSaaSFileBinding({ userId: c.get("user").id, scope, fileId: id, ...payload }),
+    );
+    return c.json(success(result, "SaaS 文件绑定已更新"));
+  },
+);
+
+saasRoutes.delete(
+  "/files/:id/binding",
+  authRequired(),
+  ability("saas.workspace.update"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const scope = await currentResourceScope(c);
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.file",
+        action: "unbind",
+        resource: "saas_file_binding",
+        resourceId: id,
+        riskLevel: "medium",
+        saasScope: scope,
+      },
+      () =>
+        updateSaaSFileBinding({
+          userId: c.get("user").id,
+          scope,
+          fileId: id,
+          resourceType: null,
+          resourceId: null,
+          purpose: null,
+        }),
+    );
+    return c.json(success(result, "SaaS 文件业务绑定已移除"));
+  },
+);
+
+saasRoutes.get("/audit", authRequired(), ability("saas.workspace.query"), async (c) => {
+  const scope = await currentResourceScope(c);
+  const query = listSchema.parse(c.req.query());
+  const total = (await sqlite
+    .prepare(
+      `SELECT COUNT(*)::int AS total FROM sys_operation_log
+       WHERE tenant_id = ? AND workspace_id = ?`,
+    )
+    .get(scope.tenantId, scope.workspaceId)) as { total: number };
+  const rows = await sqlite
+    .prepare(
+      `SELECT id, user_id AS "userId", username, module, action, resource, resource_id AS "resourceId",
+        request_id AS "requestId", status, success, risk_level AS "riskLevel", message, created_at AS "createdAt"
+       FROM sys_operation_log
+       WHERE tenant_id = ? AND workspace_id = ?
+       ORDER BY id DESC LIMIT ? OFFSET ?`,
+    )
+    .all(scope.tenantId, scope.workspaceId, query.pageSize, (query.page - 1) * query.pageSize);
+  return c.json(
+    success({ data: rows, page: query.page, pageSize: query.pageSize, total: Number(total.total) }),
+  );
+});
 
 saasRoutes.delete(
   "/tenant-members/:tenantId/:userId",

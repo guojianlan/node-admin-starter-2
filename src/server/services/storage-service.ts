@@ -369,13 +369,19 @@ async function storeBufferInDefaultStorage(input: {
   enableSha256Dedupe: boolean;
   usageType?: "general" | "knowledge" | "user_content";
   metadata?: Record<string, unknown>;
+  pathPrefix?: string;
 }) {
   const storage = await getDefaultStorage();
   const extWithDot = safeExt(input.originalName);
   const ext = extWithDot.replace(".", "");
   const sha256 = crypto.createHash("sha256").update(input.buffer).digest("hex");
 
-  if (input.enableSha256Dedupe) {
+  const pathPrefix = input.pathPrefix?.replace(/^\/+|\/+$/g, "");
+  if (pathPrefix && !/^[a-z0-9][a-z0-9/_-]*$/.test(pathPrefix)) {
+    throw new Error("对象存储前缀不合法");
+  }
+
+  if (input.enableSha256Dedupe && !pathPrefix) {
     const existing = (await sqlite
       .prepare(
         `SELECT id, url
@@ -395,10 +401,11 @@ async function storeBufferInDefaultStorage(input: {
 
   const dateDir = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   const filename = `${crypto.randomUUID()}${extWithDot}`;
-  const relativePath = `${dateDir}/${filename}`;
+  const relativeDir = pathPrefix ? `${pathPrefix}/${dateDir}` : dateDir;
+  const relativePath = `${relativeDir}/${filename}`;
 
   if (storage.type === "local") {
-    const absoluteDir = path.join(localRoot(storage.rootPath), dateDir);
+    const absoluteDir = path.join(localRoot(storage.rootPath), relativeDir);
     await fs.mkdir(absoluteDir, { recursive: true });
     await fs.writeFile(path.join(absoluteDir, filename), input.buffer);
   } else {
@@ -482,6 +489,8 @@ export async function uploadFileToDefaultStorage(input: {
   groupId: number | null;
   userId: number;
   usageType?: "general" | "knowledge" | "user_content";
+  metadata?: Record<string, unknown>;
+  pathPrefix?: string;
 }) {
   const ext = safeExt(input.file.name).replace(".", "");
   const uploadConfig = await assertUploadAllowed(input.file, ext);
@@ -493,6 +502,8 @@ export async function uploadFileToDefaultStorage(input: {
     userId: input.userId,
     enableSha256Dedupe: uploadConfig.enableSha256Dedupe,
     usageType: input.usageType,
+    metadata: input.metadata,
+    pathPrefix: input.pathPrefix,
   });
 }
 
@@ -506,6 +517,7 @@ export async function storeTrustedGeneratedText(input: {
   source?: string;
   usageType?: "general" | "knowledge" | "user_content";
   metadata?: Record<string, unknown>;
+  pathPrefix?: string;
 }) {
   const originalName = path.basename(input.name);
   const ext = safeExt(originalName).replace(".", "");
@@ -534,6 +546,7 @@ export async function storeTrustedGeneratedText(input: {
       source: input.source ?? "system",
       ...(input.metadata ?? {}),
     },
+    pathPrefix: input.pathPrefix,
   });
 }
 

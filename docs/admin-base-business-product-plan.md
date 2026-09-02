@@ -1293,7 +1293,13 @@ MVP 目标值在实施阶段通过压测确认，初始建议：
 ACL。通用后台、SaaS 基座、Studio Kernel 和垂直产品的边界及后续基座顺序见
 [`admin-base-saas-foundation-boundary.md`](./admin-base-saas-foundation-boundary.md)。
 
-Team、Studio Kernel、Tenant 文件前缀、用量和项目/文件/任务/Tool/导出/审计的两 Tenant 全链路攻击矩阵仍待后续
+Foundation F2（2026-09-02，`implemented-unverified`）：已加入统一 `SaaSResourceScope`、新 SaaS 文件的
+`saas_file_binding` 与服务端 Tenant/Workspace 对象前缀、Job/Tool/Export/Callback 的
+`saas_async_operation`/`saas_callback_event`、结构化 Tenant 审计，以及文件、异步任务、Tool、Export、Callback
+和 Audit 的两 Tenant 攻击矩阵。详细合同见
+[`saas-foundation-f2-resource-scope.md`](./saas-foundation-f2-resource-scope.md)。
+
+Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、用量以及真实 S3/Worker/Provider 验收仍待后续
 切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。

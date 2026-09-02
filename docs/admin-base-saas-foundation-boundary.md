@@ -57,8 +57,8 @@ L1 不是某个内容产品的业务扩展；只要系统要服务多个客户�
 | Module / Entitlement | 已有模块目录、上架闸门、依赖和有效模块解析                   | 套餐继承、批量授权、运营审批                                           |
 | Tenant 菜单          | 本阶段新增已上架模块按有效 Entitlement fail closed           | 业务模块上架时必须登记真实 route/action；控制面 route 不登记为产品模块 |
 | 用量与配额           | AI 现有 system/department/user 账本可参考                    | 新增 Tenant/Workspace/Module 维度的 reserve/settle/release             |
-| Tenant 文件          | 平台文件能力可复用                                           | 新业务资产绑定非空 Tenant/Workspace，服务端生成对象前缀                |
-| Tenant Worker        | AI Worker 能力可复用                                         | Job、Tool、Export、Callback 全部携带并重新校验 Tenant 上下文           |
+| Tenant 文件          | F2 已新增 `saas_file_binding` 与 Scope 文件 API              | 新业务资产必须绑定非空 Tenant/Workspace；历史文件仍按域迁移            |
+| Tenant Worker        | F2 已新增 Job/Tool/Export/Callback 统一异步 Scope 封套       | 业务处理器与真实 Provider 必须在副作用前使用数据库 Scope 重新校验      |
 | API / Webhook        | 尚未形成通用 SaaS 合同                                       | API Key Hash、scope、签名、重放保护、Outbox、重试                      |
 | Plan / Billing       | Entitlement 有手工/试用/套餐来源字段                         | Plan、Subscription、Invoice/Payment Provider 后续独立阶段              |
 | 品牌与域名           | 主题/I18n 有平台基础                                         | Tenant 品牌、域名验证、邮件品牌和安全回退                              |
@@ -97,7 +97,7 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 ## 5. 基座优先实施顺序
 
 1. **Foundation F1（本阶段）**：可信当前上下文、数据库偏好、请求 Header、后台切换器、Entitlement 菜单过滤、跨 Tenant 测试。
-2. **Foundation F2**：统一 `SaaSResourceScope`，Tenant 化新文件绑定、业务 Job/Tool/Export/Audit 上下文，补两个 Tenant 攻击矩阵。
+2. **Foundation F2（已实现，环境未验收）**：统一 `SaaSResourceScope`，Tenant 化新文件绑定、业务 Job/Tool/Export/Callback/Audit 上下文，并补两个 Tenant 攻击矩阵；详细合同见 [`saas-foundation-f2-resource-scope.md`](./saas-foundation-f2-resource-scope.md)。
 3. **Foundation F3**：Tenant/Workspace/Module 用量 reserve-settle-release、并发额度、套餐继承与超限策略。
 4. **Foundation F4**：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
 5. **Studio K1-K3**：只有 F1-F2 的隔离合同稳定后，才建设 Project/Asset、Task/Timeline/Export 和公共工作台。
@@ -118,11 +118,15 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 
 2026-09-02 已完成：
 
-- `pnpm admin:verify --module saas`：SaaS 定向测试 8/8、类型、模块 ESLint、route check 和测试清单通过。
+- `pnpm admin:verify --module saas`：SaaS 定向测试 12/12、类型、模块 ESLint、route check 和测试清单通过。
 - `pnpm lint`：全仓 ESLint 通过。
-- `pnpm test`：第二次完整运行 38 个 Test Files、631 项测试全部通过；第一次完整运行仅既有公告部门可见性
-  用例偶发失败，该用例窄范围复跑通过，随后完整复跑也通过。
-- API/page 清单为 389/389、41/41，`PUT /api/saas/context` 有独立的成员范围、持久化、审计和失败回滚合同。
+- `pnpm test`：完整运行 39 个 Test Files、642 项测试全部通过。
+- API/page 清单为 396/396、41/41，`PUT /api/saas/context` 有独立的成员范围、持久化、审计和失败回滚合同。
+- Foundation F2 新增统一 `SaaSResourceScope`、服务端 Tenant/Workspace 文件前缀、`saas_file_binding`、
+  `saas_async_operation`、`saas_callback_event` 和结构化 Tenant 审计维度；Tenant A/B 的文件、Job、Tool、Export、
+  Callback 与 Audit 攻击矩阵由 `tests/api/saas-resource-foundation.test.ts` 自动阻断。
 
-本阶段未运行 production build、smoke 或真实浏览器明暗主题/窄屏交互，也没有 SMTP、S3 或外部 Provider 变更。
-因此状态保持 `implemented-unverified`；自动化通过不等于生产环境或视觉验收完成。
+`pnpm admin:verify --full` 的 TypeScript、ESLint、Vitest、test-case inventory 和 route check 均通过；其附带的
+production build 被开始前已有的 `next-env.d.ts -> .next/dev/types` 与过期 `.next/dev` 路由类型阻断，错误指向已不存在
+的 `system/qa/note/page.js`，未改写或提交该用户文件。未运行 smoke、真实浏览器明暗主题/窄屏、真实 S3、常驻 Worker
+长跑或外部 Provider/Webhook 验收。因此状态保持 `implemented-unverified`；自动化通过不等于生产环境或视觉验收完成。
