@@ -67,6 +67,9 @@ const operationsByMethod = {
     "/api/saas/modules",
     "/api/saas/modules/effective",
     "/api/saas/entitlements",
+    "/api/saas/plans",
+    "/api/saas/usage/summary",
+    "/api/saas/usage/ledger",
     "/api/saas/files",
     "/api/saas/files/{id}",
     "/api/saas/files/{id}/download",
@@ -205,6 +208,8 @@ const operationsByMethod = {
     "/api/saas/invitations/accept",
     "/api/saas/modules",
     "/api/saas/entitlements",
+    "/api/saas/plans",
+    "/api/saas/usage/adjustments",
     "/api/saas/tenants",
     "/api/saas/workspaces",
     "/api/system/ai/agent",
@@ -340,6 +345,9 @@ const operationsByMethod = {
     "/api/saas/workspace-members/{workspaceId}/{userId}",
     "/api/saas/modules/{id}",
     "/api/saas/entitlements/{id}",
+    "/api/saas/plans/{id}",
+    "/api/saas/subscriptions/{tenantId}",
+    "/api/saas/usage/policies",
     "/api/saas/tenants/{id}",
     "/api/saas/workspaces/{id}",
     "/api/system/ai/eval/cases/{id}",
@@ -491,6 +499,60 @@ function createCase(method: string, path: string): ApiTestCase {
       ],
       sideEffects: [
         "只读查询不修改审计事实；SaaS mutation/background operation 负责写入结构化 Scope 维度",
+      ],
+      coverage: "automated",
+    };
+  }
+  if (path.startsWith("/api/saas/usage/")) {
+    return {
+      operation,
+      area: "SaaS 基座 / 用量与配额",
+      success: [
+        "查询从可信 Tenant/Workspace 上下文解析 Module/Metric 的有效套餐或覆盖策略，调整只追加账本事实",
+        "额度优先级为 Workspace override、Tenant override、Entitlement override、当前有效 Plan，返回周期、总量、占用、并发和来源快照",
+      ],
+      failures: [
+        "未登录返回 401；缺少 usageQuery 或 planManage ability 返回 403；上下文、Entitlement、订阅或策略失效时 fail closed",
+        "跨 Tenant/Workspace ID、非法 metric/period/quantity、无额度和超并发请求返回 4xx，不产生账本或覆盖其他客户策略",
+      ],
+      dataAssertions: [
+        "Reservation 使用非空 tenantId/workspaceId/moduleId、幂等键、过期时间和策略快照；Ledger 为追加事实且结算唯一",
+        "summary 的 settled/reserved/remaining/concurrent 与同一聚合范围和周期内数据库事实一致，release/expired 立即释放占用",
+      ],
+      security: [
+        "Tenant A 不能读取、调整、结算或释放 Tenant B 用量；Header、payload limit 和模块 ID 不能覆盖数据库 Entitlement/Plan 事实",
+        "高风险 adjustment/overage/策略变更写结构化 Tenant 审计，但日志不记录 Prompt、正文、Secret 或 Provider payload",
+      ],
+      sideEffects: [
+        "查询不修改账本；人工 adjustment 以 high 风险追加 saas_usage_ledger 并保持历史记录不可覆盖",
+        "重复请求依赖唯一幂等键和事务锁只执行一次；失败、取消和过期路径释放 Reservation 与并发槽",
+      ],
+      coverage: "automated",
+    };
+  }
+  if (path.startsWith("/api/saas/plans") || path.startsWith("/api/saas/subscriptions")) {
+    return {
+      operation,
+      area: "SaaS 基座 / 套餐与订阅",
+      success: [
+        "平台操作员维护全局 Plan 及 Module/Metric 限制，并为有效 Tenant 分配唯一当前订阅",
+        "套餐限制包含 period、limitQuantity、concurrencyLimit 和 overagePolicy，生效后由用量服务解析而非相信客户端额度",
+      ],
+      failures: [
+        "未登录返回 401；缺少 planQuery/planManage ability 返回 403；无效 Tenant、Module、Plan、日期或重复限制返回 4xx",
+        "draft/retired Plan 不能建立 active/trial 订阅，失败事务不留下半套 Plan limit 或错误订阅",
+      ],
+      dataAssertions: [
+        "saas_plan 是全局控制面元数据，saas_tenant_subscription 绑定 Tenant，Plan module limit 唯一且数值精度保持",
+        "同一 Tenant 只有一个未删除的当前订阅；更新 Plan limits 在单事务中替换完整限制集合",
+      ],
+      security: [
+        "套餐管理只使用平台 ability，不授予客户正文访问权；Tenant payload 不能绕过状态、日期和模块上架校验",
+        "响应与操作日志只包含控制面字段，不包含客户业务 payload、Prompt、文件正文或密钥",
+      ],
+      sideEffects: [
+        "Plan、订阅和覆盖策略 mutation 写 high 风险操作日志及 requestId",
+        "Plan 更新和订阅切换不覆盖既有 Usage Ledger，历史结算事实保持可追踪",
       ],
       coverage: "automated",
     };

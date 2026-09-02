@@ -4161,6 +4161,231 @@ BEFORE UPDATE ON saas_async_operation
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 `,
   },
+  {
+    id: "0067_saas_usage_foundation",
+    sql: `
+CREATE TABLE IF NOT EXISTS saas_plan (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'retired')),
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_plan_code_active_unique
+  ON saas_plan(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_plan_status_created_idx
+  ON saas_plan(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_plan_module_limit (
+  id SERIAL PRIMARY KEY,
+  plan_id INTEGER NOT NULL REFERENCES saas_plan(id) ON DELETE CASCADE,
+  module_id INTEGER NOT NULL REFERENCES saas_module(id) ON DELETE RESTRICT,
+  metric TEXT NOT NULL,
+  period TEXT NOT NULL DEFAULT 'monthly' CHECK (period IN ('daily', 'monthly', 'lifetime')),
+  limit_quantity NUMERIC(30, 6),
+  concurrency_limit INTEGER,
+  overage_policy TEXT NOT NULL DEFAULT 'reject'
+    CHECK (overage_policy IN ('reject', 'allow_with_audit')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CONSTRAINT saas_plan_module_limit_values_check CHECK (
+    (limit_quantity IS NOT NULL AND limit_quantity >= 0) OR
+    (concurrency_limit IS NOT NULL AND concurrency_limit >= 1)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_plan_module_limit_unique
+  ON saas_plan_module_limit(plan_id, module_id, metric, period);
+CREATE INDEX IF NOT EXISTS saas_plan_module_limit_module_idx
+  ON saas_plan_module_limit(module_id, metric);
+
+CREATE TABLE IF NOT EXISTS saas_tenant_subscription (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  plan_id INTEGER NOT NULL REFERENCES saas_plan(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'trial'
+    CHECK (status IN ('trial', 'active', 'suspended', 'expired', 'cancelled')),
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ends_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CONSTRAINT saas_tenant_subscription_dates_check
+    CHECK (ends_at IS NULL OR ends_at > starts_at)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_subscription_tenant_active_unique
+  ON saas_tenant_subscription(tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_tenant_subscription_plan_status_idx
+  ON saas_tenant_subscription(plan_id, status);
+
+CREATE TABLE IF NOT EXISTS saas_usage_policy_override (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  module_id INTEGER NOT NULL REFERENCES saas_module(id) ON DELETE RESTRICT,
+  metric TEXT NOT NULL,
+  period TEXT NOT NULL DEFAULT 'monthly' CHECK (period IN ('daily', 'monthly', 'lifetime')),
+  limit_quantity NUMERIC(30, 6),
+  concurrency_limit INTEGER,
+  overage_policy TEXT NOT NULL DEFAULT 'reject'
+    CHECK (overage_policy IN ('reject', 'allow_with_audit')),
+  status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (0, 1)),
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CONSTRAINT saas_usage_policy_override_values_check CHECK (
+    (limit_quantity IS NOT NULL AND limit_quantity >= 0) OR
+    (concurrency_limit IS NOT NULL AND concurrency_limit >= 1)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_usage_policy_override_scope_unique
+  ON saas_usage_policy_override(
+    tenant_id, COALESCE(workspace_id, 0), module_id, metric, period
+  ) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS saas_usage_policy_override_lookup_idx
+  ON saas_usage_policy_override(tenant_id, workspace_id, module_id, metric, status);
+
+CREATE TABLE IF NOT EXISTS saas_usage_reservation (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE RESTRICT,
+  module_id INTEGER NOT NULL REFERENCES saas_module(id) ON DELETE RESTRICT,
+  metric TEXT NOT NULL,
+  aggregation_scope TEXT NOT NULL DEFAULT 'tenant'
+    CHECK (aggregation_scope IN ('tenant', 'workspace')),
+  period TEXT NOT NULL CHECK (period IN ('daily', 'monthly', 'lifetime')),
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'reserved'
+    CHECK (status IN ('reserved', 'settled', 'released', 'expired')),
+  reserved_quantity NUMERIC(30, 6) NOT NULL CHECK (reserved_quantity > 0),
+  settled_quantity NUMERIC(30, 6) CHECK (settled_quantity IS NULL OR settled_quantity >= 0),
+  concurrent_units INTEGER NOT NULL DEFAULT 1 CHECK (concurrent_units >= 1),
+  limit_quantity_snapshot NUMERIC(30, 6)
+    CHECK (limit_quantity_snapshot IS NULL OR limit_quantity_snapshot >= 0),
+  concurrency_limit_snapshot INTEGER
+    CHECK (concurrency_limit_snapshot IS NULL OR concurrency_limit_snapshot >= 1),
+  overage_policy_snapshot TEXT NOT NULL DEFAULT 'reject'
+    CHECK (overage_policy_snapshot IN ('reject', 'allow_with_audit')),
+  policy_source TEXT NOT NULL,
+  overage BOOLEAN NOT NULL DEFAULT false,
+  idempotency_key TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  request_id TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  settled_at TIMESTAMPTZ,
+  released_at TIMESTAMPTZ,
+  release_reason TEXT,
+  created_by INTEGER NOT NULL REFERENCES sys_user(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT saas_usage_reservation_resource_pair_check CHECK (
+    (resource_type IS NULL AND resource_id IS NULL) OR
+    (resource_type IS NOT NULL AND resource_id IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_usage_reservation_scope_idempotency_unique
+  ON saas_usage_reservation(tenant_id, workspace_id, module_id, metric, idempotency_key);
+CREATE INDEX IF NOT EXISTS saas_usage_reservation_active_scope_idx
+  ON saas_usage_reservation(
+    tenant_id, workspace_id, module_id, metric, status, expires_at
+  );
+CREATE INDEX IF NOT EXISTS saas_usage_reservation_period_idx
+  ON saas_usage_reservation(tenant_id, module_id, metric, period_start);
+
+CREATE TABLE IF NOT EXISTS saas_usage_ledger (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE RESTRICT,
+  module_id INTEGER NOT NULL REFERENCES saas_module(id) ON DELETE RESTRICT,
+  metric TEXT NOT NULL,
+  reservation_id INTEGER REFERENCES saas_usage_reservation(id) ON DELETE RESTRICT,
+  entry_type TEXT NOT NULL DEFAULT 'settlement'
+    CHECK (entry_type IN ('settlement', 'adjustment', 'reversal')),
+  quantity NUMERIC(30, 6) NOT NULL,
+  overage BOOLEAN NOT NULL DEFAULT false,
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ,
+  source TEXT NOT NULL,
+  description TEXT,
+  idempotency_key TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  request_id TEXT,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT saas_usage_ledger_settlement_quantity_check
+    CHECK (entry_type <> 'settlement' OR quantity >= 0),
+  CONSTRAINT saas_usage_ledger_resource_pair_check CHECK (
+    (resource_type IS NULL AND resource_id IS NULL) OR
+    (resource_type IS NOT NULL AND resource_id IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_usage_ledger_reservation_settlement_unique
+  ON saas_usage_ledger(reservation_id)
+  WHERE entry_type = 'settlement' AND reservation_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS saas_usage_ledger_adjustment_idempotency_unique
+  ON saas_usage_ledger(tenant_id, workspace_id, module_id, metric, idempotency_key)
+  WHERE entry_type IN ('adjustment', 'reversal') AND idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS saas_usage_ledger_scope_period_idx
+  ON saas_usage_ledger(tenant_id, workspace_id, module_id, metric, period_start);
+CREATE INDEX IF NOT EXISTS saas_usage_ledger_occurred_idx
+  ON saas_usage_ledger(tenant_id, occurred_at DESC);
+
+ALTER TABLE saas_async_operation
+  ADD COLUMN IF NOT EXISTS module_id INTEGER REFERENCES saas_module(id) ON DELETE RESTRICT;
+ALTER TABLE saas_async_operation
+  ADD COLUMN IF NOT EXISTS usage_reservation_id INTEGER
+    REFERENCES saas_usage_reservation(id) ON DELETE RESTRICT;
+ALTER TABLE saas_async_operation
+  DROP CONSTRAINT IF EXISTS saas_async_operation_usage_pair_check;
+ALTER TABLE saas_async_operation
+  ADD CONSTRAINT saas_async_operation_usage_pair_check CHECK (
+    (module_id IS NULL AND usage_reservation_id IS NULL) OR
+    (module_id IS NOT NULL AND usage_reservation_id IS NOT NULL)
+  );
+CREATE UNIQUE INDEX IF NOT EXISTS saas_async_operation_usage_reservation_unique
+  ON saas_async_operation(usage_reservation_id) WHERE usage_reservation_id IS NOT NULL;
+
+DROP TRIGGER IF EXISTS trg_saas_plan_updated_at ON saas_plan;
+CREATE TRIGGER trg_saas_plan_updated_at
+BEFORE UPDATE ON saas_plan
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_plan_module_limit_updated_at ON saas_plan_module_limit;
+CREATE TRIGGER trg_saas_plan_module_limit_updated_at
+BEFORE UPDATE ON saas_plan_module_limit
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_tenant_subscription_updated_at ON saas_tenant_subscription;
+CREATE TRIGGER trg_saas_tenant_subscription_updated_at
+BEFORE UPDATE ON saas_tenant_subscription
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_usage_policy_override_updated_at ON saas_usage_policy_override;
+CREATE TRIGGER trg_saas_usage_policy_override_updated_at
+BEFORE UPDATE ON saas_usage_policy_override
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_usage_reservation_updated_at ON saas_usage_reservation;
+CREATE TRIGGER trg_saas_usage_reservation_updated_at
+BEFORE UPDATE ON saas_usage_reservation
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

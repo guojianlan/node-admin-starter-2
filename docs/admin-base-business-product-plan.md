@@ -198,7 +198,7 @@ flowchart TD
 建议对象：
 
 - `saas_module`：code、名称、版本、状态、依赖、路由入口和能力声明。
-- `saas_plan_entitlement`：套餐包含的模块、用量、并发、导出规格和高级功能。
+- `saas_plan` / `saas_plan_module_limit`：套餐身份以及 Module/Metric 的用量、并发和超限策略。
 - `saas_tenant_entitlement`：租户增购、试用、覆盖和过期。
 - `saas_feature_flag`：受控灰度，不替代正式权限。
 
@@ -1299,7 +1299,13 @@ Foundation F2（2026-09-02，`implemented-unverified`）：已加入统一 `SaaS
 和 Audit 的两 Tenant 攻击矩阵。详细合同见
 [`saas-foundation-f2-resource-scope.md`](./saas-foundation-f2-resource-scope.md)。
 
-Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、用量以及真实 S3/Worker/Provider 验收仍待后续
+Foundation F3（2026-09-02，`implemented-unverified`）：已加入 `saas_plan`、Module/Metric 套餐限制、
+Tenant Subscription、Tenant/Workspace 策略覆盖、`saas_usage_reservation` reserve/settle/release/expired、
+并发额度、追加式 Usage Ledger、幂等 adjustment、governed overage 和 `saas_async_operation` 完成/失败/取消
+补偿。详细合同见 [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
+
+Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、正式 Invoice/Payment/Provider 对账以及真实
+S3/Worker/Provider 验收仍待后续
 切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。

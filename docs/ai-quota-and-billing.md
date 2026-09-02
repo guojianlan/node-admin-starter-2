@@ -21,6 +21,10 @@ usage Ledger。
 这不是 tenant 隔离。没有 tenant ID、租户级认证、租户数据范围或租户账单，不能把 department 当成
 完整租户替代品。
 
+通用 SaaS 的 Tenant/Workspace/Module/Metric 用量已由 Foundation F3 独立实现，见
+[`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。F3 使用 Plan/Subscription、策略继承、
+Reservation 和追加式 Usage Ledger；它不会读取或回填本表，也不会把 AI department policy 当成 Tenant Plan。
+
 ## 2. 账本
 
 每个成功并有估算费用的 Invocation 最多生成一条 `usage` Ledger：
@@ -53,3 +57,6 @@ usage Ledger。
 
 引入正式商业计费前，应增加 tenant、billing account、period、invoice、invoice line、payment 和
 Provider statement/reconciliation 模型，并由财务规则审查，而不是直接扩展现有估算表。
+
+Foundation F3 已补充前置的 Tenant Plan、Subscription 和业务用量事实，但仍没有 billing account、Invoice、
+Payment、Tax、Refund、关账或 Provider statement 对账，因此不能把 F3 Usage Ledger 称为正式财务账本。

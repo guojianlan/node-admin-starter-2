@@ -58,8 +58,9 @@ Notebook/RAG 的引用交互、公开研究依据和开源参考边界见
 当前没有引入：
 
 - Redis、Kafka、RabbitMQ 和独立任务调度中心；AI 长任务使用 PostgreSQL Queue/Outbox Worker。
-- 完整多租户；当前已增加 Tenant/Workspace 控制面、可信上下文以及 F2 新 SaaS 文件/异步操作 Scope 基座，但
-  历史文件、Knowledge、Notebook、AI Job/Tool 仍保持原域，Studio Project/Task 也尚未实现，不能宣称 Phase 1 闭环。
+- 完整多租户；当前已增加 Tenant/Workspace 控制面、可信上下文、F2 SaaS 文件/异步操作 Scope，以及 F3
+  Plan/Subscription/Usage Reservation/Ledger 基座，但历史文件、Knowledge、Notebook、AI Job/Tool 仍保持原域，
+  Studio Project/Task 也尚未实现，不能宣称 Phase 1 闭环。
 
 静态 OpenAPI、GitHub Actions CI、验收依赖 Compose 和受治理模块生成器已经存在；它们不改变
 Next.js + Hono 单应用和 PostgreSQL-first 的源码启动主路径。
@@ -240,6 +241,9 @@ CRUD factory 当前能力：
 | `saas_module` / `saas_tenant_entitlement`                             | 全局模块目录、依赖、能力声明及 Tenant 试用/开通/覆盖/过期                        |
 | `saas_file_binding`                                                   | 新 SaaS 文件的非空 Tenant/Workspace 归属、服务端对象键和业务主绑定               |
 | `saas_async_operation` / `saas_callback_event`                        | 新 SaaS Job/Tool/Export 的 Scope、租约、幂等和从数据库恢复的 Callback 事实       |
+| `saas_plan` / `saas_plan_module_limit` / `saas_tenant_subscription`   | 全局套餐、Module/Metric 限制与 Tenant 当前套餐控制面                             |
+| `saas_usage_policy_override`                                          | Tenant/Workspace 用量覆盖策略、并发、超限规则和变更原因                          |
+| `saas_usage_reservation` / `saas_usage_ledger`                        | reserve/settle/release/expired 状态机与追加式用量事实                            |
 
 数据库策略：
 
@@ -275,6 +279,10 @@ CRUD factory 当前能力：
   `tenants/<tenant-code>/workspaces/<workspace-code>/...`，Worker/Tool/Export/Callback 在副作用前重新校验数据库
   Scope，SaaS 操作日志使用结构化 `tenant_id/workspace_id` 查询。历史系统资源保持原语义，按域迁移；详细边界见
   [`docs/adr/0001-saas-tenancy-and-legacy-boundary.md`](./adr/0001-saas-tenancy-and-legacy-boundary.md)。
+- F3 用量治理以有效 Entitlement 为消费前提，策略优先级为 Workspace override、Tenant override、Entitlement
+  override、当前 Plan；Reservation 使用 Entitlement 行锁、Scope 幂等键和策略快照，Ledger 只追加 settlement/
+  adjustment/reversal。计量 `saas_async_operation` 在同一事务完成结算，失败、取消和 Scope 失效释放占用。浏览器
+  不开放任意 reserve/settle/release 接口，业务模块必须通过显式服务端 Command 使用该合同。
 - `login.captcha_enabled` 开启后，登录页会通过公开登录选项接口显示验证码，登录接口会强制校验一次性验证码。
 - 忘记密码使用 `sys_password_reset_token` 保存 token hash；邮件里只发送明文重置链接，服务端不保存明文 token。
 

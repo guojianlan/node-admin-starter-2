@@ -49,19 +49,19 @@ L0 的完成标准是“一个新业务模块不需要重新发明后台工程�
 
 L1 不是某个内容产品的业务扩展；只要系统要服务多个客户组织，就必须先完成这些能力。
 
-| 能力域               | 当前状态                                                     | 后续必须收口                                                           |
-| -------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| Tenant / Workspace   | 已有 schema、migration、页面、API、成员范围                  | 生命周期联动与环境验收                                                 |
-| Member / Invitation  | 已有角色、停用/移除、Hash Token、邮箱绑定                    | SMTP Outbox、所有权转移、Team                                          |
-| Current Context      | 本阶段新增服务端校验、数据库偏好、Header 传递、Header 切换器 | 所有新 SaaS 资源统一使用 `requireSaasContext`                          |
-| Module / Entitlement | 已有模块目录、上架闸门、依赖和有效模块解析                   | 套餐继承、批量授权、运营审批                                           |
-| Tenant 菜单          | 本阶段新增已上架模块按有效 Entitlement fail closed           | 业务模块上架时必须登记真实 route/action；控制面 route 不登记为产品模块 |
-| 用量与配额           | AI 现有 system/department/user 账本可参考                    | 新增 Tenant/Workspace/Module 维度的 reserve/settle/release             |
-| Tenant 文件          | F2 已新增 `saas_file_binding` 与 Scope 文件 API              | 新业务资产必须绑定非空 Tenant/Workspace；历史文件仍按域迁移            |
-| Tenant Worker        | F2 已新增 Job/Tool/Export/Callback 统一异步 Scope 封套       | 业务处理器与真实 Provider 必须在副作用前使用数据库 Scope 重新校验      |
-| API / Webhook        | 尚未形成通用 SaaS 合同                                       | API Key Hash、scope、签名、重放保护、Outbox、重试                      |
-| Plan / Billing       | Entitlement 有手工/试用/套餐来源字段                         | Plan、Subscription、Invoice/Payment Provider 后续独立阶段              |
-| 品牌与域名           | 主题/I18n 有平台基础                                         | Tenant 品牌、域名验证、邮件品牌和安全回退                              |
+| 能力域               | 当前状态                                                      | 后续必须收口                                                           |
+| -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Tenant / Workspace   | 已有 schema、migration、页面、API、成员范围                   | 生命周期联动与环境验收                                                 |
+| Member / Invitation  | 已有角色、停用/移除、Hash Token、邮箱绑定                     | SMTP Outbox、所有权转移、Team                                          |
+| Current Context      | 本阶段新增服务端校验、数据库偏好、Header 传递、Header 切换器  | 所有新 SaaS 资源统一使用 `requireSaasContext`                          |
+| Module / Entitlement | 已有模块目录、上架闸门、依赖、有效模块解析和 F3 套餐继承      | 批量授权、运营审批                                                     |
+| Tenant 菜单          | 本阶段新增已上架模块按有效 Entitlement fail closed            | 业务模块上架时必须登记真实 route/action；控制面 route 不登记为产品模块 |
+| 用量与配额           | F3 已有 Tenant/Workspace/Module/Metric reserve/settle/release | 生产并发规模、长跑 Worker 和业务模块逐项接入                           |
+| Tenant 文件          | F2 已新增 `saas_file_binding` 与 Scope 文件 API               | 新业务资产必须绑定非空 Tenant/Workspace；历史文件仍按域迁移            |
+| Tenant Worker        | F2 已新增 Job/Tool/Export/Callback 统一异步 Scope 封套        | 业务处理器与真实 Provider 必须在副作用前使用数据库 Scope 重新校验      |
+| API / Webhook        | 尚未形成通用 SaaS 合同                                        | API Key Hash、scope、签名、重放保护、Outbox、重试                      |
+| Plan / Billing       | F3 已有 Plan、Module Limit 与 Tenant Subscription 控制面      | Invoice、Payment、正式关账和 Provider 对账后续独立阶段                 |
+| 品牌与域名           | 主题/I18n 有平台基础                                          | Tenant 品牌、域名验证、邮件品牌和安全回退                              |
 
 ### 3.1 当前上下文合同
 
@@ -98,7 +98,9 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 
 1. **Foundation F1（本阶段）**：可信当前上下文、数据库偏好、请求 Header、后台切换器、Entitlement 菜单过滤、跨 Tenant 测试。
 2. **Foundation F2（已实现，环境未验收）**：统一 `SaaSResourceScope`，Tenant 化新文件绑定、业务 Job/Tool/Export/Callback/Audit 上下文，并补两个 Tenant 攻击矩阵；详细合同见 [`saas-foundation-f2-resource-scope.md`](./saas-foundation-f2-resource-scope.md)。
-3. **Foundation F3**：Tenant/Workspace/Module 用量 reserve-settle-release、并发额度、套餐继承与超限策略。
+3. **Foundation F3（已实现，环境未验收）**：Tenant/Workspace/Module/Metric 用量
+   reserve-settle-release、并发额度、套餐继承、幂等补偿与超限审计；详细合同见
+   [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
 4. **Foundation F4**：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
 5. **Studio K1-K3**：只有 F1-F2 的隔离合同稳定后，才建设 Project/Asset、Task/Timeline/Export 和公共工作台。
 6. **垂直产品**：每次选择 1-2 个产品做完整 MVP，不批量创建空菜单或空页面。
@@ -116,15 +118,19 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 
 ## 7. 本阶段验证边界
 
-2026-09-02 已完成：
+2026-09-02 当前已完成：
 
-- `pnpm admin:verify --module saas`：SaaS 定向测试 12/12、类型、模块 ESLint、route check 和测试清单通过。
+- `pnpm admin:verify --module saas`：SaaS 定向测试 18/18、类型、模块 ESLint、route check 和测试清单通过。
 - `pnpm lint`：全仓 ESLint 通过。
-- `pnpm test`：完整运行 39 个 Test Files、642 项测试全部通过。
-- API/page 清单为 396/396、41/41，`PUT /api/saas/context` 有独立的成员范围、持久化、审计和失败回滚合同。
+- `pnpm test`：完整运行 40 个 Test Files、656 项测试全部通过。
+- API/page 清单为 404/404、41/41，F1 上下文、F2 资源 Scope 与 F3 用量/套餐 API 均有独立安全合同。
 - Foundation F2 新增统一 `SaaSResourceScope`、服务端 Tenant/Workspace 文件前缀、`saas_file_binding`、
   `saas_async_operation`、`saas_callback_event` 和结构化 Tenant 审计维度；Tenant A/B 的文件、Job、Tool、Export、
   Callback 与 Audit 攻击矩阵由 `tests/api/saas-resource-foundation.test.ts` 自动阻断。
+- Foundation F3 新增 `saas_plan`、`saas_plan_module_limit`、`saas_tenant_subscription`、
+  `saas_usage_policy_override`、`saas_usage_reservation` 和追加式 `saas_usage_ledger`；Plan/Entitlement/Tenant/
+  Workspace 的继承顺序、并发 Reserve、幂等结算/释放、过期回收、governed overage 以及异步 operation
+  完成/失败/取消补偿由 `tests/api/saas-usage-foundation.test.ts` 自动覆盖。
 
 `pnpm admin:verify --full` 的 TypeScript、ESLint、Vitest、test-case inventory 和 route check 均通过；其附带的
 production build 被开始前已有的 `next-env.d.ts -> .next/dev/types` 与过期 `.next/dev` 路由类型阻断，错误指向已不存在

@@ -129,7 +129,8 @@ payload 或 Provider Secret。平台原有 `/api/system/operation/log` 仍是平
 
 ## 8. 后续阶段
 
-1. Foundation F3：Tenant/Workspace/Module 用量 reserve-settle-release、并发额度、套餐继承与超限策略。
+1. Foundation F3（已实现，环境未验收）：Tenant/Workspace/Module/Metric 用量 reserve-settle-release、并发额度、
+   套餐继承、幂等补偿与超限策略；见 [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
 2. Foundation F4：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
 3. Studio K1-K3：新业务表从第一天使用非空 Scope、`saas_file_binding` 和 `saas_async_operation`，再实现项目、资产、
    任务、Timeline 和导出业务语义。

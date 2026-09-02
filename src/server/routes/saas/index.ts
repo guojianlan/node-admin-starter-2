@@ -48,6 +48,16 @@ import {
 } from "@/server/services/saas-resource-scope-service";
 import { sqlite } from "@/server/db";
 import { runWithOperationLog } from "@/server/services/operation-log-service";
+import {
+  addSaaSUsageAdjustment,
+  assignSaaSTenantSubscription,
+  createSaaSPlan,
+  getSaaSUsageSummary,
+  listSaaSPlans,
+  listSaaSUsageLedger,
+  updateSaaSPlan,
+  upsertSaaSUsagePolicyOverride,
+} from "@/server/services/saas-usage-service";
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -205,6 +215,70 @@ const saasFileBindingSchema = z.object({
     .optional()
     .nullable(),
   purpose: z.string().trim().max(100).optional().nullable(),
+});
+
+const usagePeriodSchema = z.enum(["daily", "monthly", "lifetime"]);
+const usageQuantitySchema = z
+  .union([z.string(), z.number()])
+  .transform(String)
+  .pipe(
+    z
+      .string()
+      .trim()
+      .regex(/^-?\d{1,24}(?:\.\d{1,6})?$/),
+  );
+const usageMetricSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z][a-z0-9._-]{1,79}$/);
+const planLimitSchema = z.object({
+  moduleId: z.coerce.number().int().positive(),
+  metric: usageMetricSchema,
+  period: usagePeriodSchema,
+  limitQuantity: usageQuantitySchema.optional().nullable(),
+  concurrencyLimit: z.coerce.number().int().min(1).max(100000).optional().nullable(),
+  overagePolicy: z.enum(["reject", "allow_with_audit"]).default("reject"),
+});
+const planValuesSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).optional().nullable(),
+  status: z.enum(["draft", "active", "retired"]),
+  limits: z.array(planLimitSchema).max(500),
+});
+const planCreateSchema = planValuesSchema.extend({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[a-z][a-z0-9-]{1,49}$/),
+});
+const planUpdateSchema = planValuesSchema.partial();
+const subscriptionSchema = z.object({
+  planId: z.coerce.number().int().positive(),
+  status: z.enum(["trial", "active", "suspended", "expired", "cancelled"]),
+  startsAt: z.string().datetime({ offset: true }).optional(),
+  endsAt: nullableDateTime,
+});
+const usagePolicySchema = z.object({
+  tenantId: z.coerce.number().int().positive(),
+  workspaceId: z.coerce.number().int().positive().optional().nullable(),
+  moduleId: z.coerce.number().int().positive(),
+  metric: usageMetricSchema,
+  period: usagePeriodSchema,
+  limitQuantity: usageQuantitySchema.optional().nullable(),
+  concurrencyLimit: z.coerce.number().int().min(1).max(100000).optional().nullable(),
+  overagePolicy: z.enum(["reject", "allow_with_audit"]).default("reject"),
+  status: z.coerce.number().int().min(0).max(1).default(1),
+  reason: z.string().trim().min(1).max(500),
+});
+const usageSummarySchema = z.object({
+  moduleId: z.coerce.number().int().positive(),
+  metric: usageMetricSchema,
+  period: usagePeriodSchema,
+});
+const usageAdjustmentSchema = usageSummarySchema.extend({
+  quantity: usageQuantitySchema,
+  description: z.string().trim().min(1).max(500),
+  idempotencyKey: z.string().trim().min(1).max(200),
 });
 
 async function currentResourceScope(c: Context<{ Variables: HonoVariables }>) {
@@ -782,5 +856,172 @@ saasRoutes.put(
       () => updateTenantEntitlement({ ...payload, id, userId: c.get("user").id }),
     );
     return c.json(success(result, "Tenant Entitlement 已更新"));
+  },
+);
+
+saasRoutes.get("/plans", authRequired(), ability("saas.module.planQuery"), async (c) => {
+  const query = listSchema
+    .pick({ page: true, pageSize: true })
+    .extend({ status: z.enum(["draft", "active", "retired"]).optional() })
+    .parse(c.req.query());
+  return c.json(success(await listSaaSPlans(query)));
+});
+
+saasRoutes.post("/plans", authRequired(), ability("saas.module.planManage"), async (c) => {
+  const payload = planCreateSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.plan",
+      action: "create",
+      resource: "saas_plan",
+      riskLevel: "high",
+      details: {
+        code: payload.code,
+        status: payload.status,
+        moduleLimitCount: payload.limits.length,
+      },
+    },
+    () => createSaaSPlan({ ...payload, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "SaaS 套餐已创建"));
+});
+
+saasRoutes.put("/plans/:id", authRequired(), ability("saas.module.planManage"), async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+  const payload = planUpdateSchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.plan",
+      action: "update",
+      resource: "saas_plan",
+      resourceId: id,
+      riskLevel: "high",
+      details: { fields: Object.keys(payload), moduleLimitCount: payload.limits?.length },
+    },
+    () => updateSaaSPlan({ ...payload, id, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "SaaS 套餐已更新"));
+});
+
+saasRoutes.put(
+  "/subscriptions/:tenantId",
+  authRequired(),
+  ability("saas.module.planManage"),
+  async (c) => {
+    const tenantId = z.coerce.number().int().positive().parse(c.req.param("tenantId"));
+    const payload = subscriptionSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.subscription",
+        action: "assign",
+        resource: "saas_tenant_subscription",
+        riskLevel: "high",
+        details: { tenantId, planId: payload.planId, status: payload.status },
+      },
+      () =>
+        assignSaaSTenantSubscription({
+          ...payload,
+          tenantId,
+          userId: c.get("user").id,
+        }),
+    );
+    return c.json(success(result, "Tenant 套餐订阅已更新"));
+  },
+);
+
+saasRoutes.put("/usage/policies", authRequired(), ability("saas.module.planManage"), async (c) => {
+  const payload = usagePolicySchema.parse(await c.req.json());
+  const result = await runWithOperationLog(
+    c,
+    {
+      module: "saas.usage",
+      action: "updatePolicy",
+      resource: "saas_usage_policy_override",
+      riskLevel: "high",
+      details: {
+        tenantId: payload.tenantId,
+        workspaceId: payload.workspaceId,
+        moduleId: payload.moduleId,
+        metric: payload.metric,
+        period: payload.period,
+        overagePolicy: payload.overagePolicy,
+        reason: payload.reason,
+      },
+    },
+    () => upsertSaaSUsagePolicyOverride({ ...payload, userId: c.get("user").id }),
+  );
+  return c.json(success(result, "SaaS 用量覆盖策略已更新"));
+});
+
+saasRoutes.get("/usage/summary", authRequired(), ability("saas.module.usageQuery"), async (c) => {
+  const query = usageSummarySchema.parse(c.req.query());
+  const scope = await currentResourceScope(c);
+  return c.json(
+    success(
+      await getSaaSUsageSummary({
+        ...query,
+        scope,
+        userId: c.get("user").id,
+      }),
+    ),
+  );
+});
+
+saasRoutes.get("/usage/ledger", authRequired(), ability("saas.module.usageQuery"), async (c) => {
+  const query = listSchema
+    .pick({ page: true, pageSize: true })
+    .extend({
+      moduleId: z.coerce.number().int().positive().optional(),
+      metric: usageMetricSchema.optional(),
+    })
+    .parse(c.req.query());
+  const scope = await currentResourceScope(c);
+  return c.json(
+    success(
+      await listSaaSUsageLedger({
+        ...query,
+        scope,
+        userId: c.get("user").id,
+      }),
+    ),
+  );
+});
+
+saasRoutes.post(
+  "/usage/adjustments",
+  authRequired(),
+  ability("saas.module.planManage"),
+  async (c) => {
+    const payload = usageAdjustmentSchema.parse(await c.req.json());
+    const scope = await currentResourceScope(c);
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.usage",
+        action: "adjust",
+        resource: "saas_usage_ledger",
+        resourceId: payload.idempotencyKey,
+        riskLevel: "high",
+        saasScope: scope,
+        details: {
+          moduleId: payload.moduleId,
+          metric: payload.metric,
+          period: payload.period,
+          quantity: payload.quantity,
+          description: payload.description,
+        },
+      },
+      () =>
+        addSaaSUsageAdjustment({
+          ...payload,
+          scope,
+          userId: c.get("user").id,
+          requestId: c.get("requestId"),
+        }),
+    );
+    return c.json(success(result, "SaaS 用量调整已记录"));
   },
 );

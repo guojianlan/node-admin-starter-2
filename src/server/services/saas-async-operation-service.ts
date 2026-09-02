@@ -8,12 +8,22 @@ import {
   type SaaSResourceIdentity,
   type SaaSResourceScope,
 } from "./saas-resource-scope-service";
+import {
+  assertSaaSUsageReservationForOperation,
+  releaseSaaSUsageForOperation,
+  releaseSaaSUsageReservation,
+  reserveSaaSUsage,
+  settleSaaSUsageForOperation,
+  type SaaSUsagePeriod,
+} from "./saas-usage-service";
 
 export type SaaSAsyncOperationKind = "job" | "tool" | "export";
 export type SaaSAsyncOperationStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 type SaaSOperationRow = SaaSResourceIdentity & {
   id: number;
+  moduleId: number | null;
+  usageReservationId: number | null;
   kind: SaaSAsyncOperationKind;
   operationType: string;
   status: SaaSAsyncOperationStatus;
@@ -45,6 +55,7 @@ async function getOperation(id: number, dbClient: DbClient = sqlite) {
   return (await dbClient
     .prepare(
       `SELECT id, tenant_id AS "tenantId", workspace_id AS "workspaceId", kind,
+        module_id AS "moduleId", usage_reservation_id AS "usageReservationId",
         operation_type AS "operationType", status, payload_json AS "payloadJson",
         result_json AS "resultJson", resource_type AS "resourceType",
         resource_id AS "resourceId", requested_by AS "requestedBy",
@@ -67,6 +78,8 @@ export async function createSaaSAsyncOperation(input: {
   idempotencyKey?: string;
   priority?: number;
   maxAttempts?: number;
+  moduleId?: number | null;
+  usageReservationId?: number | null;
 }) {
   const scope = await revalidateSaaSResourceScope({ userId: input.userId, scope: input.scope });
   const resource = normalizeOptionalPair(input);
@@ -78,35 +91,52 @@ export async function createSaaSAsyncOperation(input: {
   if (idempotencyKey.length > 200) {
     throw new HTTPException(400, { message: "SaaS idempotencyKey 不能超过 200 个字符" });
   }
-  const result = await sqlite
-    .prepare(
-      `INSERT INTO saas_async_operation
-        (tenant_id, workspace_id, kind, operation_type, payload_json,
-         resource_type, resource_id, requested_by, request_id, idempotency_key,
-         priority, max_attempts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (tenant_id, workspace_id, idempotency_key) DO NOTHING
-       RETURNING id`,
-    )
-    .run(
-      scope.tenantId,
-      scope.workspaceId,
-      input.kind,
-      operationType,
-      JSON.stringify(input.payload),
-      resource.resourceType,
-      resource.resourceId,
-      input.userId,
-      input.requestId ?? null,
-      idempotencyKey,
-      Math.max(0, Math.min(input.priority ?? 100, 1000)),
-      Math.max(1, Math.min(input.maxAttempts ?? 3, 20)),
-    );
-  let id = Number(result.lastInsertRowid || 0);
-  if (!id) {
-    const existing = (await sqlite
+  const moduleId = input.moduleId ?? null;
+  const usageReservationId = input.usageReservationId ?? null;
+  if (Boolean(moduleId) !== Boolean(usageReservationId)) {
+    throw new HTTPException(400, {
+      message: "计量异步操作必须同时提供 moduleId 与 usageReservationId",
+    });
+  }
+  const created = await sqlite.transaction(async (tx) => {
+    if (moduleId && usageReservationId) {
+      await assertSaaSUsageReservationForOperation(
+        { scope, reservationId: usageReservationId, moduleId, userId: input.userId },
+        tx,
+      );
+    }
+    const result = await tx
       .prepare(
-        `SELECT id, kind, operation_type AS "operationType", requested_by AS "requestedBy"
+        `INSERT INTO saas_async_operation
+          (tenant_id, workspace_id, module_id, usage_reservation_id, kind,
+           operation_type, payload_json, resource_type, resource_id, requested_by,
+           request_id, idempotency_key, priority, max_attempts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (tenant_id, workspace_id, idempotency_key) DO NOTHING
+         RETURNING id`,
+      )
+      .run(
+        scope.tenantId,
+        scope.workspaceId,
+        moduleId,
+        usageReservationId,
+        input.kind,
+        operationType,
+        JSON.stringify(input.payload),
+        resource.resourceType,
+        resource.resourceId,
+        input.userId,
+        input.requestId ?? null,
+        idempotencyKey,
+        Math.max(0, Math.min(input.priority ?? 100, 1000)),
+        Math.max(1, Math.min(input.maxAttempts ?? 3, 20)),
+      );
+    let id = Number(result.lastInsertRowid || 0);
+    if (id) return { id, replayed: false };
+    const existing = (await tx
+      .prepare(
+        `SELECT id, kind, operation_type AS "operationType", requested_by AS "requestedBy",
+          module_id AS "moduleId", usage_reservation_id AS "usageReservationId"
          FROM saas_async_operation
          WHERE tenant_id = ? AND workspace_id = ? AND idempotency_key = ?`,
       )
@@ -115,27 +145,92 @@ export async function createSaaSAsyncOperation(input: {
       kind: SaaSAsyncOperationKind;
       operationType: string;
       requestedBy: number;
+      moduleId: number | null;
+      usageReservationId: number | null;
     };
     if (
       existing.requestedBy !== input.userId ||
       existing.kind !== input.kind ||
-      existing.operationType !== operationType
+      existing.operationType !== operationType ||
+      Number(existing.moduleId ?? 0) !== Number(moduleId ?? 0) ||
+      Number(existing.usageReservationId ?? 0) !== Number(usageReservationId ?? 0)
     ) {
       throw new HTTPException(409, { message: "SaaS idempotencyKey 已用于其他操作" });
     }
     id = Number(existing.id);
-  }
-  await recordBackgroundOperationLog({
-    userId: input.userId,
-    module: "saas.asyncOperation",
-    action: "enqueue",
-    resource: "saas_async_operation",
-    resourceId: id,
-    requestId: input.requestId,
-    saasScope: scope,
-    details: { kind: input.kind, operationType, resourceType: resource.resourceType },
+    return { id, replayed: true };
   });
-  return getOperation(id);
+  if (!created.replayed) {
+    await recordBackgroundOperationLog({
+      userId: input.userId,
+      module: "saas.asyncOperation",
+      action: "enqueue",
+      resource: "saas_async_operation",
+      resourceId: created.id,
+      requestId: input.requestId,
+      saasScope: scope,
+      details: {
+        kind: input.kind,
+        operationType,
+        resourceType: resource.resourceType,
+        moduleId,
+        metered: Boolean(usageReservationId),
+      },
+    });
+  }
+  return getOperation(created.id);
+}
+
+export async function createMeteredSaaSAsyncOperation(input: {
+  userId: number;
+  scope: SaaSResourceScope;
+  moduleId: number;
+  metric: string;
+  period: SaaSUsagePeriod;
+  quantity: string;
+  concurrentUnits?: number;
+  kind: SaaSAsyncOperationKind;
+  operationType: string;
+  payload: Record<string, unknown>;
+  resourceType?: string | null;
+  resourceId?: string | number | null;
+  requestId?: string | null;
+  idempotencyKey: string;
+  priority?: number;
+  maxAttempts?: number;
+  reservationExpiresInSeconds?: number;
+}) {
+  const reservation = await reserveSaaSUsage({
+    userId: input.userId,
+    scope: input.scope,
+    moduleId: input.moduleId,
+    metric: input.metric,
+    period: input.period,
+    quantity: input.quantity,
+    concurrentUnits: input.concurrentUnits,
+    idempotencyKey: `operation:${input.idempotencyKey}`,
+    expiresInSeconds: input.reservationExpiresInSeconds,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    requestId: input.requestId,
+  });
+  try {
+    return await createSaaSAsyncOperation({
+      ...input,
+      moduleId: input.moduleId,
+      usageReservationId: reservation.reservation.id,
+    });
+  } catch (error) {
+    if (!reservation.replayed) {
+      await releaseSaaSUsageReservation({
+        userId: input.userId,
+        scope: input.scope,
+        reservationId: reservation.reservation.id,
+        reason: "async_operation_enqueue_failed",
+      }).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 export async function claimNextSaaSAsyncOperation(input: {
@@ -167,6 +262,7 @@ export async function claimNextSaaSAsyncOperation(input: {
            started_at = COALESCE(started_at, now()), updated_at = now()
          WHERE id = ?
          RETURNING id, tenant_id AS "tenantId", workspace_id AS "workspaceId", kind,
+           module_id AS "moduleId", usage_reservation_id AS "usageReservationId",
            operation_type AS "operationType", status, payload_json AS "payloadJson",
            result_json AS "resultJson", resource_type AS "resourceType",
            resource_id AS "resourceId", requested_by AS "requestedBy",
@@ -188,14 +284,20 @@ export async function claimNextSaaSAsyncOperation(input: {
       scope,
     };
   } catch (error) {
-    await sqlite
-      .prepare(
-        `UPDATE saas_async_operation
-         SET status = 'failed', error_message = ?, locked_by = NULL, lease_until = NULL,
-           finished_at = now(), updated_at = now()
-         WHERE id = ? AND status = 'running' AND locked_by = ?`,
-      )
-      .run("SaaS Tenant / Workspace 上下文已失效", claimed.id, input.workerId);
+    await sqlite.transaction(async (tx) => {
+      await releaseSaaSUsageForOperation(
+        { operationId: claimed.id, reason: "scope_revalidation_failed" },
+        tx,
+      );
+      await tx
+        .prepare(
+          `UPDATE saas_async_operation
+           SET status = 'failed', error_message = ?, locked_by = NULL, lease_until = NULL,
+             finished_at = now(), updated_at = now()
+           WHERE id = ? AND status = 'running' AND locked_by = ?`,
+        )
+        .run("SaaS Tenant / Workspace 上下文已失效", claimed.id, input.workerId);
+    });
     await recordBackgroundOperationLog({
       userId: claimed.requestedBy,
       module: "saas.asyncOperation",
@@ -217,6 +319,7 @@ export async function assertSaaSAsyncOperationLease(input: { id: number; workerI
   const operation = (await sqlite
     .prepare(
       `SELECT id, tenant_id AS "tenantId", workspace_id AS "workspaceId", kind,
+        module_id AS "moduleId", usage_reservation_id AS "usageReservationId",
         operation_type AS "operationType", status, payload_json AS "payloadJson",
         result_json AS "resultJson", resource_type AS "resourceType",
         resource_id AS "resourceId", requested_by AS "requestedBy",
@@ -262,26 +365,174 @@ export async function completeSaaSAsyncOperation(input: {
   workerId: string;
   result?: Record<string, unknown> | null;
   resultFileId?: number | null;
+  usageQuantity?: string;
 }) {
   const operation = await assertSaaSAsyncOperationLease(input);
   if (input.resultFileId) {
     await assertSaaSFileScope(operation.scope, input.resultFileId);
   }
-  const updated = await sqlite
-    .prepare(
-      `UPDATE saas_async_operation
-       SET status = 'completed', result_json = ?, result_file_id = ?, error_message = NULL,
-         locked_by = NULL, lease_until = NULL, finished_at = now(), updated_at = now()
-       WHERE id = ? AND status = 'running' AND locked_by = ? AND lease_until > now()
-       RETURNING id`,
-    )
-    .run(
-      JSON.stringify(input.result ?? null),
-      input.resultFileId ?? null,
-      input.id,
-      input.workerId,
+  const settlement = await sqlite.transaction(async (tx) => {
+    const current = await tx
+      .prepare(
+        `SELECT id FROM saas_async_operation
+         WHERE id = ? AND status = 'running' AND locked_by = ? AND lease_until > now()
+         FOR UPDATE`,
+      )
+      .get(input.id, input.workerId);
+    if (!current) throw new HTTPException(409, { message: "SaaS 异步操作租约已失效" });
+    const usage = await settleSaaSUsageForOperation(
+      {
+        operationId: input.id,
+        quantity: input.usageQuantity,
+        source: "async_operation_completed",
+      },
+      tx,
     );
-  if (!updated.changes) throw new HTTPException(409, { message: "SaaS 异步操作租约已失效" });
+    const updated = await tx
+      .prepare(
+        `UPDATE saas_async_operation
+         SET status = 'completed', result_json = ?, result_file_id = ?, error_message = NULL,
+           locked_by = NULL, lease_until = NULL, finished_at = now(), updated_at = now()
+         WHERE id = ? AND status = 'running' AND locked_by = ? AND lease_until > now()
+         RETURNING id`,
+      )
+      .run(
+        JSON.stringify(input.result ?? null),
+        input.resultFileId ?? null,
+        input.id,
+        input.workerId,
+      );
+    if (!updated.changes) throw new HTTPException(409, { message: "SaaS 异步操作租约已失效" });
+    return usage;
+  });
+  if (settlement && !settlement.replayed) {
+    await recordBackgroundOperationLog({
+      userId: operation.requestedBy,
+      module: "saas.usage",
+      action: settlement.reservation.overage ? "settleOverage" : "settle",
+      resource: "saas_usage_reservation",
+      resourceId: settlement.reservation.id,
+      requestId: operation.requestId,
+      riskLevel: settlement.reservation.overage ? "high" : "low",
+      saasScope: operation.scope,
+      details: {
+        moduleId: settlement.reservation.moduleId,
+        metric: settlement.reservation.metric,
+        operationId: operation.id,
+        settledQuantity: settlement.reservation.settledQuantity,
+      },
+    });
+  }
+  return getOperation(input.id);
+}
+
+export async function failSaaSAsyncOperation(input: {
+  id: number;
+  workerId: string;
+  errorMessage: string;
+}) {
+  const operation = await assertSaaSAsyncOperationLease(input);
+  const release = await sqlite.transaction(async (tx) => {
+    const current = await tx
+      .prepare(
+        `SELECT id FROM saas_async_operation
+         WHERE id = ? AND status = 'running' AND locked_by = ? AND lease_until > now()
+         FOR UPDATE`,
+      )
+      .get(input.id, input.workerId);
+    if (!current) throw new HTTPException(409, { message: "SaaS 异步操作租约已失效" });
+    const usage = await releaseSaaSUsageForOperation(
+      { operationId: input.id, reason: "async_operation_failed" },
+      tx,
+    );
+    await tx
+      .prepare(
+        `UPDATE saas_async_operation
+         SET status = 'failed', error_message = ?, locked_by = NULL, lease_until = NULL,
+           finished_at = now(), updated_at = now()
+         WHERE id = ? AND status = 'running' AND locked_by = ? AND lease_until > now()`,
+      )
+      .run(input.errorMessage.slice(0, 2000), input.id, input.workerId);
+    return usage;
+  });
+  if (release && !release.replayed) {
+    await recordBackgroundOperationLog({
+      userId: operation.requestedBy,
+      module: "saas.usage",
+      action: "release",
+      resource: "saas_usage_reservation",
+      resourceId: release.reservation.id,
+      requestId: operation.requestId,
+      saasScope: operation.scope,
+      details: { operationId: operation.id, reason: "async_operation_failed" },
+    });
+  }
+  return getOperation(input.id);
+}
+
+export async function cancelSaaSAsyncOperation(input: {
+  id: number;
+  userId: number;
+  scope: SaaSResourceScope;
+  reason?: string;
+}) {
+  const scope = await revalidateSaaSResourceScope({ userId: input.userId, scope: input.scope });
+  const result = await sqlite.transaction(async (tx) => {
+    const operation = (await tx
+      .prepare(
+        `SELECT id, tenant_id AS "tenantId", workspace_id AS "workspaceId", status,
+          requested_by AS "requestedBy", request_id AS "requestId"
+         FROM saas_async_operation WHERE id = ? FOR UPDATE`,
+      )
+      .get(input.id)) as
+      | {
+          id: number;
+          tenantId: number;
+          workspaceId: number;
+          status: SaaSAsyncOperationStatus;
+          requestedBy: number;
+          requestId: string | null;
+        }
+      | undefined;
+    if (
+      !operation ||
+      operation.tenantId !== scope.tenantId ||
+      operation.workspaceId !== scope.workspaceId
+    ) {
+      throw new HTTPException(404, { message: "SaaS 异步操作不存在" });
+    }
+    if (operation.requestedBy !== input.userId) {
+      throw new HTTPException(403, { message: "只能取消自己发起的 SaaS 异步操作" });
+    }
+    if (operation.status === "cancelled") return { replayed: true, release: null };
+    if (["completed", "failed"].includes(operation.status)) {
+      throw new HTTPException(409, { message: "已结束的 SaaS 异步操作不能取消" });
+    }
+    const release = await releaseSaaSUsageForOperation(
+      { operationId: input.id, reason: input.reason?.trim() || "async_operation_cancelled" },
+      tx,
+    );
+    await tx
+      .prepare(
+        `UPDATE saas_async_operation SET status = 'cancelled', error_message = ?,
+          locked_by = NULL, lease_until = NULL, finished_at = now(), updated_at = now()
+         WHERE id = ?`,
+      )
+      .run(input.reason?.trim() || "用户取消", input.id);
+    return { replayed: false, release };
+  });
+  if (!result.replayed) {
+    await recordBackgroundOperationLog({
+      userId: input.userId,
+      module: "saas.asyncOperation",
+      action: "cancel",
+      resource: "saas_async_operation",
+      resourceId: input.id,
+      riskLevel: "medium",
+      saasScope: scope,
+      details: { reason: input.reason?.trim() || null, releasedUsage: Boolean(result.release) },
+    });
+  }
   return getOperation(input.id);
 }
 

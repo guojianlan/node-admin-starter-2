@@ -5,6 +5,7 @@ import {
   foreignKey,
   index,
   integer,
+  numeric,
   pgTable,
   primaryKey,
   serial,
@@ -484,6 +485,131 @@ export const saasTenantEntitlement = pgTable(
       table.expiresAt,
     ),
     index("saas_tenant_entitlement_module_status_idx").on(table.moduleId, table.status),
+  ],
+);
+
+export const saasPlan = pgTable(
+  "saas_plan",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status", { enum: ["draft", "active", "retired"] })
+      .notNull()
+      .default("draft"),
+    isSystem: boolean("is_system").notNull().default(false),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_plan_code_active_unique")
+      .on(table.code)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_plan_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const saasPlanModuleLimit = pgTable(
+  "saas_plan_module_limit",
+  {
+    id: serial("id").primaryKey(),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => saasPlan.id, { onDelete: "cascade" }),
+    moduleId: integer("module_id")
+      .notNull()
+      .references(() => saasModule.id, { onDelete: "restrict" }),
+    metric: text("metric").notNull(),
+    period: text("period", { enum: ["daily", "monthly", "lifetime"] })
+      .notNull()
+      .default("monthly"),
+    limitQuantity: numeric("limit_quantity", { precision: 30, scale: 6 }),
+    concurrencyLimit: integer("concurrency_limit"),
+    overagePolicy: text("overage_policy", { enum: ["reject", "allow_with_audit"] })
+      .notNull()
+      .default("reject"),
+    ...timestamps,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_plan_module_limit_unique").on(
+      table.planId,
+      table.moduleId,
+      table.metric,
+      table.period,
+    ),
+    index("saas_plan_module_limit_module_idx").on(table.moduleId, table.metric),
+  ],
+);
+
+export const saasTenantSubscription = pgTable(
+  "saas_tenant_subscription",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => saasPlan.id, { onDelete: "restrict" }),
+    status: text("status", { enum: ["trial", "active", "suspended", "expired", "cancelled"] })
+      .notNull()
+      .default("trial"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull().defaultNow(),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_tenant_subscription_tenant_active_unique")
+      .on(table.tenantId)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_tenant_subscription_plan_status_idx").on(table.planId, table.status),
+  ],
+);
+
+export const saasUsagePolicyOverride = pgTable(
+  "saas_usage_policy_override",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "cascade",
+    }),
+    moduleId: integer("module_id")
+      .notNull()
+      .references(() => saasModule.id, { onDelete: "restrict" }),
+    metric: text("metric").notNull(),
+    period: text("period", { enum: ["daily", "monthly", "lifetime"] })
+      .notNull()
+      .default("monthly"),
+    limitQuantity: numeric("limit_quantity", { precision: 30, scale: 6 }),
+    concurrencyLimit: integer("concurrency_limit"),
+    overagePolicy: text("overage_policy", { enum: ["reject", "allow_with_audit"] })
+      .notNull()
+      .default("reject"),
+    status: integer("status").notNull().default(1),
+    reason: text("reason"),
+    ...timestamps,
+    ...softDelete,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_usage_policy_override_scope_unique")
+      .on(table.tenantId, table.workspaceId, table.moduleId, table.metric, table.period)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("saas_usage_policy_override_lookup_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.moduleId,
+      table.metric,
+      table.status,
+    ),
   ],
 );
 
@@ -2604,6 +2730,134 @@ export const sysAiJob = pgTable(
   ],
 );
 
+export const saasUsageReservation = pgTable(
+  "saas_usage_reservation",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    moduleId: integer("module_id")
+      .notNull()
+      .references(() => saasModule.id, { onDelete: "restrict" }),
+    metric: text("metric").notNull(),
+    aggregationScope: text("aggregation_scope", { enum: ["tenant", "workspace"] })
+      .notNull()
+      .default("tenant"),
+    period: text("period", { enum: ["daily", "monthly", "lifetime"] }).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    status: text("status", { enum: ["reserved", "settled", "released", "expired"] })
+      .notNull()
+      .default("reserved"),
+    reservedQuantity: numeric("reserved_quantity", { precision: 30, scale: 6 }).notNull(),
+    settledQuantity: numeric("settled_quantity", { precision: 30, scale: 6 }),
+    concurrentUnits: integer("concurrent_units").notNull().default(1),
+    limitQuantitySnapshot: numeric("limit_quantity_snapshot", { precision: 30, scale: 6 }),
+    concurrencyLimitSnapshot: integer("concurrency_limit_snapshot"),
+    overagePolicySnapshot: text("overage_policy_snapshot", {
+      enum: ["reject", "allow_with_audit"],
+    })
+      .notNull()
+      .default("reject"),
+    policySource: text("policy_source").notNull(),
+    overage: boolean("overage").notNull().default(false),
+    idempotencyKey: text("idempotency_key").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    requestId: text("request_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releaseReason: text("release_reason"),
+    createdBy: integer("created_by")
+      .notNull()
+      .references(() => sysUser.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("saas_usage_reservation_scope_idempotency_unique").on(
+      table.tenantId,
+      table.workspaceId,
+      table.moduleId,
+      table.metric,
+      table.idempotencyKey,
+    ),
+    index("saas_usage_reservation_active_scope_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.moduleId,
+      table.metric,
+      table.status,
+      table.expiresAt,
+    ),
+    index("saas_usage_reservation_period_idx").on(
+      table.tenantId,
+      table.moduleId,
+      table.metric,
+      table.periodStart,
+    ),
+  ],
+);
+
+export const saasUsageLedger = pgTable(
+  "saas_usage_ledger",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    moduleId: integer("module_id")
+      .notNull()
+      .references(() => saasModule.id, { onDelete: "restrict" }),
+    metric: text("metric").notNull(),
+    reservationId: integer("reservation_id").references(() => saasUsageReservation.id, {
+      onDelete: "restrict",
+    }),
+    entryType: text("entry_type", { enum: ["settlement", "adjustment", "reversal"] })
+      .notNull()
+      .default("settlement"),
+    quantity: numeric("quantity", { precision: 30, scale: 6 }).notNull(),
+    overage: boolean("overage").notNull().default(false),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    source: text("source").notNull(),
+    description: text("description"),
+    idempotencyKey: text("idempotency_key"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    requestId: text("request_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("saas_usage_ledger_reservation_settlement_unique")
+      .on(table.reservationId)
+      .where(sql`${table.entryType} = 'settlement' AND ${table.reservationId} IS NOT NULL`),
+    uniqueIndex("saas_usage_ledger_adjustment_idempotency_unique")
+      .on(table.tenantId, table.workspaceId, table.moduleId, table.metric, table.idempotencyKey)
+      .where(
+        sql`${table.entryType} IN ('adjustment', 'reversal') AND ${table.idempotencyKey} IS NOT NULL`,
+      ),
+    index("saas_usage_ledger_scope_period_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.moduleId,
+      table.metric,
+      table.periodStart,
+    ),
+    index("saas_usage_ledger_occurred_idx").on(table.tenantId, table.occurredAt),
+  ],
+);
+
 export const saasAsyncOperation = pgTable(
   "saas_async_operation",
   {
@@ -2614,6 +2868,10 @@ export const saasAsyncOperation = pgTable(
     workspaceId: integer("workspace_id")
       .notNull()
       .references(() => saasWorkspace.id, { onDelete: "restrict" }),
+    moduleId: integer("module_id").references(() => saasModule.id, { onDelete: "restrict" }),
+    usageReservationId: integer("usage_reservation_id").references(() => saasUsageReservation.id, {
+      onDelete: "restrict",
+    }),
     kind: text("kind", { enum: ["job", "tool", "export"] }).notNull(),
     operationType: text("operation_type").notNull(),
     status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] })
@@ -2646,6 +2904,9 @@ export const saasAsyncOperation = pgTable(
       table.workspaceId,
       table.idempotencyKey,
     ),
+    uniqueIndex("saas_async_operation_usage_reservation_unique")
+      .on(table.usageReservationId)
+      .where(sql`${table.usageReservationId} IS NOT NULL`),
     index("saas_async_operation_claim_idx").on(
       table.status,
       table.availableAt,

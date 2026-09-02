@@ -95,6 +95,14 @@ Export 统一使用 `saas_async_operation`，Callback 通过 operation 数据库
 逐域迁移。详细合同和攻击矩阵见
 [`../saas-foundation-f2-resource-scope.md`](../saas-foundation-f2-resource-scope.md)。
 
+Foundation F3（2026-09-02）追加：SaaS 用量不扩展历史 `sys_ai_quota_policy/sys_ai_billing_ledger`，而是建立
+独立的 Tenant/Workspace/Module/Metric 合同。`saas_plan` 与 Module limit 是平台元数据，
+`saas_tenant_subscription`、`saas_usage_policy_override`、`saas_usage_reservation` 和 `saas_usage_ledger` 是
+Tenant 相关控制面/用量事实。有效策略按 Workspace override、Tenant override、Entitlement override、Plan 解析；
+Reserve 在 PostgreSQL 事务中锁定 Entitlement 并检查周期总量和并发，Ledger 只追加，异步 operation 完成结算、
+失败/取消/Scope 失效释放。详细合同见
+[`../saas-foundation-f3-usage-quota.md`](../saas-foundation-f3-usage-quota.md)。
+
 整个 Phase 1 仍需继续交付团队、Studio Project/Asset/Task/Template/Timeline/Export、历史资源逐域迁移、
-用量聚合及两个测试 Tenant 的项目/业务任务完整攻击矩阵。在这些完成前，只能称为
+正式财务计费及两个测试 Tenant 的项目/业务任务完整攻击矩阵。在这些完成前，只能称为
 “Tenant/Workspace 控制面基础已实现”，不能称为完整多租户 SaaS。

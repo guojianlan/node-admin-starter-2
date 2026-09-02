@@ -618,6 +618,9 @@ const moduleRules = [
       ["entitlementQuery", "查询 Tenant Entitlement"],
       ["entitlementCreate", "开通 Tenant Entitlement"],
       ["entitlementUpdate", "编辑 Tenant Entitlement"],
+      ["planQuery", "查询 SaaS 套餐"],
+      ["planManage", "管理 SaaS 套餐"],
+      ["usageQuery", "查询 SaaS 用量"],
     ],
   },
 ] as const;

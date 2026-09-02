@@ -135,4 +135,5 @@ Tenant active
 
 本切片没有安全运行环境和凭据，因此没有运行 smoke；也没有把 production build 当作浏览器明暗主题、窄屏和实际
 交互验收。状态保持 `implemented-unverified`。真实邀请邮件、Team、套餐继承、
-用量、Studio Kernel 和两 Tenant 全链路资源攻击矩阵进入后续切片。
+Foundation F3 用量/配额/套餐继承已进入独立基座合同；Team、Studio Kernel、正式财务计费和两 Tenant 全链路
+业务资源攻击矩阵仍进入后续切片。
