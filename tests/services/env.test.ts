@@ -17,6 +17,7 @@ describe("admin base env", () => {
     expect(result.data.databaseUrl).toBe(DEFAULT_DATABASE_URL);
     expect(result.data.adminBaseSecretKey).toBe(DEFAULT_ADMIN_BASE_SECRET_KEY);
     expect(result.data.adminBaseAdminPassword).toBe(DEFAULT_ADMIN_BASE_ADMIN_PASSWORD);
+    expect(result.data.publicUrl).toBe("http://localhost:3000");
     expect(result.data.adminBaseTokenTtlDays).toBe(7);
     expect(result.data.databasePoolSize).toBe(10);
     expect(result.data.aiWorkerStalledAfterSeconds).toBe(60);
@@ -33,6 +34,7 @@ describe("admin base env", () => {
     expect(result.issues.join("\n")).toContain("DATABASE_URL");
     expect(result.issues.join("\n")).toContain("ADMIN_BASE_SECRET_KEY");
     expect(result.issues.join("\n")).toContain("ADMIN_BASE_ADMIN_PASSWORD");
+    expect(result.issues.join("\n")).toContain("ADMIN_BASE_PUBLIC_URL");
   });
 
   it("rejects example production secret and weak admin password", () => {
@@ -54,6 +56,7 @@ describe("admin base env", () => {
       DATABASE_URL: "postgres://admin_base:admin_base@localhost:5432/admin_base",
       ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
       ADMIN_BASE_ADMIN_PASSWORD: "production-admin-password",
+      ADMIN_BASE_PUBLIC_URL: "https://admin.example.com/",
       LOG_LEVEL: "warn",
       ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS: "120",
       ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS: "15",
@@ -67,6 +70,7 @@ describe("admin base env", () => {
     expect(result.data.aiWorkerStalledAfterSeconds).toBe(120);
     expect(result.data.aiWorkerMonitorIntervalSeconds).toBe(15);
     expect(result.data.aiWorkerAlertWebhookUrl).toBe("https://alerts.example.com/admin-base");
+    expect(result.data.publicUrl).toBe("https://admin.example.com");
   });
 
   it("rejects unsafe Worker monitoring thresholds and invalid webhook URLs", () => {

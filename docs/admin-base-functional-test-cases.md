@@ -243,6 +243,24 @@
 | SAAS-F3-011 | P0  | 人工补偿幂等        | 重复提交相同 adjustment idempotencyKey                                    | 只追加一次；参数冲突 409；不原地改写历史 Ledger                    | 自动                         |
 | SAAS-F3-012 | P0  | 敏感信息边界        | 检查用量 Ledger 与 operation log                                          | 不含 Prompt、回复正文、文件字节、Token、Secret 或 Provider payload | 自动                         |
 
+### 11.3 SaaS 通知、开放集成、品牌与域名基座
+
+| ID          | P   | 用例                    | 前置条件与步骤                                                               | 预期                                                                 | 状态                                      |
+| ----------- | --- | ----------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ----------------------------------------- |
+| SAAS-F4-001 | P0  | Invitation Outbox 事务 | 创建 Tenant 邀请并检查 Invitation/Outbox                               | 同一事务创建；Token 只保存 Hash/加密 payload；失败不留半成品 | 自动                                      |
+| SAAS-F4-002 | P0  | Notification 重试/死信  | 使 sender 连续失败至 maxAttempts，再人工重试                         | retry/dead_letter/queued 状态、attempts 和退避正确；错误脱敏    | 自动；真实 SMTP/回执待环境验收        |
+| SAAS-F4-003 | P0  | API Key Hash/一次性明文 | 创建 Key，检查响应、数据库和列表                                          | 明文只创建当次返回；数据库只有 Hash/Prefix；列表无明文/Hash          | 自动                                      |
+| SAAS-F4-004 | P0  | API Key Scope/资源隔离 | 使用精确 Scope 访问允许/禁止的 Workspace 和 Module                           | 仅精确 Scope 且满足 Workspace/Module 约束时通过；高风险 Scope 默认拒绝   | 自动；第一个业务 API 接线待验收           |
+| SAAS-F4-005 | P0  | API Key 轮换/撤销     | 轮换 active Key，再分别使用旧/新 Key                                 | 旧 Key 在同一事务撤销并立即失效；新 Key 可用；撤销幂等            | 自动                                      |
+| SAAS-F4-006 | P0  | Webhook 签名/加密      | 创建 Endpoint 并入队 Event，领取 Delivery 投递                           | Secret/payload 加密；签名覆盖 timestamp.eventKey.rawBody；对端可验签 | 自动                                      |
+| SAAS-F4-007 | P0  | Webhook 重试/死信      | 模拟超时/5xx 至重试上限，再人工重试                                    | 指数退避、lease 接管、dead_letter 和重新入队正确；响应正文只存 Hash   | 自动合同；真实公网/长跑待环境验收          |
+| SAAS-F4-008 | P0  | 时间窗口/持久化防重放   | 同 Tenant/Workspace/Source/EventKey 重复提交有效签名，并提交过期签名 | 首次占位；重放 409；超时窗口拒绝；多进程共享 PostgreSQL 事实        | 自动                                      |
+| SAAS-F4-009 | P0  | SSRF/DNS Rebinding 防护 | 配置 HTTP、非 443、credentials、敏感 Query、localhost/内网 URL 或非公网 DNS | 全部拒绝；公网域名校验所有解析地址并在 HTTPS 连接中固定已验证 IP    | 自动 runtime；真实 DNS/TLS 待环境验收       |
+| SAAS-F4-010 | P0  | Tenant 品牌回退       | 配置 Tenant 品牌后投递邀请，未配置完整品牌时再试                          | 邮件使用有效 Tenant 产品名/署名；缺省字段安全回退平台默认             | 自动                                      |
+| SAAS-F4-011 | P0  | 域名所有权/证书回退  | 创建域名、配置 TXT、验证，再分别设置证书 pending/active/撤销             | Token 只返回一次；verified+primary+active 才使用自定义 HTTPS，其余回退 | 自动 Service；真实 DNS/证书控制器待验收     |
+| SAAS-F4-012 | P0  | 跨 Tenant 集成攻击    | Tenant A 读写 B 品牌、域名、Key、Endpoint、Delivery                        | 统一按成员关系和行 Scope 拒绝；猜测 ID 或伪造 payload 不扩大范围          | 自动                                      |
+| SAAS-F4-013 | P0  | Secret/日志边界       | 检查 API 响应、Outbox/Event/Delivery、request log 和 operation log             | 不出现 API Key、Webhook Secret、Challenge Token、邮件正文或 Provider 响应正文 | 自动                                      |
+
 ## 12. 邮件、短信和 OAuth
 
 | ID        | P   | 用例              | 前置条件与步骤                             | 预期                                       | 状态      |

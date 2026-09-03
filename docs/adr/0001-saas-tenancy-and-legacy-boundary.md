@@ -103,6 +103,13 @@ Reserve 在 PostgreSQL 事务中锁定 Entitlement 并检查周期总量和并�
 失败/取消/Scope 失效释放。详细合同见
 [`../saas-foundation-f3-usage-quota.md`](../saas-foundation-f3-usage-quota.md)。
 
+Foundation F4（2026-09-03）追加：Tenant 品牌、域名、通知、API Key、Webhook Endpoint/Event/Delivery
+均使用显式 Tenant 自定义 Scope，可选 Workspace 必须真实属于同一 Tenant。API Key 不转换为用户
+JWT 或平台 ability，业务 API 必须另行执行 Entitlement、资源 ACL 和配额。通知和 Webhook 外部副作用
+通过 PostgreSQL Outbox/Delivery 与业务事务解耦，Secret/Token/payload 加密或 Hash 保存。自定义域名需要 DNS
+所有权验证和 active 证书后才可用，不满足时回退平台域名。详见
+[`../saas-foundation-f4-integration-branding.md`](../saas-foundation-f4-integration-branding.md)。
+
 整个 Phase 1 仍需继续交付团队、Studio Project/Asset/Task/Template/Timeline/Export、历史资源逐域迁移、
-正式财务计费及两个测试 Tenant 的项目/业务任务完整攻击矩阵。在这些完成前，只能称为
+正式财务计费、真实 SMTP/DNS/TLS/Webhook 验收及两个测试 Tenant 的项目/业务任务完整攻击矩阵。在这些完成前，只能称为
 “Tenant/Workspace 控制面基础已实现”，不能称为完整多租户 SaaS。

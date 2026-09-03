@@ -58,6 +58,33 @@ import {
   updateSaaSPlan,
   upsertSaaSUsagePolicyOverride,
 } from "@/server/services/saas-usage-service";
+import {
+  createTenantDomain,
+  getTenantBranding,
+  listTenantDomains,
+  revokeTenantDomain,
+  upsertTenantBranding,
+  verifyTenantDomain,
+} from "@/server/services/saas-branding-service";
+import {
+  createSaaSApiKey,
+  listSaaSApiKeys,
+  revokeSaaSApiKey,
+  rotateSaaSApiKey,
+} from "@/server/services/saas-api-key-service";
+import {
+  listSaaSNotificationOutbox,
+  retrySaaSNotification,
+} from "@/server/services/saas-notification-service";
+import {
+  createSaaSWebhookEndpoint,
+  listSaaSWebhookDeliveries,
+  listSaaSWebhookEndpoints,
+  retrySaaSWebhookDelivery,
+  revokeSaaSWebhookEndpoint,
+  rotateSaaSWebhookSecret,
+  updateSaaSWebhookEndpoint,
+} from "@/server/services/saas-webhook-service";
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -280,6 +307,56 @@ const usageAdjustmentSchema = usageSummarySchema.extend({
   description: z.string().trim().min(1).max(500),
   idempotencyKey: z.string().trim().min(1).max(200),
 });
+
+const tenantIdSchema = z.object({ tenantId: z.coerce.number().int().positive() });
+const brandingSchema = tenantIdSchema.extend({
+  productName: z.string().trim().min(1).max(100).optional().nullable(),
+  logoFileId: z.coerce.number().int().positive().optional().nullable(),
+  primaryColor: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-f]{6}$/i)
+    .optional()
+    .nullable(),
+  themeMode: z.enum(["light", "dark", "system"]).default("system"),
+  locale: z.string().trim().min(2).max(20).default("zh-CN"),
+  timezone: z.string().trim().min(1).max(100).default("Asia/Shanghai"),
+  emailFromName: z.string().trim().max(100).optional().nullable(),
+  supportEmail: z.string().trim().email().max(255).optional().nullable(),
+});
+const tenantDomainSchema = tenantIdSchema.extend({
+  hostname: z.string().trim().min(3).max(253),
+  isPrimary: z.boolean().default(false),
+});
+const apiKeySchema = tenantIdSchema.extend({
+  workspaceId: z.coerce.number().int().positive().optional().nullable(),
+  name: z.string().trim().min(1).max(100),
+  scopes: z.array(z.string().trim().min(3).max(120)).min(1).max(100),
+  resourceConstraints: z
+    .object({
+      workspaceIds: z.array(z.coerce.number().int().positive()).max(100).optional(),
+      moduleCodes: z.array(z.string().trim().min(2).max(50)).max(100).optional(),
+    })
+    .default({}),
+  expiresAt: nullableDateTime,
+});
+const webhookEndpointSchema = tenantIdSchema.extend({
+  workspaceId: z.coerce.number().int().positive().optional().nullable(),
+  name: z.string().trim().min(1).max(100),
+  url: z.string().trim().url().max(1000),
+  eventTypes: z.array(z.string().trim().min(2).max(120)).min(1).max(100),
+  status: z.enum(["active", "disabled"]).default("active"),
+  timeoutMs: z.coerce.number().int().min(1000).max(30000).default(10000),
+  maxAttempts: z.coerce.number().int().min(1).max(20).default(5),
+});
+const deliveryStatusSchema = z.enum([
+  "queued",
+  "running",
+  "retry",
+  "delivered",
+  "dead_letter",
+  "cancelled",
+]);
 
 async function currentResourceScope(c: Context<{ Variables: HonoVariables }>) {
   const selection = readSaaSContextSelection({
@@ -701,9 +778,14 @@ saasRoutes.post("/invitations", authRequired(), ability("saas.member.invite"), a
         workspaceRole: payload.workspaceRole,
       },
     },
-    () => createInvitation({ ...payload, userId: c.get("user").id }),
+    () =>
+      createInvitation({
+        ...payload,
+        userId: c.get("user").id,
+        requestId: c.get("requestId"),
+      }),
   );
-  return c.json(success(result, "邀请已创建；Token 仅在本次响应返回"));
+  return c.json(success(result, "邀请已创建并进入邮件 Outbox；Token 仅在本次响应返回"));
 });
 
 saasRoutes.post(
@@ -1023,5 +1105,393 @@ saasRoutes.post(
         }),
     );
     return c.json(success(result, "SaaS 用量调整已记录"));
+  },
+);
+
+saasRoutes.get(
+  "/branding",
+  authRequired(),
+  ability("saas.branding.query"),
+  async (c) => {
+    const query = tenantIdSchema.parse(c.req.query());
+    return c.json(success(await getTenantBranding({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.put(
+  "/branding",
+  authRequired(),
+  ability("saas.branding.manage"),
+  async (c) => {
+    const payload = brandingSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.branding",
+        action: "update",
+        resource: "saas_tenant_branding",
+        resourceId: payload.tenantId,
+        riskLevel: "medium",
+        details: {
+          tenantId: payload.tenantId,
+          fields: Object.keys(payload).filter((key) => key !== "tenantId"),
+        },
+      },
+      () => upsertTenantBranding({ ...payload, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Tenant 品牌已更新"));
+  },
+);
+
+saasRoutes.get(
+  "/domains",
+  authRequired(),
+  ability("saas.domain.query"),
+  async (c) => {
+    const query = tenantIdSchema.parse(c.req.query());
+    return c.json(success(await listTenantDomains({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/domains",
+  authRequired(),
+  ability("saas.domain.manage"),
+  async (c) => {
+    const payload = tenantDomainSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.domain",
+        action: "create",
+        resource: "saas_tenant_domain",
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId, hostname: payload.hostname, isPrimary: payload.isPrimary },
+      },
+      () => createTenantDomain({ ...payload, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "域名验证 Challenge 已创建；Token 仅在本次响应返回"));
+  },
+);
+
+saasRoutes.post(
+  "/domains/:id/verify",
+  authRequired(),
+  ability("saas.domain.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.domain",
+        action: "verify",
+        resource: "saas_tenant_domain",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => verifyTenantDomain({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "域名所有权验证通过；证书仍需独立签发"));
+  },
+);
+
+saasRoutes.post(
+  "/domains/:id/revoke",
+  authRequired(),
+  ability("saas.domain.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.domain",
+        action: "revoke",
+        resource: "saas_tenant_domain",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => revokeTenantDomain({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Tenant 自定义域名已撤销"));
+  },
+);
+
+saasRoutes.get(
+  "/notifications/outbox",
+  authRequired(),
+  ability("saas.notification.query"),
+  async (c) => {
+    const query = listSchema
+      .pick({ page: true, pageSize: true })
+      .extend({ tenantId: z.coerce.number().int().positive(), status: deliveryStatusSchema.optional() })
+      .parse(c.req.query());
+    return c.json(success(await listSaaSNotificationOutbox({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/notifications/outbox/:id/retry",
+  authRequired(),
+  ability("saas.notification.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.notification",
+        action: "retry",
+        resource: "saas_notification_outbox",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => retrySaaSNotification({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "通知已重新进入 Outbox 队列"));
+  },
+);
+
+saasRoutes.get(
+  "/api-keys",
+  authRequired(),
+  ability("saas.apiKey.query"),
+  async (c) => {
+    const query = listSchema
+      .pick({ page: true, pageSize: true })
+      .extend({ tenantId: z.coerce.number().int().positive(), status: z.enum(["active", "revoked"]).optional() })
+      .parse(c.req.query());
+    return c.json(success(await listSaaSApiKeys({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/api-keys",
+  authRequired(),
+  ability("saas.apiKey.manage"),
+  async (c) => {
+    const payload = apiKeySchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.apiKey",
+        action: "create",
+        resource: "saas_api_key",
+        riskLevel: "high",
+        details: {
+          tenantId: payload.tenantId,
+          workspaceId: payload.workspaceId,
+          name: payload.name,
+          scopes: payload.scopes,
+        },
+      },
+      () => createSaaSApiKey({ ...payload, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "API Key 已创建；明文 Key 仅在本次响应返回"));
+  },
+);
+
+saasRoutes.post(
+  "/api-keys/:id/rotate",
+  authRequired(),
+  ability("saas.apiKey.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.apiKey",
+        action: "rotate",
+        resource: "saas_api_key",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => rotateSaaSApiKey({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "API Key 已轮换；新明文 Key 仅在本次响应返回"));
+  },
+);
+
+saasRoutes.post(
+  "/api-keys/:id/revoke",
+  authRequired(),
+  ability("saas.apiKey.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.apiKey",
+        action: "revoke",
+        resource: "saas_api_key",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => revokeSaaSApiKey({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "API Key 已撤销"));
+  },
+);
+
+saasRoutes.get(
+  "/webhooks",
+  authRequired(),
+  ability("saas.webhook.query"),
+  async (c) => {
+    const query = listSchema
+      .pick({ page: true, pageSize: true })
+      .extend({
+        tenantId: z.coerce.number().int().positive(),
+        status: z.enum(["active", "disabled", "revoked"]).optional(),
+      })
+      .parse(c.req.query());
+    return c.json(success(await listSaaSWebhookEndpoints({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/webhooks",
+  authRequired(),
+  ability("saas.webhook.manage"),
+  async (c) => {
+    const payload = webhookEndpointSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.webhook",
+        action: "create",
+        resource: "saas_webhook_endpoint",
+        riskLevel: "high",
+        details: {
+          tenantId: payload.tenantId,
+          workspaceId: payload.workspaceId,
+          eventTypes: payload.eventTypes,
+        },
+      },
+      () => createSaaSWebhookEndpoint({ ...payload, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Webhook 已创建；签名 Secret 仅在本次响应返回"));
+  },
+);
+
+saasRoutes.put(
+  "/webhooks/:id",
+  authRequired(),
+  ability("saas.webhook.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = webhookEndpointSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.webhook",
+        action: "update",
+        resource: "saas_webhook_endpoint",
+        resourceId: id,
+        riskLevel: "high",
+        details: {
+          tenantId: payload.tenantId,
+          workspaceId: payload.workspaceId,
+          eventTypes: payload.eventTypes,
+          status: payload.status,
+        },
+      },
+      () => updateSaaSWebhookEndpoint({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Webhook 已更新"));
+  },
+);
+
+saasRoutes.post(
+  "/webhooks/:id/rotate-secret",
+  authRequired(),
+  ability("saas.webhook.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.webhook",
+        action: "rotateSecret",
+        resource: "saas_webhook_endpoint",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => rotateSaaSWebhookSecret({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Webhook Secret 已轮换；明文仅在本次响应返回"));
+  },
+);
+
+saasRoutes.post(
+  "/webhooks/:id/revoke",
+  authRequired(),
+  ability("saas.webhook.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.webhook",
+        action: "revoke",
+        resource: "saas_webhook_endpoint",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => revokeSaaSWebhookEndpoint({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Webhook 已撤销"));
+  },
+);
+
+saasRoutes.get(
+  "/webhook-deliveries",
+  authRequired(),
+  ability("saas.webhook.query"),
+  async (c) => {
+    const query = listSchema
+      .pick({ page: true, pageSize: true })
+      .extend({
+        tenantId: z.coerce.number().int().positive(),
+        status: deliveryStatusSchema.optional(),
+        endpointId: z.coerce.number().int().positive().optional(),
+      })
+      .parse(c.req.query());
+    return c.json(success(await listSaaSWebhookDeliveries({ ...query, userId: c.get("user").id })));
+  },
+);
+
+saasRoutes.post(
+  "/webhook-deliveries/:id/retry",
+  authRequired(),
+  ability("saas.webhook.manage"),
+  async (c) => {
+    const id = z.coerce.number().int().positive().parse(c.req.param("id"));
+    const payload = tenantIdSchema.parse(await c.req.json());
+    const result = await runWithOperationLog(
+      c,
+      {
+        module: "saas.webhook",
+        action: "retryDelivery",
+        resource: "saas_webhook_delivery",
+        resourceId: id,
+        riskLevel: "high",
+        details: { tenantId: payload.tenantId },
+      },
+      () => retrySaaSWebhookDelivery({ ...payload, id, userId: c.get("user").id }),
+    );
+    return c.json(success(result, "Webhook Delivery 已重新入队"));
   },
 );

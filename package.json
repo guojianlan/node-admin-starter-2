@@ -20,6 +20,8 @@
     "ai:worker:once": "tsx scripts/ai-worker.ts --once",
     "ai:worker:monitor": "tsx scripts/ai-worker-monitor.ts",
     "ai:worker:health": "tsx scripts/ai-worker-monitor.ts --once",
+    "saas:outbox": "tsx scripts/saas-outbox-worker.ts",
+    "saas:outbox:once": "tsx scripts/saas-outbox-worker.ts --once",
     "acceptance:workflow-recovery": "tsx scripts/ai-workflow-recovery-acceptance.ts",
     "acceptance:ai-provider-pressure": "tsx scripts/ai-provider-pressure-acceptance.ts",
     "db:reset": "tsx scripts/db-reset.ts",

@@ -86,7 +86,7 @@ F2 增加 `saas_async_operation`，为新业务提供统一的运行封套：
 
 `saas_callback_event` 从 `operation_id` 恢复 Tenant/Workspace 和发起人，Callback payload 中即使带有其他 Tenant ID
 也不能改变数据库 Scope。同一 `(operation_id, callback_key)` 只应用一次。F2 只提供 Provider adapter 应调用的内部合同；
-公网 Webhook 的签名、时间窗、重放缓存、密钥轮换和重试属于 Foundation F4。
+公网 Webhook 的签名、时间窗、持久化重放保护、密钥轮换和重试已在 Foundation F4 实现服务端基座，详见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)；真实公网验收仍未完成。
 
 ## 5. Tenant 审计
 
@@ -131,7 +131,7 @@ payload 或 Provider Secret。平台原有 `/api/system/operation/log` 仍是平
 
 1. Foundation F3（已实现，环境未验收）：Tenant/Workspace/Module/Metric 用量 reserve-settle-release、并发额度、
    套餐继承、幂等补偿与超限策略；见 [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
-2. Foundation F4：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
+2. Foundation F4（已实现，环境未验收）：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
 3. Studio K1-K3：新业务表从第一天使用非空 Scope、`saas_file_binding` 和 `saas_async_operation`，再实现项目、资产、
    任务、Timeline 和导出业务语义。
 

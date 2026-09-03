@@ -338,6 +338,18 @@ CRUD factory 当前能力：
 - 支持启停、默认账号、测试发送。
 - `password_encrypted` 使用 `ADMIN_BASE_SECRET_KEY` 加密。
 
+SaaS 通知、集成与品牌：
+
+- `saas_notification_outbox` 与邀请事务一起写入，SaaS Outbox Worker 使用 lease、
+  `FOR UPDATE SKIP LOCKED`、重试和死信投递邮件。
+- `saas_api_key` 只保存 Hash/Prefix、精确 Scope 和 Workspace/Module 约束；不替代用户 JWT
+  或业务 Entitlement/ACL/配额检查。
+- `saas_webhook_event` 和 `saas_webhook_delivery` 将事件事实与对外副作用分离，使用
+  HMAC-SHA256、时间窗口、持久化防重放、HTTPS/SSRF/DNS Rebinding 防护和对端响应 Hash。
+- `saas_tenant_branding` 和 `saas_tenant_domain` 是 Tenant 自定义 Scope。自定义域名只有在
+  DNS 所有权验证且证书状态 active 后生效，其他情况回退 `ADMIN_BASE_PUBLIC_URL`。
+- 详细合同见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)。
+
 密钥注意：
 
 - `ADMIN_BASE_SECRET_KEY` 改动会影响历史 SMTP/S3 密钥解密。
@@ -368,9 +380,9 @@ curl http://localhost:3000/api/ready
 
 注意：
 
-- `pnpm dev` 只启动 Web/API；涉及 Notebook Deep Research、异步 Artifact 或 Eval Job 时使用
-  `pnpm dev:all` 同时启动 Web/API 与 PostgreSQL AI Worker。
-- 生产环境必须把 Web、Worker 和队列 Monitor 作为独立常驻进程；Monitor 根据超时未领取 Job 和
+- `pnpm dev` 只启动 Web/API；涉及 Notebook Deep Research、异步 Artifact、Eval Job、邀请邮件或
+  Webhook 时使用 `pnpm dev:all` 同时启动 Web/API、PostgreSQL AI Worker 和 SaaS Outbox Worker。
+- 生产环境必须把 Web、AI Worker、队列 Monitor 和 SaaS Outbox Worker 作为独立常驻进程；Monitor 根据超时未领取 Job 和
   过期租约输出结构化告警，并可发送状态变化 Webhook。
 - `pnpm e2e` 只允许使用 `TEST_DATABASE_URL` 指向的 `*_test` 数据库，并在独立 3101 端口启动服务。
 - 日常生产预检继续使用非破坏性的 `pnpm smoke`；smoke 不执行 migration、seed 或 reset。

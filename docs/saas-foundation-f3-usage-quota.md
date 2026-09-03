@@ -170,3 +170,7 @@ Reserve/Settle/Release 没有开放为浏览器可任意调用的公共 API。�
 未运行 production build、smoke、真实浏览器、生产并发压测、常驻多 Worker 长跑或正式财务/Provider 验收。
 开始前已有的 `next-env.d.ts -> .next/dev/types` 用户修改继续保留并排除在 F3 提交外；F2 已证明该状态会让附带
 production build 读取过期 `.next/dev` 路由类型，因此本阶段没有通过清理 `.next` 或覆盖用户文件来绕过环境边界。
+
+Foundation F4 已在此配额基座之上补齐通知 Outbox、API Key、Webhook 和 Tenant 品牌/域名，
+但不改变 F3 的配额结算合同。业务 API 通过 API Key 认证后仍必须调用 F3 reserve/settle/release，
+不能因为拥有 Scope 就绕过 Entitlement 或额度。详见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)。

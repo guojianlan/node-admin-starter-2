@@ -45,6 +45,7 @@ DATABASE_URL=postgres://admin_base:admin_base@localhost:5432/admin_base
 ADMIN_BASE_SECRET_KEY=change-me-admin-base-secret
 ADMIN_BASE_ADMIN_PASSWORD=123456
 ADMIN_BASE_TOKEN_TTL_DAYS=7
+ADMIN_BASE_PUBLIC_URL=http://localhost:3000
 LOG_LEVEL=info
 ```
 
@@ -53,6 +54,7 @@ LOG_LEVEL=info
 - `DATABASE_URL` 是后台连接 PostgreSQL 的唯一入口。
 - `ADMIN_BASE_SECRET_KEY` 用于加密邮件密码、S3 Secret 等敏感配置；生产环境必须改成随机长密钥。
 - `ADMIN_BASE_ADMIN_PASSWORD` 只在首次 seed 创建 `admin` 时生效，重复执行 seed 不会覆盖已存在管理员密码；生产环境必须显式配置，不能使用 `123456`。
+- `ADMIN_BASE_PUBLIC_URL` 用于邀请邮件等服务端链接；生产环境必须是可公开访问的 HTTPS Origin。
 - `NEXT_PUBLIC_API_BASE_URL` 同源部署时保持空值即可。
 - `LOG_LEVEL` 控制 Pino 结构化日志级别，支持 `fatal`、`error`、`warn`、`info`、`debug`、`trace`、`silent`。
 - 邮件 SMTP、存储配置、文件策略不建议写死到 `.env`，它们已经有后台配置页面。
@@ -72,14 +74,15 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-启动完整开发服务（包含 Notebook Deep Research 等后台任务所需的 AI Worker）：
+启动完整开发服务（包含 AI Worker 以及邀请邮件/Webhook 所需的 SaaS Outbox Worker）：
 
 ```bash
 pnpm dev:all
 ```
 
 只开发不涉及后台任务的 Web/API 页面时可以使用 `pnpm dev`。该命令不会隐式启动 Worker；如果页面
-出现“任务等待执行”，应切换到 `pnpm dev:all` 或在另一个终端运行 `pnpm ai:worker`。
+出现“任务等待执行”，应切换到 `pnpm dev:all`，或在独立终端按需运行 `pnpm ai:worker` 和
+`pnpm saas:outbox`。
 
 访问：
 
@@ -99,7 +102,9 @@ admin / 123456
 
 ```bash
 pnpm dev                 # 只启动 Next + Hono
-pnpm dev:all             # 启动 Next + Hono + AI Worker
+pnpm dev:all             # 启动 Next + Hono + AI Worker + SaaS Outbox Worker
+pnpm saas:outbox         # 常驻投递 SaaS 邀请邮件和 Webhook
+pnpm saas:outbox:once    # 本地领取一轮 SaaS Outbox 任务后退出
 pnpm ai:worker:health    # 检查超时排队任务和过期 Worker 租约
 pnpm db:migrate          # 执行 PostgreSQL 迁移，不清空数据
 pnpm db:seed             # 写入或补齐默认数据，保留已有业务配置

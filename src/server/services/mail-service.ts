@@ -109,7 +109,7 @@ export async function sendMail(input: {
 
   const transporter = createTransport(account);
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: account.fromName
         ? `"${account.fromName}" <${account.fromEmail}>`
         : account.fromEmail,
@@ -118,6 +118,7 @@ export async function sendMail(input: {
       subject: input.subject,
       text: input.text,
     });
+    return { messageId: info.messageId || null };
   } catch (error) {
     throw new Error(normalizeMailError(error));
   }

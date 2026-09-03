@@ -419,6 +419,7 @@ describe("AI governance foundation", () => {
     const token = await login();
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ADMIN_BASE_ADMIN_PASSWORD", "AdminBase-Test-Production-Password-2026!");
+    vi.stubEnv("ADMIN_BASE_PUBLIC_URL", "https://admin.example.test");
     const response = await app.request("/api/system/ai/governance/mcp/internal/provision", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },

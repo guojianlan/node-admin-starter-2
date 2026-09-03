@@ -362,8 +362,9 @@ Admin Base 产品/治理层
   Job/Tool/Export/Callback 的 `saas_async_operation` 运行封套、结构化 Tenant 审计和两个 Tenant 攻击矩阵。
 - 2026-09-02 Foundation F3 已增加 Plan/Subscription、Tenant/Workspace/Module/Metric 用量策略、
   reserve/settle/release/expired、并发额度、追加式 Ledger、幂等补偿、超限审计以及异步 operation 结算/释放闭环。
+- 2026-09-03 Foundation F4 已增加邀请 Email Outbox、lease/retry/dead-letter、API Key Hash/Scope/资源约束、Webhook Event/Delivery/HMAC/防重放/SSRF 防护、Tenant 品牌与 DNS TXT 域名验证/证书安全回退。
 - 尚未完成 Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、正式财务计费和真实
-  S3/Worker/Provider 验收；
+  SMTP/DNS/TLS/S3/Worker/Provider/Webhook 验收；
   本项状态为 `implemented-unverified`，不是完整多租户交付。
 
 ### P1-1 Notebook 来源版本与研究候选状态

@@ -18,6 +18,7 @@ const envSchema = z
     DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
     ADMIN_BASE_SECRET_KEY: z.string().trim().optional(),
     ADMIN_BASE_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(7),
+    ADMIN_BASE_PUBLIC_URL: z.url().default("http://localhost:3000"),
     ADMIN_BASE_ADMIN_PASSWORD: z.string().optional(),
     ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS: z.coerce
       .number()
@@ -76,6 +77,14 @@ const envSchema = z
         message: "ADMIN_BASE_ADMIN_PASSWORD cannot use a weak default value in production",
       });
     }
+
+    if (!value.ADMIN_BASE_PUBLIC_URL.startsWith("https://")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ADMIN_BASE_PUBLIC_URL"],
+        message: "ADMIN_BASE_PUBLIC_URL must use HTTPS in production",
+      });
+    }
   });
 
 export type AdminBaseEnv = {
@@ -85,6 +94,7 @@ export type AdminBaseEnv = {
   databasePoolSize: number;
   adminBaseSecretKey: string;
   adminBaseTokenTtlDays: number;
+  publicUrl: string;
   adminBaseAdminPassword: string;
   aiWorkerStalledAfterSeconds: number;
   aiWorkerMonitorIntervalSeconds: number;
@@ -104,6 +114,7 @@ function normalizeEnv(value: z.infer<typeof envSchema>): AdminBaseEnv {
     databasePoolSize: value.DATABASE_POOL_SIZE,
     adminBaseSecretKey: value.ADMIN_BASE_SECRET_KEY || DEFAULT_ADMIN_BASE_SECRET_KEY,
     adminBaseTokenTtlDays: value.ADMIN_BASE_TOKEN_TTL_DAYS,
+    publicUrl: value.ADMIN_BASE_PUBLIC_URL.replace(/\/$/, ""),
     adminBaseAdminPassword: value.ADMIN_BASE_ADMIN_PASSWORD || DEFAULT_ADMIN_BASE_ADMIN_PASSWORD,
     aiWorkerStalledAfterSeconds: value.ADMIN_BASE_AI_WORKER_STALLED_AFTER_SECONDS,
     aiWorkerMonitorIntervalSeconds: value.ADMIN_BASE_AI_WORKER_MONITOR_INTERVAL_SECONDS,

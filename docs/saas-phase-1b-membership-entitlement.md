@@ -134,6 +134,6 @@ Tenant active
   `/saas/invitations/accept`。
 
 本切片没有安全运行环境和凭据，因此没有运行 smoke；也没有把 production build 当作浏览器明暗主题、窄屏和实际
-交互验收。状态保持 `implemented-unverified`。真实邀请邮件、Team、套餐继承、
-Foundation F3 用量/配额/套餐继承已进入独立基座合同；Team、Studio Kernel、正式财务计费和两 Tenant 全链路
-业务资源攻击矩阵仍进入后续切片。
+交互验收。状态保持 `implemented-unverified`。邀请邮件 Outbox 已在 Foundation F4 接入，但真实 SMTP/投递回执仍待验收。
+Foundation F3 用量/配额/套餐继承和 F4 通知/集成/品牌已进入独立基座合同；Team、Studio Kernel、正式财务计费和两 Tenant 全链路
+业务资源攻击矩阵仍进入后续切片。详见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)。

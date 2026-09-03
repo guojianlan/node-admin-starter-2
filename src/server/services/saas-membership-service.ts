@@ -7,6 +7,7 @@ import {
   type TenantRole,
   type WorkspaceRole,
 } from "@/server/services/saas-control-plane-service";
+import { enqueueSaaSInvitationEmail } from "@/server/services/saas-notification-service";
 
 type TenantAssignableRole = Exclude<TenantRole, "owner">;
 type WorkspaceAssignableRole = Exclude<WorkspaceRole, "owner">;
@@ -380,6 +381,7 @@ export async function createInvitation(input: {
   tenantRole: TenantAssignableRole;
   workspaceRole?: WorkspaceAssignableRole | null;
   expiresInDays: number;
+  requestId?: string | null;
 }) {
   const access = await assertTenantAccess({
     userId: input.userId,
@@ -435,25 +437,41 @@ export async function createInvitation(input: {
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = invitationTokenHash(token);
   const expiresAt = new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString();
-  const created = await sqlite
-    .prepare(
-      `INSERT INTO saas_invitation
-        (tenant_id, workspace_id, email, tenant_role, workspace_role, token_hash,
-         status, expires_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-       RETURNING id`,
-    )
-    .run(
-      input.tenantId,
-      input.workspaceId ?? null,
-      email,
-      input.tenantRole,
-      input.workspaceRole ?? null,
-      tokenHash,
-      expiresAt,
-      input.userId,
+  return sqlite.transaction(async (tx) => {
+    const created = await tx
+      .prepare(
+        `INSERT INTO saas_invitation
+          (tenant_id, workspace_id, email, tenant_role, workspace_role, token_hash,
+           status, expires_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+         RETURNING id`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId ?? null,
+        email,
+        input.tenantRole,
+        input.workspaceRole ?? null,
+        tokenHash,
+        expiresAt,
+        input.userId,
+      );
+    const id = Number(created.lastInsertRowid);
+    const notification = await enqueueSaaSInvitationEmail(
+      {
+        invitationId: id,
+        tenantId: input.tenantId,
+        workspaceId: input.workspaceId,
+        recipient: email,
+        token,
+        expiresAt,
+        createdBy: input.userId,
+        requestId: input.requestId,
+      },
+      tx,
     );
-  return { id: Number(created.lastInsertRowid), token, expiresAt };
+    return { id, token, expiresAt, notificationId: notification.id };
+  });
 }
 
 export async function revokeInvitation(input: { userId: number; id: number }) {

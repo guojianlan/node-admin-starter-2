@@ -371,6 +371,7 @@ describe("constrained module development agent", () => {
     vi.stubEnv("DATABASE_URL", "postgres://admin:secret@db.internal:5432/admin_base_prod");
     vi.stubEnv("ADMIN_BASE_SECRET_KEY", "production-secret-that-is-not-default");
     vi.stubEnv("ADMIN_BASE_ADMIN_PASSWORD", "ProductionPassword123!");
+    vi.stubEnv("ADMIN_BASE_PUBLIC_URL", "https://admin.example.test");
     await expect(
       executeModuleAgentTool(
         tool("module_design"),

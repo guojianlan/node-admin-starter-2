@@ -1,6 +1,6 @@
 # Admin Base 基座与 SaaS 业务扩展边界
 
-> 当前核对：2026-09-02
+> 当前核对：2026-09-03
 >
 > 文档状态：`implemented-unverified`。本文定义分层和当前代码事实，不表示 Studio Kernel 或 13 个业务产品已经交付。
 
@@ -38,7 +38,7 @@ L0/L1 自己实现账号、租户、权限、文件、任务、配额和审计�
 | 数据库与迁移 | PostgreSQL + Drizzle schema + 非破坏性 migration + seed            | 已实现工程合同                                           |
 | 审计与秘密   | 重要 mutation 写 `sys_operation_log`，密钥加密/Hash/脱敏           | 已实现主合同                                             |
 | 文件与存储   | 安全上传、引用保护、本地/S3-compatible、物理删除边界               | 已实现平台能力；Tenant 文件边界待 L1 收口                |
-| 通知与集成   | 公告、邮件、短信、OAuth、失败可追踪                                | 管理能力已实现；通用 Outbox/真实 Provider 闭环未全部完成 |
+| 通知与集成   | 公告、邮件、短信、OAuth、失败可追踪                                | 通用邀请 Email Outbox 已实现；真实 SMTP/回执仍待验收    |
 | 长任务       | PostgreSQL Job/Outbox、lease、heartbeat、retry、cancel、fencing    | AI 运行链已实现；通用业务任务适配待收口                  |
 | AI 治理      | Provider/Model、Invocation、Tool、Approval、Knowledge、Eval、MCP   | 已实现基础，不等于任何垂直 AI 产品已交付                 |
 | 运维与质量   | health/ready/doctor、API/page 清单、route check、测试和安全 smoke  | 已实现工程门禁；环境验收按发布执行                       |
@@ -52,16 +52,16 @@ L1 不是某个内容产品的业务扩展；只要系统要服务多个客户�
 | 能力域               | 当前状态                                                      | 后续必须收口                                                           |
 | -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Tenant / Workspace   | 已有 schema、migration、页面、API、成员范围                   | 生命周期联动与环境验收                                                 |
-| Member / Invitation  | 已有角色、停用/移除、Hash Token、邮箱绑定                     | SMTP Outbox、所有权转移、Team                                          |
+| Member / Invitation  | 已有角色、停用/移除、Hash Token、邮箱绑定和邀请 Email Outbox | 真实 SMTP/回执、所有权转移、Team                                  |
 | Current Context      | 本阶段新增服务端校验、数据库偏好、Header 传递、Header 切换器  | 所有新 SaaS 资源统一使用 `requireSaasContext`                          |
 | Module / Entitlement | 已有模块目录、上架闸门、依赖、有效模块解析和 F3 套餐继承      | 批量授权、运营审批                                                     |
 | Tenant 菜单          | 本阶段新增已上架模块按有效 Entitlement fail closed            | 业务模块上架时必须登记真实 route/action；控制面 route 不登记为产品模块 |
 | 用量与配额           | F3 已有 Tenant/Workspace/Module/Metric reserve/settle/release | 生产并发规模、长跑 Worker 和业务模块逐项接入                           |
 | Tenant 文件          | F2 已新增 `saas_file_binding` 与 Scope 文件 API               | 新业务资产必须绑定非空 Tenant/Workspace；历史文件仍按域迁移            |
 | Tenant Worker        | F2 已新增 Job/Tool/Export/Callback 统一异步 Scope 封套        | 业务处理器与真实 Provider 必须在副作用前使用数据库 Scope 重新校验      |
-| API / Webhook        | 尚未形成通用 SaaS 合同                                        | API Key Hash、scope、签名、重放保护、Outbox、重试                      |
+| API / Webhook        | F4 已有 API Key Hash/Scope/资源约束和 Webhook Outbox/签名/重放/重试 | 第一个业务 API/Provider Callback 接线和真实公网验收              |
 | Plan / Billing       | F3 已有 Plan、Module Limit 与 Tenant Subscription 控制面      | Invoice、Payment、正式关账和 Provider 对账后续独立阶段                 |
-| 品牌与域名           | 主题/I18n 有平台基础                                          | Tenant 品牌、域名验证、邮件品牌和安全回退                              |
+| 品牌与域名           | F4 已有 Tenant 品牌、DNS TXT 验证、邀请邮件品牌和证书安全回退 | 自动证书控制器、反向代理和真实 DNS/TLS 验收               |
 
 ### 3.1 当前上下文合同
 
@@ -101,7 +101,7 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 3. **Foundation F3（已实现，环境未验收）**：Tenant/Workspace/Module/Metric 用量
    reserve-settle-release、并发额度、套餐继承、幂等补偿与超限审计；详细合同见
    [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
-4. **Foundation F4**：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名。
+4. **Foundation F4（已实现，环境未验收）**：通知 Outbox、邀请邮件、API Key、Webhook 签名/重放/重试、Tenant 品牌和域名；详细合同见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)。
 5. **Studio K1-K3**：只有 F1-F2 的隔离合同稳定后，才建设 Project/Asset、Task/Timeline/Export 和公共工作台。
 6. **垂直产品**：每次选择 1-2 个产品做完整 MVP，不批量创建空菜单或空页面。
 
@@ -118,12 +118,12 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
 
 ## 7. 本阶段验证边界
 
-2026-09-02 当前已完成：
+2026-09-03 当前已完成：
 
-- `pnpm admin:verify --module saas`：SaaS 定向测试 18/18、类型、模块 ESLint、route check 和测试清单通过。
+- `pnpm admin:verify --module saas`：SaaS 定向测试 28/28、类型、模块 ESLint、route check 和测试清单通过。
 - `pnpm lint`：全仓 ESLint 通过。
-- `pnpm test`：完整运行 40 个 Test Files、656 项测试全部通过。
-- API/page 清单为 404/404、41/41，F1 上下文、F2 资源 Scope 与 F3 用量/套餐 API 均有独立安全合同。
+- `pnpm test`：完整运行 41 个 Test Files、685 项测试全部通过。
+- API/page 清单为 423/423、41/41，F1 上下文、F2 资源 Scope、F3 用量/套餐与 F4 通知/集成 API 均有独立安全合同。
 - Foundation F2 新增统一 `SaaSResourceScope`、服务端 Tenant/Workspace 文件前缀、`saas_file_binding`、
   `saas_async_operation`、`saas_callback_event` 和结构化 Tenant 审计维度；Tenant A/B 的文件、Job、Tool、Export、
   Callback 与 Audit 攻击矩阵由 `tests/api/saas-resource-foundation.test.ts` 自动阻断。
@@ -131,8 +131,10 @@ L2 第一版就必须具有非空 `tenant_id/workspace_id`、Project ACL、对�
   `saas_usage_policy_override`、`saas_usage_reservation` 和追加式 `saas_usage_ledger`；Plan/Entitlement/Tenant/
   Workspace 的继承顺序、并发 Reserve、幂等结算/释放、过期回收、governed overage 以及异步 operation
   完成/失败/取消补偿由 `tests/api/saas-usage-foundation.test.ts` 自动覆盖。
+- Foundation F4 新增邀请 Email Outbox、API Key、Webhook Event/Delivery/签名/防重放/SSRF 防护、
+  Tenant 品牌和 DNS TXT 域名验证/证书安全回退；由
+  `tests/api/saas-integration-foundation.test.ts` 自动覆盖。
 
-`pnpm admin:verify --full` 的 TypeScript、ESLint、Vitest、test-case inventory 和 route check 均通过；其附带的
-production build 被开始前已有的 `next-env.d.ts -> .next/dev/types` 与过期 `.next/dev` 路由类型阻断，错误指向已不存在
-的 `system/qa/note/page.js`，未改写或提交该用户文件。未运行 smoke、真实浏览器明暗主题/窄屏、真实 S3、常驻 Worker
-长跑或外部 Provider/Webhook 验收。因此状态保持 `implemented-unverified`；自动化通过不等于生产环境或视觉验收完成。
+F4 未运行 production build、smoke、E2E、真实浏览器、SMTP、DNS/TLS、S3、常驻 Worker 长跑或外部
+Provider/Webhook 验收。开始前已有的 `next-env.d.ts -> .next/dev/types` 用户修改继续保留并排除在 F4 提交外，
+未清理 `.next` 或覆盖该文件来绕过已知 build 边界。因此状态保持 `implemented-unverified`；自动化通过不等于生产环境或视觉验收完成。

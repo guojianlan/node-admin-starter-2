@@ -70,6 +70,12 @@ const operationsByMethod = {
     "/api/saas/plans",
     "/api/saas/usage/summary",
     "/api/saas/usage/ledger",
+    "/api/saas/branding",
+    "/api/saas/domains",
+    "/api/saas/notifications/outbox",
+    "/api/saas/api-keys",
+    "/api/saas/webhooks",
+    "/api/saas/webhook-deliveries",
     "/api/saas/files",
     "/api/saas/files/{id}",
     "/api/saas/files/{id}/download",
@@ -210,6 +216,17 @@ const operationsByMethod = {
     "/api/saas/entitlements",
     "/api/saas/plans",
     "/api/saas/usage/adjustments",
+    "/api/saas/domains",
+    "/api/saas/domains/{id}/verify",
+    "/api/saas/domains/{id}/revoke",
+    "/api/saas/notifications/outbox/{id}/retry",
+    "/api/saas/api-keys",
+    "/api/saas/api-keys/{id}/rotate",
+    "/api/saas/api-keys/{id}/revoke",
+    "/api/saas/webhooks",
+    "/api/saas/webhooks/{id}/rotate-secret",
+    "/api/saas/webhooks/{id}/revoke",
+    "/api/saas/webhook-deliveries/{id}/retry",
     "/api/saas/tenants",
     "/api/saas/workspaces",
     "/api/system/ai/agent",
@@ -348,6 +365,8 @@ const operationsByMethod = {
     "/api/saas/plans/{id}",
     "/api/saas/subscriptions/{tenantId}",
     "/api/saas/usage/policies",
+    "/api/saas/branding",
+    "/api/saas/webhooks/{id}",
     "/api/saas/tenants/{id}",
     "/api/saas/workspaces/{id}",
     "/api/system/ai/eval/cases/{id}",
@@ -458,6 +477,114 @@ function coverageFor(path: string): CoverageMode {
 
 function createCase(method: string, path: string): ApiTestCase {
   const operation = `${method} ${path}`;
+  if (path === "/api/saas/branding" || path.startsWith("/api/saas/domains")) {
+    return {
+      operation,
+      area: "SaaS 集成基座 / Tenant 品牌与域名",
+      success: [
+        "Tenant owner/admin 在服务端 Scope 内读写品牌配置；域名创建只接受规范 hostname 并一次性返回 DNS TXT Challenge Token",
+        "DNS 所有权验证成功后标记 verified/pending，只有主域名且 certificateStatus=active 才生成自定义 HTTPS 基础 URL",
+      ],
+      failures: [
+        "未登录返回 401，缺少 query/manage ability 返回 403，非 Tenant owner/admin 或跨 Tenant ID 返回 404",
+        "协议、路径、端口、localhost/内网后缀、重复 hostname 或 TXT 不匹配返回 4xx，不激活域名",
+      ],
+      dataAssertions: [
+        "saas_tenant_branding 每个 Tenant 唯一；saas_tenant_domain.hostname 全局唯一，Challenge 只保存 Hash/Prefix",
+        "certificateStatus 非 active、域名未验证或已撤销时回退 ADMIN_BASE_PUBLIC_URL，品牌邮件不使用未受信域名",
+      ],
+      security: [
+        "Tenant A 不能读写、验证或撤销 Tenant B 品牌/域名；客户端 Tenant ID 不替代成员关系校验",
+        "Challenge Token 只创建时返回，不进列表、日志或错误；证书未激活前不信任自定义域名",
+      ],
+      sideEffects: [
+        "品牌更新写 medium 风险日志；域名创建、验证、撤销写 high 风险日志且不包含 Token",
+        "DNS 验证 Route 会访问真实 TXT Resolver；真实 DNS 传播和 TLS/证书控制器属环境验收",
+      ],
+      coverage: operation.endsWith("/verify") ? "environment" : "automated",
+    };
+  }
+  if (path.startsWith("/api/saas/notifications/outbox")) {
+    return {
+      operation,
+      area: "SaaS 集成基座 / 通知 Outbox",
+      success: [
+        "列表只返回当前 Tenant 的投递事实；邀请和加密 Outbox 在同一事务创建",
+        "Worker 以 SKIP LOCKED + lease 领取 queued/retry 任务，成功保存 messageId，失败指数退避并在上限后进入 dead_letter",
+      ],
+      failures: [
+        "未登录返回 401，缺少 notification query/manage ability 返回 403，跨 Tenant 查询或重试返回 404",
+        "非 dead_letter 人工重试、邀请已失效/撤销/邮箱不匹配时拒绝或取消，不发送过期凭据",
+      ],
+      dataAssertions: [
+        "payload_encrypted 不含邀请 Token 明文，且 (tenantId, channel, idempotencyKey) 唯一",
+        "attempts、availableAt、leaseUntil、deliveredAt、providerMessageId 和 status 与状态机一致",
+      ],
+      security: [
+        "列表不返回加密 payload，邮件投递前重新检查邀请数据库事实",
+        "SMTP 错误经脱敏后截断，操作日志不记录 Token、邮件正文或加密 payload",
+      ],
+      sideEffects: [
+        "人工重试清零 attempts 并以 high 风险写操作日志；过期 lease 可被其他 Worker 接管",
+        "自动化使用可注入 sender；真实 SMTP、退信/投递回执和常驻 Worker 长跑属环境验收",
+      ],
+      coverage: "automated",
+    };
+  }
+  if (path.startsWith("/api/saas/api-keys")) {
+    return {
+      operation,
+      area: "SaaS 集成基座 / API Key",
+      success: [
+        "Tenant owner/admin 创建有明确 Scope、可选 Workspace/Module 约束和过期时间的 API Key，明文只本次返回",
+        "认证只匹配精确 Scope 和服务端资源约束；轮换在同一事务撤销旧 Key 并创建新 Key",
+      ],
+      failures: [
+        "未登录返回 401，缺少 apiKey query/manage ability 返回 403，非 Tenant owner/admin 或跨 Tenant ID 返回 404",
+        "空/通配/高风险 Scope、过期时间、跨 Tenant Workspace 和 Module 约束返回 4xx，不创建可用 Key",
+      ],
+      dataAssertions: [
+        "saas_api_key 只保存 prefix、SHA-256 hash、Scope、资源约束和生命周期；列表不返回 hash 或明文",
+        "旧 Key 在 rotate/revoke 后立即无效；lastUsedAt 和 saas_api_key_request_log 只保存受控请求事实",
+      ],
+      security: [
+        "默认拒绝 system、permission、secret、memberAdmin、billing/payment/refund 和物理删除等高风险 Scope",
+        "请求日志不保存 Key/正文，IP 只保存基于服务端 Secret 的 HMAC；业务 API 不能信任客户端 Scope",
+      ],
+      sideEffects: [
+        "创建、轮换、撤销以 high 风险写操作日志，详情不含明文 Key",
+        "F4 提供认证与审计 Service 合同；具体业务 API 必须显式绑定 requiredScope/Workspace/Module 并记录结果",
+      ],
+      coverage: "automated",
+    };
+  }
+  if (path.startsWith("/api/saas/webhooks") || path.startsWith("/api/saas/webhook-deliveries")) {
+    return {
+      operation,
+      area: "SaaS 集成基座 / Webhook",
+      success: [
+        "Tenant owner/admin 管理 Endpoint、精确事件订阅和一次性 Secret；事件 Outbox 按 eventKey 幂等创建 Delivery",
+        "Worker 对 timestamp.eventKey.rawBody 生成 HMAC-SHA256，校验公网 DNS 后固定 IP 投递，并处理重试/死信/人工重试",
+      ],
+      failures: [
+        "未登录返回 401，缺少 webhook query/manage ability 返回 403，非 Tenant owner/admin 或跨 Tenant 返回 404",
+        "HTTP、非 443、URL credentials、敏感 Query、localhost/内网/保留 IP、DNS 解析到非公网地址或 eventKey 参数冲突均受控拒绝",
+      ],
+      dataAssertions: [
+        "Secret 和 payload 加密保存；event 保存 payloadHash，(eventId, endpointId) Delivery 唯一",
+        "Delivery 只保存状态、attempts、HTTP status、response body hash 和脱敏错误，不保存 Provider 响应正文",
+      ],
+      security: [
+        "出站请求仅 HTTPS/443，DNS 所有解析地址必须为公网，连接使用已校验 IP 减少 DNS Rebinding",
+        "入站签名校验包含时间窗口、恒定时间比较和持久化重放占位；F4 不开放任意公共 Callback Route",
+      ],
+      sideEffects: [
+        "Endpoint 变更、Secret 轮换、撤销和 Delivery 人工重试写 high 风险日志",
+        "自动化使用可注入 DNS/HTTP runtime；真实公网 DNS、对端 TLS、防火墙、端到端回调和常驻 Worker 属环境验收",
+      ],
+      coverage: "automated",
+    };
+  }
   if (path.startsWith("/api/saas/files")) {
     return {
       operation,

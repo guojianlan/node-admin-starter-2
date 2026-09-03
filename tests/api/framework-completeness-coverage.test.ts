@@ -1051,8 +1051,10 @@ describe("framework completeness coverage", () => {
 
       const previousNodeEnv = process.env.NODE_ENV;
       const previousAdminPassword = process.env.ADMIN_BASE_ADMIN_PASSWORD;
+      const previousPublicUrl = process.env.ADMIN_BASE_PUBLIC_URL;
       Reflect.set(process.env, "NODE_ENV", "production");
       process.env.ADMIN_BASE_ADMIN_PASSWORD = "production-test-password";
+      process.env.ADMIN_BASE_PUBLIC_URL = "https://admin.example.test";
       try {
         const productionGenerate = await app.request("/api/system/module/generator/generate", {
           method: "POST",
@@ -1074,6 +1076,8 @@ describe("framework completeness coverage", () => {
         else Reflect.set(process.env, "NODE_ENV", previousNodeEnv);
         if (previousAdminPassword == null) delete process.env.ADMIN_BASE_ADMIN_PASSWORD;
         else process.env.ADMIN_BASE_ADMIN_PASSWORD = previousAdminPassword;
+        if (previousPublicUrl == null) delete process.env.ADMIN_BASE_PUBLIC_URL;
+        else process.env.ADMIN_BASE_PUBLIC_URL = previousPublicUrl;
       }
     } finally {
       await fs.rm(conflictRoot, { recursive: true, force: true });

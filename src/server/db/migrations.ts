@@ -4386,6 +4386,262 @@ BEFORE UPDATE ON saas_usage_reservation
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 `,
   },
+  {
+    id: "0068_saas_integration_foundation",
+    sql: `
+CREATE TABLE IF NOT EXISTS saas_tenant_branding (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  product_name TEXT,
+  logo_file_id INTEGER REFERENCES sys_file(id) ON DELETE SET NULL,
+  primary_color TEXT,
+  theme_mode TEXT NOT NULL DEFAULT 'system' CHECK (theme_mode IN ('light', 'dark', 'system')),
+  locale TEXT NOT NULL DEFAULT 'zh-CN',
+  timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  email_from_name TEXT,
+  support_email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  CONSTRAINT saas_tenant_branding_primary_color_check
+    CHECK (primary_color IS NULL OR primary_color ~ '^#[0-9A-Fa-f]{6}$')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_branding_tenant_unique
+  ON saas_tenant_branding(tenant_id);
+CREATE INDEX IF NOT EXISTS saas_tenant_branding_logo_idx
+  ON saas_tenant_branding(logo_file_id);
+
+CREATE TABLE IF NOT EXISTS saas_tenant_domain (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  hostname TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'verified', 'failed', 'revoked')),
+  verification_token_hash TEXT NOT NULL,
+  verification_token_prefix TEXT NOT NULL,
+  challenge_name TEXT NOT NULL,
+  is_primary BOOLEAN NOT NULL DEFAULT false,
+  certificate_status TEXT NOT NULL DEFAULT 'not_requested'
+    CHECK (certificate_status IN ('not_requested', 'pending', 'active', 'failed')),
+  last_checked_at TIMESTAMPTZ,
+  verified_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  failure_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_domain_hostname_unique
+  ON saas_tenant_domain(hostname);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_tenant_domain_primary_unique
+  ON saas_tenant_domain(tenant_id) WHERE is_primary = true AND status = 'verified';
+CREATE INDEX IF NOT EXISTS saas_tenant_domain_tenant_status_idx
+  ON saas_tenant_domain(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS saas_notification_outbox (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL,
+  channel TEXT NOT NULL DEFAULT 'email' CHECK (channel IN ('email')),
+  template_code TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  payload_encrypted TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'retry', 'delivered', 'dead_letter', 'cancelled')),
+  priority INTEGER NOT NULL DEFAULT 100 CHECK (priority BETWEEN 0 AND 1000),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts BETWEEN 1 AND 20),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_by TEXT,
+  lease_until TIMESTAMPTZ,
+  last_attempt_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ,
+  provider_message_id TEXT,
+  error_message TEXT,
+  request_id TEXT,
+  idempotency_key TEXT NOT NULL,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT saas_notification_outbox_resource_pair_check CHECK (
+    (resource_type IS NULL AND resource_id IS NULL) OR
+    (resource_type IS NOT NULL AND resource_id IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_notification_outbox_scope_idempotency_unique
+  ON saas_notification_outbox(tenant_id, channel, idempotency_key);
+CREATE INDEX IF NOT EXISTS saas_notification_outbox_claim_idx
+  ON saas_notification_outbox(status, available_at, priority, id);
+CREATE INDEX IF NOT EXISTS saas_notification_outbox_scope_created_idx
+  ON saas_notification_outbox(tenant_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_api_key (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  scopes_json TEXT NOT NULL DEFAULT '[]',
+  resource_constraints_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  expires_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  revoked_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  rotated_from_id INTEGER REFERENCES saas_api_key(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_api_key_prefix_unique ON saas_api_key(prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_api_key_hash_unique ON saas_api_key(key_hash);
+CREATE INDEX IF NOT EXISTS saas_api_key_tenant_status_idx
+  ON saas_api_key(tenant_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_api_key_request_log (
+  id SERIAL PRIMARY KEY,
+  api_key_id INTEGER REFERENCES saas_api_key(id) ON DELETE SET NULL,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL,
+  required_scope TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  request_id TEXT,
+  status INTEGER NOT NULL,
+  success BOOLEAN NOT NULL,
+  ip_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS saas_api_key_request_log_key_created_idx
+  ON saas_api_key_request_log(api_key_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS saas_api_key_request_log_scope_created_idx
+  ON saas_api_key_request_log(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_webhook_endpoint (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  event_types_json TEXT NOT NULL DEFAULT '[]',
+  secret_encrypted TEXT NOT NULL,
+  secret_prefix TEXT NOT NULL,
+  secret_version INTEGER NOT NULL DEFAULT 1 CHECK (secret_version >= 1),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'revoked')),
+  timeout_ms INTEGER NOT NULL DEFAULT 10000 CHECK (timeout_ms BETWEEN 1000 AND 30000),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts BETWEEN 1 AND 20),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  updated_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  deleted_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS saas_webhook_endpoint_scope_status_idx
+  ON saas_webhook_endpoint(tenant_id, workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS saas_webhook_event (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL,
+  event_type TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  payload_encrypted TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  request_id TEXT,
+  created_by INTEGER REFERENCES sys_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT saas_webhook_event_resource_pair_check CHECK (
+    (resource_type IS NULL AND resource_id IS NULL) OR
+    (resource_type IS NOT NULL AND resource_id IS NOT NULL)
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_webhook_event_scope_key_unique
+  ON saas_webhook_event(tenant_id, event_type, event_key);
+CREATE INDEX IF NOT EXISTS saas_webhook_event_scope_created_idx
+  ON saas_webhook_event(tenant_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_webhook_delivery (
+  id SERIAL PRIMARY KEY,
+  event_id INTEGER NOT NULL REFERENCES saas_webhook_event(id) ON DELETE CASCADE,
+  endpoint_id INTEGER NOT NULL REFERENCES saas_webhook_endpoint(id) ON DELETE CASCADE,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE RESTRICT,
+  workspace_id INTEGER REFERENCES saas_workspace(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'retry', 'delivered', 'dead_letter', 'cancelled')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts BETWEEN 1 AND 20),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_by TEXT,
+  lease_until TIMESTAMPTZ,
+  response_status INTEGER,
+  response_body_hash TEXT,
+  error_message TEXT,
+  delivered_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_webhook_delivery_event_endpoint_unique
+  ON saas_webhook_delivery(event_id, endpoint_id);
+CREATE INDEX IF NOT EXISTS saas_webhook_delivery_claim_idx
+  ON saas_webhook_delivery(status, available_at, id);
+CREATE INDEX IF NOT EXISTS saas_webhook_delivery_scope_created_idx
+  ON saas_webhook_delivery(tenant_id, workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saas_webhook_replay (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES saas_tenant(id) ON DELETE CASCADE,
+  workspace_id INTEGER NOT NULL REFERENCES saas_workspace(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  event_timestamp TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS saas_webhook_replay_scope_event_unique
+  ON saas_webhook_replay(tenant_id, workspace_id, source, event_key);
+CREATE INDEX IF NOT EXISTS saas_webhook_replay_expiry_idx
+  ON saas_webhook_replay(expires_at);
+
+DROP TRIGGER IF EXISTS trg_saas_tenant_branding_updated_at ON saas_tenant_branding;
+CREATE TRIGGER trg_saas_tenant_branding_updated_at
+BEFORE UPDATE ON saas_tenant_branding
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_tenant_domain_updated_at ON saas_tenant_domain;
+CREATE TRIGGER trg_saas_tenant_domain_updated_at
+BEFORE UPDATE ON saas_tenant_domain
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_notification_outbox_updated_at ON saas_notification_outbox;
+CREATE TRIGGER trg_saas_notification_outbox_updated_at
+BEFORE UPDATE ON saas_notification_outbox
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_api_key_updated_at ON saas_api_key;
+CREATE TRIGGER trg_saas_api_key_updated_at
+BEFORE UPDATE ON saas_api_key
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_webhook_endpoint_updated_at ON saas_webhook_endpoint;
+CREATE TRIGGER trg_saas_webhook_endpoint_updated_at
+BEFORE UPDATE ON saas_webhook_endpoint
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_saas_webhook_delivery_updated_at ON saas_webhook_delivery;
+CREATE TRIGGER trg_saas_webhook_delivery_updated_at
+BEFORE UPDATE ON saas_webhook_delivery
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+`,
+  },
 ];
 
 export async function runMigrations(client: postgres.Sql = sql) {

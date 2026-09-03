@@ -17,6 +17,7 @@ NODE_ENV=production
 DATABASE_URL=postgres://user:password@host:5432/admin_base
 ADMIN_BASE_SECRET_KEY=<long-random-secret>
 ADMIN_BASE_ADMIN_PASSWORD=<initial-admin-password>
+ADMIN_BASE_PUBLIC_URL=https://your-admin-domain.example
 ```
 
 Recommended optional variables:
@@ -133,12 +134,14 @@ pm2 start deploy/pm2/ecosystem.config.cjs
 pm2 save
 ```
 
-The checked-in PM2 configuration runs three independent, auto-restarting processes:
+The checked-in PM2 configuration runs four independent, auto-restarting processes:
 
 - `admin-base-web`: Next.js + Hono.
 - `admin-base-ai-worker`: claims and executes PostgreSQL AI Jobs.
 - `admin-base-ai-worker-monitor`: detects claimable Jobs waiting beyond the configured threshold,
   expired leases, and optionally sends state-change webhooks.
+- `admin-base-saas-outbox-worker`: delivers Tenant invitation email and outbound SaaS Webhook
+  records with PostgreSQL leases, retries, and dead-letter handling.
 
 Recommended PM2 environment:
 
@@ -147,27 +150,31 @@ NODE_ENV=production
 DATABASE_URL=postgres://user:password@host:5432/admin_base
 ADMIN_BASE_SECRET_KEY=<long-random-secret>
 ADMIN_BASE_ADMIN_PASSWORD=<initial-admin-password>
+ADMIN_BASE_PUBLIC_URL=https://your-admin-domain.example
 DATABASE_POOL_SIZE=10
 LOG_LEVEL=info
 ```
 
 systemd deployments should run `pnpm start` for Web after `pnpm build`, and enable the checked-in
 `deploy/systemd/admin-base-ai-worker.service` plus
-`deploy/systemd/admin-base-ai-worker-monitor.service`. Copy and review the templates first: adjust
+`deploy/systemd/admin-base-ai-worker-monitor.service` plus
+`deploy/systemd/admin-base-saas-outbox-worker.service`. Copy and review the templates first: adjust
 `User`, `Group`, `WorkingDirectory`, `EnvironmentFile`, and the pnpm path for the target host.
 
 ```bash
 sudo cp deploy/systemd/admin-base-ai-worker*.service /etc/systemd/system/
+sudo cp deploy/systemd/admin-base-saas-outbox-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now admin-base-ai-worker.service
 sudo systemctl enable --now admin-base-ai-worker-monitor.service
+sudo systemctl enable --now admin-base-saas-outbox-worker.service
 ```
 
-For containers, run Web, Worker, and Monitor as separate services from the same immutable image and
-environment. Their commands are respectively `pnpm start`, `pnpm ai:worker`, and
-`pnpm ai:worker:monitor`; never run three commands inside one container. Configure restart policies
-for Worker and Monitor, and route their structured stderr/log output or the optional webhook into
-the deployment alerting system.
+For containers, run Web, AI Worker, Monitor, and SaaS Outbox Worker as separate services from the
+same immutable image and environment. Their commands are respectively `pnpm start`,
+`pnpm ai:worker`, `pnpm ai:worker:monitor`, and `pnpm saas:outbox`; never run these commands inside
+one container. Configure restart policies for every Worker/Monitor process, and route structured
+stderr/log output or the optional alert webhook into the deployment alerting system.
 
 ## Reverse Proxy
 
@@ -207,6 +214,22 @@ server {
 - Configure at least one enabled default mail account for password reset flows.
 - Use the mail account test action after every SMTP change.
 - Passwords are stored encrypted and never returned by API responses.
+- Keep `admin-base-saas-outbox-worker` running for Tenant invitation delivery. Verify delivery,
+  provider message IDs, retry/dead-letter recovery, bounce handling, and the recipient PII retention
+  policy in the target environment.
+
+## SaaS Branding, Domain, And Webhook
+
+- `ADMIN_BASE_PUBLIC_URL` is the safe platform fallback used in generated invitation links and must
+  be an externally reachable HTTPS origin in production.
+- DNS ownership verification only moves a Tenant domain to `verified`; an external certificate and
+  reverse-proxy controller must provision TLS and explicitly advance certificate status to `active`.
+  Until then, links continue using `ADMIN_BASE_PUBLIC_URL`.
+- Permit only the required outbound HTTPS/443 network access for Webhook delivery. Validate the
+  target environment's DNS resolver, firewall, TLS trust store, retry/dead-letter recovery, and
+  destination signature verification before production enablement.
+- API Key authentication is bound by each business route to an exact Scope, Workspace/Module
+  constraint, Entitlement, resource ACL, and quota. Do not expose a generic pass-through API.
 
 ## Web Search
 

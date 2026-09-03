@@ -162,6 +162,7 @@ describe("production foundation", () => {
             ADMIN_BASE_RESET_DATABASE_NAME: "admin_base_production",
             ADMIN_BASE_SECRET_KEY: "production-secret-value-that-is-long-enough",
             ADMIN_BASE_ADMIN_PASSWORD: "safe-admin-password",
+            ADMIN_BASE_PUBLIC_URL: "https://admin.example.test",
           },
         }),
       /ADMIN_BASE_CONFIRM_PRODUCTION_RESET/,

@@ -2858,6 +2858,320 @@ export const saasUsageLedger = pgTable(
   ],
 );
 
+export const saasTenantBranding = pgTable(
+  "saas_tenant_branding",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    productName: text("product_name"),
+    logoFileId: integer("logo_file_id").references(() => sysFile.id, { onDelete: "set null" }),
+    primaryColor: text("primary_color"),
+    themeMode: text("theme_mode", { enum: ["light", "dark", "system"] })
+      .notNull()
+      .default("system"),
+    locale: text("locale").notNull().default("zh-CN"),
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    emailFromName: text("email_from_name"),
+    supportEmail: text("support_email"),
+    ...timestamps,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_tenant_branding_tenant_unique").on(table.tenantId),
+    index("saas_tenant_branding_logo_idx").on(table.logoFileId),
+  ],
+);
+
+export const saasTenantDomain = pgTable(
+  "saas_tenant_domain",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    hostname: text("hostname").notNull(),
+    status: text("status", { enum: ["pending", "verified", "failed", "revoked"] })
+      .notNull()
+      .default("pending"),
+    verificationTokenHash: text("verification_token_hash").notNull(),
+    verificationTokenPrefix: text("verification_token_prefix").notNull(),
+    challengeName: text("challenge_name").notNull(),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    certificateStatus: text("certificate_status", {
+      enum: ["not_requested", "pending", "active", "failed"],
+    })
+      .notNull()
+      .default("not_requested"),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    ...timestamps,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_tenant_domain_hostname_unique").on(table.hostname),
+    index("saas_tenant_domain_tenant_status_idx").on(table.tenantId, table.status),
+  ],
+);
+
+export const saasNotificationOutbox = pgTable(
+  "saas_notification_outbox",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
+    channel: text("channel", { enum: ["email"] }).notNull().default("email"),
+    templateCode: text("template_code").notNull(),
+    recipient: text("recipient").notNull(),
+    payloadEncrypted: text("payload_encrypted").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    status: text("status", {
+      enum: ["queued", "running", "retry", "delivered", "dead_letter", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    priority: integer("priority").notNull().default(100),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedBy: text("locked_by"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    providerMessageId: text("provider_message_id"),
+    errorMessage: text("error_message"),
+    requestId: text("request_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("saas_notification_outbox_scope_idempotency_unique").on(
+      table.tenantId,
+      table.channel,
+      table.idempotencyKey,
+    ),
+    index("saas_notification_outbox_claim_idx").on(
+      table.status,
+      table.availableAt,
+      table.priority,
+      table.id,
+    ),
+    index("saas_notification_outbox_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const saasApiKey = pgTable(
+  "saas_api_key",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scopesJson: text("scopes_json").notNull().default("[]"),
+    resourceConstraintsJson: text("resource_constraints_json").notNull().default("{}"),
+    status: text("status", { enum: ["active", "revoked"] }).notNull().default("active"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: integer("revoked_by").references(() => sysUser.id, { onDelete: "set null" }),
+    rotatedFromId: integer("rotated_from_id"),
+    ...timestamps,
+    ...auditUsers,
+  },
+  (table) => [
+    uniqueIndex("saas_api_key_prefix_unique").on(table.prefix),
+    uniqueIndex("saas_api_key_hash_unique").on(table.keyHash),
+    index("saas_api_key_tenant_status_idx").on(table.tenantId, table.status, table.createdAt),
+  ],
+);
+
+export const saasApiKeyRequestLog = pgTable(
+  "saas_api_key_request_log",
+  {
+    id: serial("id").primaryKey(),
+    apiKeyId: integer("api_key_id").references(() => saasApiKey.id, { onDelete: "set null" }),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
+    requiredScope: text("required_scope").notNull(),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    requestId: text("request_id"),
+    status: integer("status").notNull(),
+    success: boolean("success").notNull(),
+    ipHash: text("ip_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("saas_api_key_request_log_key_created_idx").on(table.apiKeyId, table.createdAt),
+    index("saas_api_key_request_log_scope_created_idx").on(table.tenantId, table.createdAt),
+  ],
+);
+
+export const saasWebhookEndpoint = pgTable(
+  "saas_webhook_endpoint",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    eventTypesJson: text("event_types_json").notNull().default("[]"),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    secretPrefix: text("secret_prefix").notNull(),
+    secretVersion: integer("secret_version").notNull().default(1),
+    status: text("status", { enum: ["active", "disabled", "revoked"] })
+      .notNull()
+      .default("active"),
+    timeoutMs: integer("timeout_ms").notNull().default(10000),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    ...timestamps,
+    ...auditUsers,
+  },
+  (table) => [
+    index("saas_webhook_endpoint_scope_status_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.status,
+    ),
+  ],
+);
+
+export const saasWebhookEvent = pgTable(
+  "saas_webhook_event",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
+    eventType: text("event_type").notNull(),
+    eventKey: text("event_key").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    payloadEncrypted: text("payload_encrypted").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    requestId: text("request_id"),
+    createdBy: integer("created_by").references(() => sysUser.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("saas_webhook_event_scope_key_unique").on(
+      table.tenantId,
+      table.eventType,
+      table.eventKey,
+    ),
+    index("saas_webhook_event_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const saasWebhookDelivery = pgTable(
+  "saas_webhook_delivery",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => saasWebhookEvent.id, { onDelete: "cascade" }),
+    endpointId: integer("endpoint_id")
+      .notNull()
+      .references(() => saasWebhookEndpoint.id, { onDelete: "cascade" }),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "restrict" }),
+    workspaceId: integer("workspace_id").references(() => saasWorkspace.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["queued", "running", "retry", "delivered", "dead_letter", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedBy: text("locked_by"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    responseStatus: integer("response_status"),
+    responseBodyHash: text("response_body_hash"),
+    errorMessage: text("error_message"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("saas_webhook_delivery_event_endpoint_unique").on(table.eventId, table.endpointId),
+    index("saas_webhook_delivery_claim_idx").on(
+      table.status,
+      table.availableAt,
+      table.id,
+    ),
+    index("saas_webhook_delivery_scope_created_idx").on(
+      table.tenantId,
+      table.workspaceId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const saasWebhookReplay = pgTable(
+  "saas_webhook_replay",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id")
+      .notNull()
+      .references(() => saasTenant.id, { onDelete: "cascade" }),
+    workspaceId: integer("workspace_id")
+      .notNull()
+      .references(() => saasWorkspace.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    eventKey: text("event_key").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    eventTimestamp: timestamp("event_timestamp", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("saas_webhook_replay_scope_event_unique").on(
+      table.tenantId,
+      table.workspaceId,
+      table.source,
+      table.eventKey,
+    ),
+    index("saas_webhook_replay_expiry_idx").on(table.expiresAt),
+  ],
+);
+
 export const saasAsyncOperation = pgTable(
   "saas_async_operation",
   {

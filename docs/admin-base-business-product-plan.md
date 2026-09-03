@@ -1304,8 +1304,13 @@ Tenant Subscription、Tenant/Workspace 策略覆盖、`saas_usage_reservation` r
 并发额度、追加式 Usage Ledger、幂等 adjustment、governed overage 和 `saas_async_operation` 完成/失败/取消
 补偿。详细合同见 [`saas-foundation-f3-usage-quota.md`](./saas-foundation-f3-usage-quota.md)。
 
+Foundation F4（2026-09-03，`implemented-unverified`）：已加入邀请 Email Outbox 事务写入、lease/retry/dead-letter、
+API Key Hash/精确 Scope/Workspace-Module 约束/轮换撤销、Webhook Endpoint/Event/Delivery、HMAC 签名、
+时间窗口、持久化防重放、SSRF/DNS Rebinding 防护，以及 Tenant 品牌、DNS TXT 域名所有权验证和
+证书未激活安全回退。详细合同见 [`saas-foundation-f4-integration-branding.md`](./saas-foundation-f4-integration-branding.md)。
+
 Team、Studio Kernel、历史文件/Knowledge/AI Job/Tool 逐域迁移、正式 Invoice/Payment/Provider 对账以及真实
-S3/Worker/Provider 验收仍待后续
+SMTP/DNS/TLS/S3/Worker/Provider/Webhook 验收仍待后续
 切片，不能据此宣称整个 Phase 1 完成。
 
 完成闸门：两个测试 Tenant 在项目、文件、任务、Tool、导出和审计上互不可见。

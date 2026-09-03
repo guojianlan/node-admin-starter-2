@@ -1,0 +1,21 @@
+[Unit]
+Description=Admin Base SaaS Notification and Webhook Outbox Worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin-base
+Group=admin-base
+WorkingDirectory=/srv/admin-base
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/admin-base/admin-base.env
+ExecStart=/usr/bin/env pnpm saas:outbox
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

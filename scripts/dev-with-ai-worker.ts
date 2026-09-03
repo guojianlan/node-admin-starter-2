@@ -50,6 +50,7 @@ function shutdown(exitCode: number, signal: NodeJS.Signals = "SIGTERM") {
 process.once("SIGINT", () => shutdown(0, "SIGINT"));
 process.once("SIGTERM", () => shutdown(0));
 
-console.log("[dev:all] 启动 Web/API 与 AI Worker；任一进程退出时会停止整组进程。");
+console.log("[dev:all] 启动 Web/API、AI Worker 与 SaaS Outbox Worker；任一进程退出时会停止整组进程。");
 start("Web/API", ["dev"]);
 start("AI Worker", ["ai:worker"]);
+start("SaaS Outbox Worker", ["saas:outbox"]);

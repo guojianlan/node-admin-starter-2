@@ -35,5 +35,16 @@ module.exports = {
       kill_timeout: 10_000,
       env: { NODE_ENV: "production" },
     },
+    {
+      name: "admin-base-saas-outbox-worker",
+      cwd: appRoot,
+      script: "pnpm",
+      args: "saas:outbox",
+      interpreter: "none",
+      autorestart: true,
+      restart_delay: 2_000,
+      kill_timeout: 10_000,
+      env: { NODE_ENV: "production" },
+    },
   ],
 };
